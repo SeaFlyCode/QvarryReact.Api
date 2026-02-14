@@ -1,0 +1,52 @@
+<!-- Template: Notification Admin - Nouveau compte en attente -->
+<!-- Variables: {{ADMIN_NAME}}, {{NEW_USER_NAME}}, {{NEW_USER_EMAIL}}, {{REGISTRATION_DATE}}, {{ADMIN_PANEL_LINK}} -->
+
+<h1 class="greeting">Bonjour {{ADMIN_NAME}},</h1>
+
+<p class="text">
+    Un nouvel utilisateur vient de vérifier son adresse email et attend votre validation
+    pour accéder à la plateforme QVARRY.
+</p>
+
+<div class="info-box">
+    <p class="info-box-title">👤 Nouveau compte en attente de validation</p>
+    <p class="info-box-text">
+        <strong>Nom :</strong> {{NEW_USER_NAME}}<br>
+        <strong>Email :</strong> {{NEW_USER_EMAIL}}<br>
+        <strong>Date d'inscription :</strong> {{REGISTRATION_DATE}}
+    </p>
+</div>
+
+<p class="text">
+    Veuillez vous connecter au panel d'administration pour examiner cette demande
+    et approuver ou refuser l'accès de cet utilisateur.
+</p>
+
+<div class="button-container">
+    <a href="{{ADMIN_PANEL_LINK}}" class="button">
+        ⚙️ Accéder au panel admin
+    </a>
+</div>
+
+<div class="divider"></div>
+
+<p class="text-secondary">
+    <strong>Actions possibles :</strong>
+</p>
+
+<table class="details-table">
+    <tr>
+        <td>✅ Approuver</td>
+        <td>L'utilisateur pourra se connecter et utiliser QVARRY</td>
+    </tr>
+    <tr>
+        <td>❌ Refuser</td>
+        <td>L'utilisateur sera informé que son compte n'a pas été validé</td>
+    </tr>
+</table>
+
+<div class="security-notice">
+    <strong>⚠️ Rappel de sécurité</strong>
+    Vérifiez que l'adresse email semble légitime avant d'approuver un nouveau compte.
+    En cas de doute, n'hésitez pas à contacter l'utilisateur pour plus d'informations.
+</div>

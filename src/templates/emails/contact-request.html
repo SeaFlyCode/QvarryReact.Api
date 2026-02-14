@@ -1,0 +1,54 @@
+<!-- Template: Nouvelle demande de contact -->
+<!-- Variables: {{USER_NAME}}, {{REQUESTER_NAME}}, {{REQUESTER_MESSAGE}}, {{ACCEPT_LINK}}, {{DECLINE_LINK}}, {{VIEW_PROFILE_LINK}} -->
+
+<h1 class="greeting">Nouvelle demande de contact 👋</h1>
+
+<p class="text">
+    Bonjour {{USER_NAME}},
+</p>
+
+<p class="text">
+    <strong>{{REQUESTER_NAME}}</strong> souhaite vous ajouter comme contact sur QVARRY.
+</p>
+
+{{#if REQUESTER_MESSAGE}}
+<div class="info-box info">
+    <p class="info-box-title">💬 Message de {{REQUESTER_NAME}}</p>
+    <p class="info-box-text">
+        "{{REQUESTER_MESSAGE}}"
+    </p>
+</div>
+{{/if}}
+
+<p class="text">
+    En acceptant cette demande, vous pourrez :
+</p>
+
+<p class="text-secondary">
+    • Échanger des messages<br>
+    • Partager vos points et fiches<br>
+    • Collaborer sur des projets communs
+</p>
+
+<div class="button-container">
+    <a href="{{ACCEPT_LINK}}" class="button">
+        ✅ Accepter la demande
+    </a>
+</div>
+
+<p class="text-secondary" style="text-align: center;">
+    <a href="{{VIEW_PROFILE_LINK}}" style="color: #059669; text-decoration: none;">
+        Voir le profil de {{REQUESTER_NAME}}
+    </a>
+    &nbsp;•&nbsp;
+    <a href="{{DECLINE_LINK}}" style="color: #64748b; text-decoration: none;">
+        Refuser la demande
+    </a>
+</p>
+
+<div class="divider"></div>
+
+<p class="text-secondary">
+    Vous pouvez également gérer toutes vos demandes de contact depuis
+    l'application QVARRY dans la section "Contacts".
+</p>

@@ -1,0 +1,54 @@
+<!-- Template: Alerte de sécurité - Nouvelle connexion -->
+<!-- Variables: {{USER_NAME}}, {{IP_ADDRESS}}, {{DEVICE_INFO}}, {{LOCATION}}, {{LOGIN_TIME}}, {{SECURE_ACCOUNT_LINK}} -->
+
+<h1 class="greeting">Nouvelle connexion détectée 🔔</h1>
+
+<p class="text">
+    Bonjour {{USER_NAME}},
+</p>
+
+<p class="text">
+    Une nouvelle connexion à votre compte QVARRY a été détectée.
+    Si c'est bien vous, aucune action n'est nécessaire.
+</p>
+
+<div class="info-box info">
+    <p class="info-box-title">📍 Détails de la connexion</p>
+    <p class="info-box-text">
+        <strong>Date et heure :</strong> {{LOGIN_TIME}}<br>
+        <strong>Adresse IP :</strong> {{IP_ADDRESS}}<br>
+        <strong>Localisation :</strong> {{LOCATION}}<br>
+        <strong>Appareil :</strong> {{DEVICE_INFO}}
+    </p>
+</div>
+
+<p class="text">
+    <strong>Vous reconnaissez cette activité ?</strong><br>
+    Parfait ! Vous pouvez ignorer cet email et continuer à profiter de QVARRY.
+</p>
+
+<div class="divider"></div>
+
+<div class="info-box danger">
+    <p class="info-box-title">⚠️ Ce n'est pas vous ?</p>
+    <p class="info-box-text">
+        Si vous ne reconnaissez pas cette connexion, votre compte a peut-être été compromis.
+        Nous vous recommandons de :
+        <br><br>
+        1. Changer immédiatement votre mot de passe<br>
+        2. Vérifier les appareils connectés à votre compte<br>
+        3. Activer l'authentification à deux facteurs si disponible
+    </p>
+</div>
+
+<div class="button-container">
+    <a href="{{SECURE_ACCOUNT_LINK}}" class="button button-danger">
+        🛡️ Sécuriser mon compte
+    </a>
+</div>
+
+<div class="security-notice">
+    <strong>🔒 Pourquoi cet email ?</strong>
+    Nous vous envoyons cette notification pour vous aider à garder votre compte sécurisé.
+    Vous recevez cet email à chaque nouvelle connexion depuis un appareil ou une localisation inhabituels.
+</div>

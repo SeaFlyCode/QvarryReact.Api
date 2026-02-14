@@ -1,0 +1,67 @@
+<!-- Template: Bienvenue -->
+<!-- Variables: {{USER_NAME}}, {{USER_EMAIL}}, {{VERIFICATION_LINK}}, {{VERIFICATION_CODE}} -->
+
+<h1 class="greeting">Bienvenue sur QVARRY, {{USER_NAME}} ! 🎉</h1>
+
+<p class="text">
+    Nous sommes ravis de vous accueillir dans la communauté QVARRY !
+    Vous avez désormais accès à une plateforme collaborative de cartographie
+    qui vous permettra d'explorer, créer et partager vos découvertes géographiques.
+</p>
+
+<div class="info-box">
+    <p class="info-box-title">🚀 Ce que vous pouvez faire avec QVARRY</p>
+    <p class="info-box-text">
+        • Créer et gérer vos points d'intérêt personnalisés<br>
+        • Organiser vos données avec des fiches détaillées<br>
+        • Partager vos découvertes avec d'autres utilisateurs<br>
+        • Collaborer en temps réel sur vos projets cartographiques
+    </p>
+</div>
+
+<p class="text">
+    Pour commencer à utiliser toutes les fonctionnalités de QVARRY,
+    veuillez confirmer votre adresse email en cliquant sur le bouton ci-dessous :
+</p>
+
+<div class="button-container">
+    <a href="{{VERIFICATION_LINK}}" class="button">
+        ✉️ Confirmer mon email
+    </a>
+</div>
+
+<p class="text-secondary" style="text-align: center;">
+    Ou utilisez ce code de vérification :
+</p>
+
+<div class="code-box">
+    <div class="code">{{VERIFICATION_CODE}}</div>
+    <p class="code-label">Code de vérification</p>
+</div>
+
+<div class="divider"></div>
+
+<p class="text-secondary">
+    <strong>Quelques informations sur votre compte :</strong>
+</p>
+
+<table class="details-table">
+    <tr>
+        <td>📧 Email</td>
+        <td>{{USER_EMAIL}}</td>
+    </tr>
+    <tr>
+        <td>👤 Nom d'utilisateur</td>
+        <td>{{USER_NAME}}</td>
+    </tr>
+    <tr>
+        <td>📅 Date d'inscription</td>
+        <td>{{REGISTRATION_DATE}}</td>
+    </tr>
+</table>
+
+<div class="security-notice">
+    <strong>🔒 Note de sécurité</strong>
+    Ce lien de vérification expirera dans 24 heures.
+    Si vous n'avez pas créé de compte QVARRY, ignorez simplement cet email.
+</div>

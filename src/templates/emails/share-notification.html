@@ -1,0 +1,56 @@
+<!-- Template: Notification de partage de données -->
+<!-- Variables: {{USER_NAME}}, {{SENDER_NAME}}, {{SHARE_TYPE}}, {{SHARE_DESCRIPTION}}, {{ITEMS_COUNT}}, {{EXPIRY_DATE}}, {{VIEW_SHARE_LINK}}, {{SHARE_TIME}} -->
+
+<h1 class="greeting">{{SENDER_NAME}} a partagé des données avec vous 📤</h1>
+
+<p class="text">
+    Bonjour {{USER_NAME}},
+</p>
+
+<p class="text">
+    <strong>{{SENDER_NAME}}</strong> vous a partagé {{SHARE_TYPE}} sur QVARRY.
+    Vous pouvez maintenant accéder à ces données et les consulter.
+</p>
+
+<div class="info-box">
+    <p class="info-box-title">📦 Contenu du partage</p>
+    <p class="info-box-text">
+        <strong>Type :</strong> {{SHARE_TYPE}}<br>
+        <strong>Description :</strong> {{SHARE_DESCRIPTION}}<br>
+        <strong>Nombre d'éléments :</strong> {{ITEMS_COUNT}}<br>
+        <strong>Partagé le :</strong> {{SHARE_TIME}}
+    </p>
+</div>
+
+<div class="button-container">
+    <a href="{{VIEW_SHARE_LINK}}" class="button">
+        👁️ Voir le partage
+    </a>
+</div>
+
+<div class="info-box warning">
+    <p class="info-box-title">⏰ Durée de validité</p>
+    <p class="info-box-text">
+        Ce partage expirera le <strong>{{EXPIRY_DATE}}</strong>.
+        Après cette date, vous n'aurez plus accès à ces données.
+    </p>
+</div>
+
+<div class="divider"></div>
+
+<p class="text-secondary">
+    <strong>💡 Que pouvez-vous faire avec ce partage ?</strong>
+</p>
+
+<p class="text-secondary">
+    • Consulter les points et fiches partagés<br>
+    • Visualiser les données sur la carte<br>
+    • Exporter les informations si autorisé<br>
+    • Contacter {{SENDER_NAME}} pour plus d'informations
+</p>
+
+<div class="security-notice">
+    <strong>🔒 Note de sécurité</strong>
+    Si vous ne connaissez pas {{SENDER_NAME}} ou si vous n'attendiez pas ce partage,
+    vous pouvez l'ignorer en toute sécurité.
+</div>

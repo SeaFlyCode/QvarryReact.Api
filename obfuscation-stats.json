@@ -1,0 +1,570 @@
+{
+  "timestamp": "2026-01-27T16:20:35.182Z",
+  "totalFiles": 80,
+  "successCount": 80,
+  "failureCount": 0,
+  "totalOriginalSize": 1373953,
+  "totalNewSize": 3270394,
+  "files": [
+    {
+      "file": "config/database.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 2526,
+      "newSize": 5791
+    },
+    {
+      "file": "controllers/adminControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 52230,
+      "newSize": 53057
+    },
+    {
+      "file": "controllers/authControllers.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 95506,
+      "newSize": 68027
+    },
+    {
+      "file": "controllers/contactControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 27470,
+      "newSize": 29180
+    },
+    {
+      "file": "controllers/conversationsControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 46336,
+      "newSize": 48241
+    },
+    {
+      "file": "controllers/dataShareControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 15901,
+      "newSize": 21963
+    },
+    {
+      "file": "controllers/fichesControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 31395,
+      "newSize": 38555
+    },
+    {
+      "file": "controllers/listsControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 25734,
+      "newSize": 31542
+    },
+    {
+      "file": "controllers/messagesControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 22116,
+      "newSize": 24476
+    },
+    {
+      "file": "controllers/notificationsControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 8341,
+      "newSize": 13626
+    },
+    {
+      "file": "controllers/pointsControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 28618,
+      "newSize": 32464
+    },
+    {
+      "file": "controllers/securityControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 5344,
+      "newSize": 10345
+    },
+    {
+      "file": "controllers/sessionControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2388,
+      "newSize": 6004
+    },
+    {
+      "file": "controllers/syncController.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1039,
+      "newSize": 4255
+    },
+    {
+      "file": "controllers/twoFactorControllers.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 23168,
+      "newSize": 25617
+    },
+    {
+      "file": "controllers/userControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 21863,
+      "newSize": 26780
+    },
+    {
+      "file": "middlewares/adminMiddleware.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 2255,
+      "newSize": 5811
+    },
+    {
+      "file": "middlewares/authMiddleware.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 13880,
+      "newSize": 15453
+    },
+    {
+      "file": "middlewares/console-interceptor.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 61,
+      "newSize": 2724
+    },
+    {
+      "file": "middlewares/maintenanceMiddleware.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 4651,
+      "newSize": 6384
+    },
+    {
+      "file": "middlewares/rateLimitMiddleware.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 8534,
+      "newSize": 13739
+    },
+    {
+      "file": "middlewares/turnstileMiddleware.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 5776,
+      "newSize": 8505
+    },
+    {
+      "file": "models/auditLogs.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2511,
+      "newSize": 6381
+    },
+    {
+      "file": "models/blockedIps.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2720,
+      "newSize": 6228
+    },
+    {
+      "file": "models/contacts.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 666,
+      "newSize": 3769
+    },
+    {
+      "file": "models/conversations.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2476,
+      "newSize": 6054
+    },
+    {
+      "file": "models/dataHistory.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 3628,
+      "newSize": 6978
+    },
+    {
+      "file": "models/dataShare.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 4517,
+      "newSize": 7887
+    },
+    {
+      "file": "models/deletedData.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 3942,
+      "newSize": 7194
+    },
+    {
+      "file": "models/fiches.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 3803,
+      "newSize": 7822
+    },
+    {
+      "file": "models/keys.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1991,
+      "newSize": 5560
+    },
+    {
+      "file": "models/lists.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2429,
+      "newSize": 6110
+    },
+    {
+      "file": "models/maintenance.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2304,
+      "newSize": 5753
+    },
+    {
+      "file": "models/messages.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2759,
+      "newSize": 6800
+    },
+    {
+      "file": "models/notifications.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 3582,
+      "newSize": 7552
+    },
+    {
+      "file": "models/points.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2679,
+      "newSize": 5929
+    },
+    {
+      "file": "models/refreshTokens.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2800,
+      "newSize": 6116
+    },
+    {
+      "file": "models/users.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 4026,
+      "newSize": 7009
+    },
+    {
+      "file": "routes/adminRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 4227,
+      "newSize": 6758
+    },
+    {
+      "file": "routes/authRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2301,
+      "newSize": 5411
+    },
+    {
+      "file": "routes/contactRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1718,
+      "newSize": 4474
+    },
+    {
+      "file": "routes/conversationsRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1940,
+      "newSize": 5337
+    },
+    {
+      "file": "routes/dataShareRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1152,
+      "newSize": 4260
+    },
+    {
+      "file": "routes/fichesRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2222,
+      "newSize": 5734
+    },
+    {
+      "file": "routes/listsRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1788,
+      "newSize": 5436
+    },
+    {
+      "file": "routes/maintenanceRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 6206,
+      "newSize": 8999
+    },
+    {
+      "file": "routes/messagesRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1339,
+      "newSize": 4312
+    },
+    {
+      "file": "routes/notificationsRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1534,
+      "newSize": 4183
+    },
+    {
+      "file": "routes/pointsRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1186,
+      "newSize": 4737
+    },
+    {
+      "file": "routes/securityRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1262,
+      "newSize": 4074
+    },
+    {
+      "file": "routes/twoFactorRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1791,
+      "newSize": 4597
+    },
+    {
+      "file": "routes/userRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1236,
+      "newSize": 4432
+    },
+    {
+      "file": "scripts/migrateAdminValidation.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 498317,
+      "newSize": 2202017
+    },
+    {
+      "file": "server.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 29612,
+      "newSize": 28437
+    },
+    {
+      "file": "services/auditService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 10341,
+      "newSize": 13561
+    },
+    {
+      "file": "services/cronJobs.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 4245,
+      "newSize": 8258
+    },
+    {
+      "file": "services/dataArchiveService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 6534,
+      "newSize": 8329
+    },
+    {
+      "file": "services/dataShareService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 50156,
+      "newSize": 40758
+    },
+    {
+      "file": "services/emailService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 22080,
+      "newSize": 25840
+    },
+    {
+      "file": "services/fichesServices.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 7483,
+      "newSize": 8882
+    },
+    {
+      "file": "services/memoryStorageService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 37631,
+      "newSize": 40396
+    },
+    {
+      "file": "services/notificationService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 7559,
+      "newSize": 10969
+    },
+    {
+      "file": "services/pointServices.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 4550,
+      "newSize": 8126
+    },
+    {
+      "file": "services/redisSessionService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 27141,
+      "newSize": 25611
+    },
+    {
+      "file": "services/refreshTokenService.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 9001,
+      "newSize": 12643
+    },
+    {
+      "file": "services/securityAlertService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 17206,
+      "newSize": 23966
+    },
+    {
+      "file": "services/sessionService.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 9456,
+      "newSize": 11411
+    },
+    {
+      "file": "services/syncService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 3108,
+      "newSize": 6908
+    },
+    {
+      "file": "services/userServices.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 12093,
+      "newSize": 15319
+    },
+    {
+      "file": "services/validationService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2577,
+      "newSize": 6014
+    },
+    {
+      "file": "services/webSocketService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 50069,
+      "newSize": 41184
+    },
+    {
+      "file": "utils/communicationEncryptionUtils.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 5246,
+      "newSize": 7998
+    },
+    {
+      "file": "utils/deviceFingerprint.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 2625,
+      "newSize": 5045
+    },
+    {
+      "file": "utils/emailUtils.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1673,
+      "newSize": 4387
+    },
+    {
+      "file": "utils/errorUtils.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 1173,
+      "newSize": 3695
+    },
+    {
+      "file": "utils/jwtKeyManager.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 4756,
+      "newSize": 7193
+    },
+    {
+      "file": "utils/masterEncryptionUtils.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 5237,
+      "newSize": 7183
+    },
+    {
+      "file": "utils/passwordUtils.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 3798,
+      "newSize": 5771
+    },
+    {
+      "file": "utils/rsaEncryptionUtils.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 11794,
+      "newSize": 13059
+    },
+    {
+      "file": "utils/userEncryptionUtils.js",
+      "success": true,
+      "isCritical": true,
+      "originalSize": 6625,
+      "newSize": 9009
+    }
+  ]
+}

@@ -1,0 +1,64 @@
+<!-- Template: Alerte de sécurité critique pour les administrateurs -->
+<!-- Variables: {{ALERT_TYPE}}, {{ALERT_LEVEL}}, {{ALERT_EMOJI}}, {{IP_ADDRESS}}, {{USER_AGENT}}, {{USER_ID}}, {{USER_EMAIL}}, {{TIMESTAMP}}, {{DETAILS}}, {{ACTION_TAKEN}}, {{ADMIN_PANEL_LINK}} -->
+
+<h1 class="greeting">{{ALERT_EMOJI}} Alerte de Sécurité - {{ALERT_LEVEL}}</h1>
+
+<p class="text">
+    Une activité suspecte a été détectée sur la plateforme QVARRY et nécessite votre attention.
+</p>
+
+<div class="info-box danger">
+    <p class="info-box-title">🚨 Type d'alerte : {{ALERT_TYPE}}</p>
+    <p class="info-box-text">
+        <strong>Niveau :</strong> {{ALERT_LEVEL}}<br>
+        <strong>Date et heure :</strong> {{TIMESTAMP}}<br>
+        <strong>Adresse IP :</strong> {{IP_ADDRESS}}<br>
+        <strong>User Agent :</strong> {{USER_AGENT}}
+    </p>
+</div>
+
+{{#if USER_ID}}
+<div class="info-box warning">
+    <p class="info-box-title">👤 Utilisateur concerné</p>
+    <p class="info-box-text">
+        <strong>ID :</strong> {{USER_ID}}<br>
+        <strong>Email :</strong> {{USER_EMAIL}}
+    </p>
+</div>
+{{/if}}
+
+<div class="info-box info">
+    <p class="info-box-title">📋 Détails de l'événement</p>
+    <p class="info-box-text" style="font-family: monospace; white-space: pre-wrap;">{{DETAILS}}</p>
+</div>
+
+{{#if ACTION_TAKEN}}
+<div class="info-box success">
+    <p class="info-box-title">✅ Action automatique effectuée</p>
+    <p class="info-box-text">{{ACTION_TAKEN}}</p>
+</div>
+{{/if}}
+
+<div class="divider"></div>
+
+<p class="text">
+    <strong>Actions recommandées :</strong>
+</p>
+<ul style="color: #333; margin-left: 20px;">
+    <li>Vérifier les logs d'audit complets</li>
+    <li>Analyser l'historique de l'IP concernée</li>
+    <li>Bloquer l'IP si nécessaire</li>
+    <li>Contacter l'utilisateur si son compte est compromis</li>
+</ul>
+
+<div class="button-container">
+    <a href="{{ADMIN_PANEL_LINK}}" class="button button-primary">
+        🔐 Accéder au panneau d'administration
+    </a>
+</div>
+
+<div class="security-notice">
+    <strong>⚠️ Important :</strong>
+    Cet email est automatiquement envoyé aux administrateurs lorsqu'un événement de sécurité critique est détecté.
+    Ne partagez pas ces informations avec des personnes non autorisées.
+</div>

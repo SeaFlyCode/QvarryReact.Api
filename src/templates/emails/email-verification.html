@@ -1,0 +1,50 @@
+<!-- Template: Vérification d'email -->
+<!-- Variables: {{USER_NAME}}, {{VERIFICATION_LINK}}, {{VERIFICATION_CODE}}, {{EXPIRY_TIME}} -->
+
+<h1 class="greeting">Vérifiez votre adresse email 📧</h1>
+
+<p class="text">
+    Bonjour {{USER_NAME}},
+</p>
+
+<p class="text">
+    Vous avez demandé à vérifier votre adresse email sur QVARRY.
+    Pour finaliser cette vérification, veuillez cliquer sur le bouton ci-dessous
+    ou utiliser le code de vérification fourni.
+</p>
+
+<div class="button-container">
+    <a href="{{VERIFICATION_LINK}}" class="button">
+        ✅ Vérifier mon email
+    </a>
+</div>
+
+<p class="text-secondary" style="text-align: center;">
+    Ou entrez ce code manuellement :
+</p>
+
+<div class="code-box">
+    <div class="code">{{VERIFICATION_CODE}}</div>
+    <p class="code-label">Code de vérification • Expire dans {{EXPIRY_TIME}}</p>
+</div>
+
+<div class="info-box warning">
+    <p class="info-box-title">⏰ Lien à durée limitée</p>
+    <p class="info-box-text">
+        Ce lien de vérification expirera dans <strong>{{EXPIRY_TIME}}</strong>.
+        Passé ce délai, vous devrez demander un nouveau code de vérification.
+    </p>
+</div>
+
+<div class="divider"></div>
+
+<p class="text-secondary">
+    Si vous n'avez pas demandé cette vérification, vous pouvez ignorer cet email
+    en toute sécurité. Votre compte n'a pas été modifié.
+</p>
+
+<div class="security-notice">
+    <strong>🔒 Conseil de sécurité</strong>
+    Ne partagez jamais ce code avec qui que ce soit.
+    L'équipe QVARRY ne vous demandera jamais votre code par téléphone ou par message.
+</div>

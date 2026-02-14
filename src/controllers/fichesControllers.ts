@@ -1,0 +1,766 @@
+import { getErrorMessage } from '../utils/errorUtils';
+import { Request, Response } from "express";
+import mongoose from "mongoose";
+import { memoryStorage } from "../services/memoryStorageService";
+import { validateFicheData } from "../services/validationService";
+import { syncService } from "../services/syncService";
+import FicheModel, { IFiche } from "../models/fiches";
+
+/**
+ * Gère la création d'une nouvelle fiche
+ */
+export async function handleCreateFiche(req: Request, res: Response) {
+    try {
+        const { 
+            name, ville, type, etat,
+            difficulte_acces, risque_oxygene, acces_souterrain, 
+            praticite_souterrain, etat_general, points_ids,
+            equipement_conseille, surface, type_galeries, interets,
+            commentaire
+        } = req.body;
+
+        console.log('[handleCreateFiche] Début de la création de fiche:', { name, ville, type });
+
+        // Validation des données
+        const validation = validateFicheData(req.body);
+        if (!validation.isValid) {
+            console.log('[handleCreateFiche] Validation échouée:', validation.errors);
+            return res.status(400).json({
+                message: "Validation échouée",
+                errors: validation.errors // Ajout du détail des erreurs
+            });
+        }
+
+        const userId = req.user!.id;
+        console.log('[handleCreateFiche] userId:', userId);
+
+        // Filtrer les IDs de points valides
+        let validPointsIds = [];
+        if (points_ids && Array.isArray(points_ids)) {
+            validPointsIds = points_ids.filter(id => mongoose.Types.ObjectId.isValid(id));
+        }
+
+        // Générer un nouvel ID pour la fiche
+        const newFicheId = new mongoose.Types.ObjectId();
+        
+        // Construire la fiche déchiffrée pour la mémoire
+        const ficheMemory = {
+            _id: newFicheId,
+            name,
+            ville,
+            type,
+            etat,
+            difficulte_acces,
+            risque_oxygene,
+            acces_souterrain,
+            praticite_souterrain,
+            etat_general,
+            commentaire: commentaire || '',
+            points_ids: validPointsIds,
+            userId,
+            date_creation: new Date(),
+            date_modification: new Date(),
+            equipement_conseille: Array.isArray(equipement_conseille) ? equipement_conseille : [],
+            surface: Array.isArray(surface) ? surface : [],
+            type_galeries: Array.isArray(type_galeries) ? type_galeries : [],
+            interets: interets || ''
+        };
+
+        // Stocker la fiche en mémoire
+        const storeResult = memoryStorage.storeFiche(userId, ficheMemory as any);
+        console.log(`[handleCreateFiche] Fiche ${newFicheId} stockée en mémoire:`, storeResult);
+
+        // Vérifier que la fiche est bien en mémoire
+        const ficheCheck = memoryStorage.getFicheById(userId, newFicheId.toString());
+        console.log(`[handleCreateFiche] Vérification fiche en mémoire:`, ficheCheck ? 'OK' : 'NON TROUVÉE');
+
+        // Forcer la synchronisation immédiate et vérifier le résultat
+        const syncResult = await syncService.syncNow(userId);
+        console.log(`[handleCreateFiche] Sync result:`, syncResult);
+
+        if (!syncResult.success) {
+            return res.status(500).json({
+                message: "La fiche a été créée en mémoire mais n'a pas pu être synchronisée avec la base de données",
+                error: syncResult.error,
+                ficheId: newFicheId,
+                syncFailed: true
+            });
+        }
+
+        console.log(`[handleCreateFiche] Fiche ${newFicheId} créée avec succès pour userId ${userId}`);
+        res.status(201).json({
+            message: "Fiche créée avec succès",
+            ficheId: newFicheId,
+            syncSuccess: true
+        });
+    } catch (error: unknown) {
+        console.error("Erreur lors de la création de la fiche:", error);
+        res.status(500).json({ 
+            message: "Erreur lors de la création de la fiche.",
+            error: getErrorMessage(error) || "Une erreur inconnue s'est produite." 
+        });
+    }
+}
+
+/**
+ * Gère la mise à jour d'une fiche
+ */
+export async function handleUpdateFiche(req: Request, res: Response) {
+    try {
+        const ficheId = req.params.id;
+        const userId = req.user?.id;
+        const updateData = req.body;
+        
+        if (!userId) {
+            return res.status(401).json({ message: "Utilisateur non authentifié" });
+        }
+        
+        // Récupérer la fiche depuis la m��moire
+        const fiche = memoryStorage.getFicheById(userId, ficheId);
+        
+        if (!fiche) {
+            return res.status(404).json({ message: "Fiche non trouvée." });
+        }
+        
+        // Mettre à jour les champs
+        Object.keys(updateData).forEach(key => {
+            if (key !== '_id' && key !== 'userId' && key !== 'date_creation') {
+                (fiche as any)[key] = updateData[key];
+            }
+        });
+        
+        // Mettre à jour la date de modification
+        fiche.date_modification = new Date();
+        
+        // Stocker les modifications en mémoire
+        memoryStorage.storeFiche(userId, fiche);
+        
+        // Forcer la synchronisation immédiate et vérifier le résultat
+        const syncResult = await syncService.syncNow(userId);
+        
+        if (!syncResult.success) {
+            return res.status(500).json({
+                message: "La fiche a été mise à jour en mémoire mais n'a pas pu être synchronisée avec la base de données",
+                error: syncResult.error,
+                ficheId,
+                syncFailed: true
+            });
+        }
+        
+        res.status(200).json({
+            message: "Fiche mise à jour avec succès",
+            fiche,
+            syncSuccess: true
+        });
+    } catch (error: unknown) {
+        console.error("Erreur lors de la mise à jour de la fiche:", error);
+        res.status(500).json({ 
+            message: "Erreur lors de la mise à jour de la fiche.",
+            error: getErrorMessage(error) 
+        });
+    }
+}
+
+/**
+ * Gère la suppression d'une fiche
+ */
+export async function handleDeleteFiche(req: Request, res: Response) {
+    try {
+        const ficheId = req.params.id;
+        const userId = req.user?.id;
+        
+        if (!userId) {
+            return res.status(401).json({ message: "Utilisateur non authentifié" });
+        }
+        
+        // Récupérer la fiche pour obtenir les points associés
+        const fiche = memoryStorage.getFicheById(userId, ficheId);
+        
+        if (!fiche) {
+            return res.status(404).json({ message: "Fiche non trouvée." });
+        }
+        
+        // Pour chaque point associé à la fiche, supprimer le lien ficheId
+        if (fiche.points_ids && fiche.points_ids.length > 0) {
+            console.log(`La fiche ${ficheId} contient ${fiche.points_ids.length} points à délier`);
+            
+            for (const pointIdObj of fiche.points_ids) {
+                const pointId = pointIdObj.toString();
+                const point = memoryStorage.getPointById(userId, pointId);
+                
+                if (point && (point as any).ficheId) {
+                    // Supprimer la référence à la fiche dans le point
+                    (point as any).ficheId = undefined;
+                    memoryStorage.storePoint(userId, point);
+                    console.log(`Lien supprimé du point ${pointId} vers la fiche ${ficheId}`);
+                }
+            }
+        }
+        
+        // Supprimer la fiche de la mémoire
+        const deleted = memoryStorage.deleteFiche(userId, ficheId);
+        
+        if (!deleted) {
+            return res.status(404).json({ message: "Fiche non trouvée." });
+        }
+        
+        // Forcer une synchronisation immédiate après suppression et vérifier le résultat
+        const syncResult = await syncService.syncNow(userId);
+        
+        if (!syncResult.success) {
+            return res.status(500).json({
+                message: "La fiche a été supprimée en mémoire mais n'a pas pu être synchronisée avec la base de données",
+                error: syncResult.error,
+                ficheId,
+                syncFailed: true
+            });
+        }
+        
+        res.status(200).json({ 
+            message: "Fiche supprimée avec succès",
+            syncSuccess: true 
+        });
+    } catch (error: unknown) {
+        console.error("Erreur lors de la suppression de la fiche:", error);
+        res.status(500).json({ 
+            message: "Erreur lors de la suppression de la fiche.",
+            error: getErrorMessage(error) 
+        });
+    }
+}
+
+/**
+ * Gère la récupération de toutes les fiches
+ */
+export async function handleGetAllFiches(req: Request, res: Response) {
+    try {
+        const userId = req.user?.id;
+
+        if (!userId) {
+            return res.status(401).json({ message: "Utilisateur non authentifié" });
+        }
+
+        // SÉCURITÉ: Pagination avec limite max pour protection DoS
+        const page = Math.max(1, parseInt(req.query.page as string) || 1);
+        const limit = Math.min(Math.max(1, parseInt(req.query.limit as string) || 100), 500); // Max 500
+        const offset = (page - 1) * limit;
+
+        // Récupérer les fiches depuis la mémoire
+        const allFiches = memoryStorage.getAllFiches(userId);
+        const total = allFiches.length;
+
+        // Appliquer la pagination
+        const fiches = allFiches.slice(offset, offset + limit);
+
+        // Préparer la réponse enrichie sans typage IFiche
+        const fichesObj = fiches.map(fiche => {
+            const obj = (fiche as any).toObject ? (fiche as any).toObject() : { ...fiche };
+            return {
+                ...obj,
+                equipement_conseille: Array.isArray(obj.equipement_conseille) ? obj.equipement_conseille : [],
+                surface: Array.isArray(obj.surface) ? obj.surface : [],
+                type_galeries: Array.isArray(obj.type_galeries) ? obj.type_galeries : [],
+                interets: typeof obj.interets === 'string' ? obj.interets : '',
+                commentaire: typeof obj.commentaire === 'string' ? obj.commentaire : ''
+            };
+        });
+
+        res.status(200).json({
+            data: fichesObj,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit)
+            }
+        });
+    } catch (error: unknown) {
+        console.error("Erreur lors de la récupération des fiches:", error);
+        res.status(500).json({ 
+            message: "Erreur lors de la récupération des fiches.",
+            error: getErrorMessage(error) 
+        });
+    }
+}
+
+/**
+ * Gère la récupération d'une fiche par son ID
+ */
+export async function handleGetFicheById(req: Request, res: Response) {
+    try {
+        const ficheId = req.params.id;
+        const userId = req.user?.id;
+
+        if (!userId) {
+            return res.status(401).json({ message: "Utilisateur non authentifié" });
+        }
+        // Récupérer la fiche depuis la mémoire
+        const fiche = memoryStorage.getFicheById(userId, ficheId);
+        if (!fiche) {
+            return res.status(404).json({ message: "Fiche non trouvée." });
+        }
+        // Préparer la réponse enrichie sans typage IFiche
+        const ficheObj = (fiche as any).toObject ? (fiche as any).toObject() : { ...fiche };
+        res.status(200).json({
+            ...ficheObj,
+            equipement_conseille: Array.isArray(ficheObj.equipement_conseille) ? ficheObj.equipement_conseille : [],
+            surface: Array.isArray(ficheObj.surface) ? ficheObj.surface : [],
+            type_galeries: Array.isArray(ficheObj.type_galeries) ? ficheObj.type_galeries : [],
+            interets: typeof ficheObj.interets === 'string' ? ficheObj.interets : '',
+            commentaire: typeof ficheObj.commentaire === 'string' ? ficheObj.commentaire : ''
+        });
+    } catch (error: unknown) {
+        console.error("Erreur lors de la récupération de la fiche:", error);
+        res.status(500).json({ 
+            message: "Erreur lors de la récupération de la fiche.",
+            error: getErrorMessage(error) 
+        });
+    }
+}
+
+/**
+ * Gère la récupération des fiches d'un utilisateur
+ */
+export async function handleGetUserFiches(req: Request, res: Response) {
+    try {
+        const targetUserId = req.params.userId;
+        const currentUserId = req.user?.id;
+        
+        if (!currentUserId) {
+            return res.status(401).json({ message: "Authentification requise." });
+        }
+        
+        // Si l'utilisateur demande les fiches d'un autre utilisateur
+        if (targetUserId && targetUserId !== currentUserId && !req.user?.isAdmin) {
+            return res.status(403).json({ message: "Vous n'êtes pas autorisé à voir les fiches de cet utilisateur." });
+        }
+        
+        // Utiliser l'ID de l'utilisateur courant
+        const fiches = memoryStorage.getAllFiches(currentUserId);
+        
+        res.status(200).json(fiches);
+    } catch (error: unknown) {
+        console.error("Erreur lors de la récupération des fiches de l'utilisateur:", error);
+        res.status(500).json({ 
+            message: "Erreur lors de la récupération des fiches de l'utilisateur.",
+            error: getErrorMessage(error) 
+        });
+    }
+}
+
+/**
+ * Ajoute un point à une fiche
+ */
+export async function handleAddPointToFiche(req: Request, res: Response) {
+    try {
+        const { ficheId, pointId } = req.body;
+        const userId = req.user?.id;
+        
+        if (!userId) {
+            return res.status(401).json({ message: "Utilisateur non authentifié" });
+        }
+        
+        if (!ficheId || !pointId) {
+            return res.status(400).json({ message: "ID de la fiche et ID du point requis" });
+        }
+
+        // Ajouter le point à la fiche en mémoire
+        const result = memoryStorage.addPointToFiche(userId, ficheId, pointId);
+        
+        if (!result) {
+            return res.status(404).json({ message: "Fiche ou point non trouvé" });
+        }
+        
+        // Synchronisation immédiate et vérification du résultat
+        const syncResult = await syncService.syncNow(userId);
+        
+        if (!syncResult.success) {
+            return res.status(500).json({
+                message: "Le point a été ajouté à la fiche en mémoire mais n'a pas pu être synchronisé avec la base de données",
+                error: syncResult.error,
+                ficheId,
+                pointId,
+                syncFailed: true
+            });
+        }
+        
+        res.status(200).json({
+            message: "Point ajouté à la fiche avec succès",
+            ficheId,
+            pointId,
+            syncSuccess: true
+        });
+    } catch (error: unknown) {
+        console.error("Erreur lors de l'ajout du point �� la fiche:", error);
+        res.status(500).json({
+            message: "Erreur lors de l'ajout du point à la fiche.",
+            error: getErrorMessage(error) 
+        });
+    }
+}
+
+/**
+ * Supprime un point d'une fiche
+ */
+export async function handleRemovePointFromFiche(req: Request, res: Response) {
+    try {
+        const { ficheId, pointId } = req.body;
+        const userId = req.user?.id;
+        
+        if (!userId) {
+            return res.status(401).json({ message: "Utilisateur non authentifié" });
+        }
+        
+        if (!ficheId || !pointId) {
+            return res.status(400).json({ message: "ID de la fiche et ID du point requis" });
+        }
+
+        // Vérifier que le point et la fiche existent
+        const point = memoryStorage.getPointById(userId, pointId);
+        const fiche = memoryStorage.getFicheById(userId, ficheId);
+        
+        if (!point || !fiche) {
+            return res.status(404).json({ 
+                message: !point ? "Point non trouvé" : "Fiche non trouvée" 
+            });
+        }
+        
+        // Vérifier si le point est réellement associé à cette fiche
+        const isAssociated = fiche.points_ids.some(id => id.toString() === pointId);
+        if (!isAssociated) {
+            return res.status(400).json({ 
+                message: "Le point n'est pas associé à cette fiche" 
+            });
+        }
+
+        // Supprimer le point de la fiche en mémoire
+        const result = memoryStorage.removePointFromFiche(userId, ficheId, pointId);
+        
+        if (!result) {
+            return res.status(404).json({ 
+                message: "Erreur lors de la dissociation du point de la fiche" 
+            });
+        }
+        
+        // Synchronisation immédiate pour garantir la mise à jour dans la BDD
+        const syncResult = await syncService.syncNow(userId);
+        
+        if (!syncResult.success) {
+            return res.status(500).json({
+                success: false,
+                message: "La dissociation a été effectuée en mémoire mais n'a pas pu être synchronisée avec la base de données",
+                error: syncResult.error,
+                ficheId,
+                pointId,
+                syncFailed: true
+            });
+        }
+        
+        res.status(200).json({
+            success: true,
+            message: "Point dissocié de la fiche avec succès",
+            ficheId,
+            pointId,
+            syncSuccess: true
+        });
+    } catch (error: unknown) {
+        console.error("Erreur lors de la dissociation point-fiche:", error);
+        res.status(500).json({ 
+            success: false,
+            message: "Erreur lors de la dissociation du point de la fiche",
+            error: getErrorMessage(error) 
+        });
+    }
+}
+
+/**
+ * Récupère tous les points associés à une fiche
+ */
+export async function handleGetPointsByFicheId(req: Request, res: Response) {
+    try {
+        const { ficheId } = req.params;
+        const userId = req.user?.id;
+        
+        if (!userId) {
+            return res.status(401).json({ message: "Utilisateur non authentifié" });
+        }
+        
+        if (!ficheId) {
+            return res.status(400).json({ message: "ID de fiche manquant" });
+        }
+
+        // Récupérer les points depuis la mémoire
+        const points = memoryStorage.getPointsByFicheId(userId, ficheId);
+        
+        res.status(200).json({
+            success: true,
+            points,
+            count: points.length
+        });
+    } catch (error: unknown) {
+        console.error("Erreur récupération des points de la fiche:", error);
+        res.status(500).json({
+            success: false,
+            message: getErrorMessage(error)
+        });
+    }
+}
+
+/**
+ * Récupère la fiche associée à un point spécifique
+ */
+export async function handleGetFicheByPointId(req: Request, res: Response) {
+  try {
+    const pointId = req.params.pointId;
+    const userId = req.user?.id;
+    
+    if (!userId) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+    
+    if (!pointId) {
+      return res.status(400).json({ message: "ID du point requis" });
+    }
+    
+    // Vérifier d'abord si le point existe
+    const point = memoryStorage.getPointById(userId, pointId);
+    
+    if (!point) {
+      return res.status(404).json({ message: "Point non trouvé" });
+    }
+    
+    // Tentative d'obtenir la ficheId directement du point
+    if ((point as any).ficheId) {
+      const ficheIdStr = (point as any).ficheId.toString(); // Fonctionne avec ObjectID ou string
+      console.log(`Point ${pointId} est associé à la fiche ${ficheIdStr}`);
+      const fiche = memoryStorage.getFicheById(userId, ficheIdStr);
+      
+      if (fiche) {
+        return res.status(200).json(fiche);
+      }
+    }
+    
+    // Méthode alternative - parcourir toutes les fiches
+    const fiches = memoryStorage.getAllFiches(userId);
+    const associatedFiche = fiches.find(fiche => 
+      fiche.points_ids.some(id => id.toString() === pointId)
+    );
+    
+    if (associatedFiche) {
+      // Mise à jour du point avec l'ID de la fiche comme ObjectID
+      try {
+        const objectIdFicheId = new mongoose.Types.ObjectId(String((associatedFiche as any)._id));
+        Object.assign(point, { ficheId: objectIdFicheId });
+        memoryStorage.storePoint(userId, point);
+      } catch (error) {
+        // Fallback en cas d'erreur
+        Object.assign(point, { ficheId: String((associatedFiche as any)._id) });
+        memoryStorage.storePoint(userId, point);
+      }
+      
+      return res.status(200).json(associatedFiche);
+    }
+    
+    // Si aucune fiche n'est trouvée
+    return res.status(404).json({ message: "Aucune fiche associée à ce point n'a été trouvée" });
+  } catch (error: unknown) {
+    console.error("Erreur lors de la récupération de la fiche associée au point:", error);
+    res.status(500).json({ 
+      message: "Erreur lors de la récupération de la fiche associée au point",
+      error: getErrorMessage(error) 
+    });
+  }
+}
+
+/**
+ * Recherche avancée de fiches avec filtres et rayon géographique
+ * GET /api/fiches/search?searchText=...&ville=...&type=...&etat=...&rayonVille=...&rayonDistance=...
+ */
+export async function handleSearchFiches(req: Request, res: Response) {
+    try {
+        const userId = req.user?.id;
+        if (!userId) {
+            return res.status(401).json({ message: "Utilisateur non authentifié" });
+        }
+
+        console.log('[SEARCH] User ID:', userId);
+
+        // Récupérer tous les fiches de l'utilisateur
+        let fiches = memoryStorage.getAllFiches(userId);
+        console.log('[SEARCH] Fiches en mémoire:', fiches.length);
+
+        // Si aucune fiche en mémoire, charger depuis MongoDB
+        if (!fiches || fiches.length === 0) {
+            console.log('[SEARCH] Chargement depuis MongoDB...');
+            fiches = await FicheModel.find({ userId }).lean() as unknown as IFiche[];
+            console.log('[SEARCH] Fiches depuis MongoDB:', fiches.length);
+        }
+
+        // Log de quelques fiches pour debug
+        if (fiches.length > 0) {
+            console.log('[SEARCH] Exemple de fiche:', {
+                name: fiches[0].name,
+                type: fiches[0].type,
+                ville: fiches[0].ville,
+                etat: fiches[0].etat
+            });
+        }
+
+        // Filtres textuels
+        const { searchText, ville, type, etat, difficulte_acces, risque_oxygene, etat_general, rayonVille, rayonDistance } = req.query;
+
+        console.log('[SEARCH] Filtres reçus:', {
+            searchText,
+            ville,
+            type,
+            etat,
+            difficulte_acces,
+            risque_oxygene,
+            etat_general
+        });
+
+        let fichesBeforeFilter = fiches.length;
+
+        if (searchText && typeof searchText === 'string' && searchText.trim()) {
+            const searchLower = searchText.toLowerCase();
+            fiches = fiches.filter(fiche =>
+                fiche.name.toLowerCase().includes(searchLower) ||
+                fiche.ville.toLowerCase().includes(searchLower) ||
+                fiche.type.toLowerCase().includes(searchLower) ||
+                fiche.etat.toLowerCase().includes(searchLower)
+            );
+            console.log('[SEARCH] Après filtre searchText:', fiches.length, '(était', fichesBeforeFilter, ')');
+            fichesBeforeFilter = fiches.length;
+        }
+
+        if (ville && typeof ville === 'string' && ville.trim()) {
+            const villeLower = ville.toLowerCase();
+            fiches = fiches.filter(fiche => fiche.ville && fiche.ville.toLowerCase().includes(villeLower));
+            console.log('[SEARCH] Après filtre ville:', fiches.length, '(était', fichesBeforeFilter, ')');
+            fichesBeforeFilter = fiches.length;
+        }
+
+        if (type && typeof type === 'string' && type.trim()) {
+            const typeNorm = normalizeString(type);
+            console.log('[SEARCH] Type normalisé recherché:', typeNorm);
+            fiches = fiches.filter(fiche => {
+                if (!fiche.type) return false;
+                const ficheTypeNorm = normalizeString(fiche.type);
+                console.log('[SEARCH] Comparaison:', ficheTypeNorm, '===', typeNorm, '?', ficheTypeNorm === typeNorm);
+                return ficheTypeNorm === typeNorm;
+            });
+            console.log('[SEARCH] Après filtre type:', fiches.length, '(était', fichesBeforeFilter, ')');
+            fichesBeforeFilter = fiches.length;
+        }
+
+        if (etat && typeof etat === 'string' && etat.trim()) {
+            const etatNorm = normalizeString(etat);
+            fiches = fiches.filter(fiche => fiche.etat && normalizeString(fiche.etat) === etatNorm);
+            console.log('[SEARCH] Après filtre etat:', fiches.length, '(était', fichesBeforeFilter, ')');
+            fichesBeforeFilter = fiches.length;
+        }
+
+        if (difficulte_acces && typeof difficulte_acces === 'string' && difficulte_acces.trim()) {
+            const diffNorm = normalizeString(difficulte_acces);
+            fiches = fiches.filter(fiche => fiche.difficulte_acces && normalizeString(fiche.difficulte_acces) === diffNorm);
+            console.log('[SEARCH] Après filtre difficulte_acces:', fiches.length, '(était', fichesBeforeFilter, ')');
+            fichesBeforeFilter = fiches.length;
+        }
+
+        if (risque_oxygene && typeof risque_oxygene === 'string' && risque_oxygene.trim()) {
+            const risqueNorm = normalizeString(risque_oxygene);
+            fiches = fiches.filter(fiche => fiche.risque_oxygene && normalizeString(fiche.risque_oxygene) === risqueNorm);
+            console.log('[SEARCH] Après filtre risque_oxygene:', fiches.length, '(était', fichesBeforeFilter, ')');
+            fichesBeforeFilter = fiches.length;
+        }
+
+        if (etat_general && typeof etat_general === 'string' && etat_general.trim()) {
+            const etatGenNorm = normalizeString(etat_general);
+            fiches = fiches.filter(fiche => fiche.etat_general && normalizeString(fiche.etat_general) === etatGenNorm);
+            console.log('[SEARCH] Après filtre etat_general:', fiches.length, '(était', fichesBeforeFilter, ')');
+        }
+
+        // Filtre géographique par rayon autour d'une ville
+        if (rayonVille && typeof rayonVille === 'string' && rayonDistance && !isNaN(Number(rayonDistance))) {
+            const rayonLat = Number(req.query.rayonVilleLat);
+            const rayonLng = Number(req.query.rayonVilleLng);
+            const rayonKm = Number(rayonDistance);
+            console.log('[SEARCH] Filtre rayon:', { rayonVille, rayonLat, rayonLng, rayonKm });
+
+            if (!isNaN(rayonLat) && !isNaN(rayonLng)) {
+                const fichesAvantFiltre = fiches.length;
+
+                fiches = fiches.filter(fiche => {
+                    // Méthode 1: Vérifier les points associés
+                    if (fiche.points_ids && fiche.points_ids.length > 0) {
+                        const points = memoryStorage.getPointsByIds(userId, fiche.points_ids.map(id => id.toString()));
+                        for (const point of points) {
+                            const pointAny = point as any;
+                            let lat = null;
+                            let lng = null;
+                            if (pointAny.location && Array.isArray(pointAny.location.coordinates)) {
+                                // GeoJSON: [lng, lat]
+                                lng = pointAny.location.coordinates[0];
+                                lat = pointAny.location.coordinates[1];
+                            }
+                            if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
+                                const dist = haversineDistanceKm([lat, lng], [rayonLat, rayonLng]);
+                                console.log(`[SEARCH] Distance point ${pointAny._id} → centre:`, dist.toFixed(2), 'km');
+                                if (dist <= rayonKm) {
+                                    return true;
+                                }
+                            }
+                        }
+                    }
+
+                    // Méthode 2: Comparer la ville de la fiche avec la ville du rayon
+                    // Si la fiche est dans la même ville ou une ville proche, l'inclure
+                    if (fiche.ville) {
+                        const ficheVilleLower = fiche.ville.toLowerCase().trim();
+                        const rayonVilleLower = rayonVille.toLowerCase().trim();
+
+                        // Si c'est la même ville, l'inclure automatiquement
+                        if (ficheVilleLower === rayonVilleLower ||
+                            ficheVilleLower.includes(rayonVilleLower) ||
+                            rayonVilleLower.includes(ficheVilleLower)) {
+                            console.log(`[SEARCH] Fiche ${fiche._id} incluse car même ville: ${fiche.ville}`);
+                            return true;
+                        }
+                    }
+
+                    console.log(`[SEARCH] Fiche ${fiche._id} exclue du rayon (pas de points/coords ou ville différente)`);
+                    return false;
+                });
+
+                console.log('[SEARCH] Après filtre rayon:', fiches.length, '(était', fichesAvantFiltre, ')');
+            }
+        }
+
+        console.log('[SEARCH] Résultat final:', fiches.length, 'fiches trouvées');
+        res.status(200).json(fiches);
+    } catch (error: unknown) {
+        console.error("Erreur lors de la recherche avancée de fiches:", error);
+        res.status(500).json({
+            message: "Erreur lors de la recherche avancée de fiches.",
+            error: getErrorMessage(error)
+        });
+    }
+}
+
+// Fonction utilitaire pour calculer la distance Haversine entre deux [lat, lng] en km
+function haversineDistanceKm(a: [number, number], b: [number, number]): number {
+    const toRad = (x: number) => x * Math.PI / 180;
+    const R = 6371; // Rayon de la Terre en km
+    const dLat = toRad(b[0] - a[0]);
+    const dLng = toRad(b[1] - a[1]);
+    const lat1 = toRad(a[0]);
+    const lat2 = toRad(b[0]);
+    const aVal = Math.sin(dLat / 2) ** 2 + Math.cos(lat1) * Math.cos(lat2) * Math.sin(dLng / 2) ** 2;
+    const c = 2 * Math.atan2(Math.sqrt(aVal), Math.sqrt(1 - aVal));
+    return R * c;
+}
+
+// Fonction utilitaire pour supprimer les accents et mettre en minuscule
+function normalizeString(str: string) {
+    return str.normalize('NFD').replace(/\p{Diacritic}/gu, '').toLowerCase();
+}

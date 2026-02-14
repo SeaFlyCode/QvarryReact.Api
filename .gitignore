@@ -1,0 +1,383 @@
+# ════════════════════════════════════════════════════════
+# 🚫 Qvarry - Git Ignore File
+# ════════════════════════════════════════════════════════
+# Monorepo structure: client/ (Next.js) + server/ (Express)
+# ════════════════════════════════════════════════════════
+
+# ════════════════════════════════════════════════════════
+# 📦 Dependencies
+# ════════════════════════════════════════════════════════
+node_modules/
+.pnp
+.pnp.js
+.pnp.*
+
+# ════════════════════════════════════════════════════════
+# 🎨 Next.js (Frontend Client)
+# ════════════════════════════════════════════════════════
+.next/
+out/
+build/
+dist/
+
+# Next.js cache
+.next/cache/
+
+# Next.js build output
+client/.next/
+client/out/
+client/build/
+client/dist/
+
+# TypeScript build info
+*.tsbuildinfo
+next-env.d.ts
+
+# ════════════════════════════════════════════════════════
+# 🚀 Express (Backend Server)
+# ════════════════════════════════════════════════════════
+server/dist/
+server/build/
+server/*.tsbuildinfo
+
+# ════════════════════════════════════════════════════════
+# 🔐 Environment Variables & Configuration
+# ════════════════════════════════════════════════════════
+# Production environment files (injected by Dokploy/Docker)
+.env
+.env.docker
+.env.production
+.env.production.local
+.env.test.local
+
+# Client environment files
+client/.env
+client/.env.local
+client/.env.production
+client/.env.production.local
+
+# Server environment files
+server/.env
+server/.env.local
+server/.env.production
+server/.env.production.local
+
+# ⚠️ Keep development environment files for local setup
+!.env.development
+!.env.example
+!.env.dev
+.env.prod
+!client/.env.development
+!client/.env.example
+!server/.env.development
+!server/.env.example
+
+# ════════════════════════════════════════════════════════
+# 🗄️ Database & Data Files
+# ════════════════════════════════════════════════════════
+*.sqlite
+*.sqlite3
+*.db
+*.db-shm
+*.db-wal
+
+# Database backups
+*.sql
+*.dump
+backups/
+data/
+
+# ════════════════════════════════════════════════════════
+# 🔑 Security & Sensitive Data
+# ════════════════════════════════════════════════════════
+# SSL Certificates
+*.pem
+*.key
+*.cert
+*.crt
+*.p12
+*.pfx
+
+# Secrets & credentials
+secrets/
+.secrets/
+credentials/
+*.secret
+
+# Session & tokens
+sessions/
+tokens/
+
+# ════════════════════════════════════════════════════════
+# 📊 Logs & Debugging
+# ════════════════════════════════════════════════════════
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# Server logs
+server/logs/
+server/*.log
+
+# Client logs
+client/logs/
+client/*.log
+
+# ════════════════════════════════════════════════════════
+# 🧪 Testing & Coverage
+# ════════════════════════════════════════════════════════
+coverage/
+*.lcov
+.nyc_output
+test-results/
+playwright-report/
+.coverage/
+junit.xml
+
+# ════════════════════════════════════════════════════════
+# 🔧 Build & Cache Files
+# ════════════════════════════════════════════════════════
+.cache/
+.parcel-cache/
+.turbo/
+.webpack/
+.eslintcache
+.stylelintcache
+*.cache
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Backup files
+*.bak
+*.backup
+*.old
+*.orig
+*.save
+
+# ════════════════════════════════════════════════════════
+# 📦 Package Managers
+# ════════════════════════════════════════════════════════
+# Yarn
+.yarn/cache
+.yarn/unplugged
+.yarn/build-state.yml
+.yarn/install-state.gz
+yarn.lock
+yarn-error.log
+
+# npm
+package-lock.json
+npm-debug.log*
+
+# pnpm
+pnpm-lock.yaml
+.pnpm-debug.log*
+
+# ════════════════════════════════════════════════════════
+# 💻 IDEs & Editors
+# ════════════════════════════════════════════════════════
+# JetBrains (WebStorm, IntelliJ, PhpStorm, etc.)
+.idea/
+*.iml
+*.iws
+*.ipr
+.idea_modules/
+cmake-build-*/
+out/
+
+# VSCode
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+!.vscode/*.code-snippets
+*.code-workspace
+
+# Sublime Text
+*.sublime-project
+*.sublime-workspace
+.sublime/
+
+# Vim
+[._]*.s[a-v][a-z]
+[._]*.sw[a-p]
+[._]s[a-rt-v][a-z]
+[._]ss[a-gi-z]
+[._]sw[a-p]
+Session.vim
+Sessionx.vim
+.netrwhist
+*~
+
+# Emacs
+*~
+\#*\#
+/.emacs.desktop
+/.emacs.desktop.lock
+*.elc
+auto-save-list
+tramp
+.\#*
+
+# ════════════════════════════════════════════════════════
+# 🍎 macOS
+# ════════════════════════════════════════════════════════
+.DS_Store
+.DS_Store?
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.TemporaryItems
+.Trashes
+.VolumeIcon.icns
+.com.apple.timemachine.donotpresent
+.AppleDB
+.AppleDesktop
+Network Trash Folder
+Temporary Items
+.apdisk
+
+# ════════════════════════════════════════════════════════
+# 🪟 Windows
+# ════════════════════════════════════════════════════════
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+ehthumbs_vista.db
+[Dd]esktop.ini
+$RECYCLE.BIN/
+*.cab
+*.msi
+*.msix
+*.msm
+*.msp
+*.lnk
+
+# ════════════════════════════════════════════════════════
+# 🐧 Linux
+# ════════════════════════════════════════════════════════
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
+
+# ════════════════════════════════════════════════════════
+# 🐳 Docker
+# ════════════════════════════════════════════════════════
+# Keep Dockerfile and docker-compose files
+*.dockerignore.bak
+docker-compose.override.yml
+.dockerignore.local
+
+# Docker volumes
+volumes/
+
+# ════════════════════════════════════════════════════════
+# 🚀 Deployment & Cloud
+# ════════════════════════════════════════════════════════
+.vercel
+.netlify
+.serverless/
+.fusebox/
+
+# Dokploy (deployment platform)
+dokploy/
+.dokploy/
+
+# ════════════════════════════════════════════════════════
+# 📱 Mobile & PWA
+# ════════════════════════════════════════════════════════
+.expo/
+.expo-shared/
+
+# Service Worker
+sw.js
+sw.js.map
+workbox-*.js
+workbox-*.js.map
+
+# ════════════════════════════════════════════════════════
+# 🗺️ Map Files & Assets (Specific to Qvarry)
+# ════════════════════════════════════════════════════════
+# Keep public assets but ignore large map tiles if generated
+client/public/tiles/
+client/public/maps-cache/
+
+# Uploaded user files (if applicable)
+uploads/
+user-uploads/
+temp-uploads/
+
+# ════════════════════════════════════════════════════════
+# 🔍 Monitoring & Analytics
+# ════════════════════════════════════════════════════════
+.sentryclirc
+.lighthouseci/
+
+# ════════════════════════════════════════════════════════
+# 🧰 Miscellaneous
+# ════════════════════════════════════════════════════════
+*.pid
+*.seed
+*.pid.lock
+*.tgz
+*.gz
+*.zip
+*.rar
+*.7z
+*.tar
+
+# OS generated files
+.Spotlight-V100
+.Trashes
+
+# Debug files
+*.stackdump
+core
+
+# IDE specific files
+.project
+.settings/
+.classpath
+.c9/
+.vscode-test/
+.claude
+
+# Lock files for specific tools
+composer.lock
+Gemfile.lock
+
+# ════════════════════════════════════════════════════════
+# ✅ Files to KEEP (Whitelist)
+# ════════════════════════════════════════════════════════
+# Always keep these important files:
+!.gitignore
+!.gitattributes
+!.editorconfig
+!.prettierrc
+!.eslintrc*
+!tsconfig*.json
+!next.config.*
+!tailwind.config.*
+!postcss.config.*
+!README.md
+!LICENSE
+!Dockerfile
+!docker-compose*.yml
+!package.json
+!*.md
+

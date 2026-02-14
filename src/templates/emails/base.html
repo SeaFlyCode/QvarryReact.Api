@@ -1,0 +1,378 @@
+<!DOCTYPE html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <meta http-equiv="X-UA-Compatible" content="IE=edge">
+    <title>{{TITLE}} - QVARRY</title>
+    <!--[if mso]>
+    <noscript>
+        <xml>
+            <o:OfficeDocumentSettings>
+                <o:PixelsPerInch>96</o:PixelsPerInch>
+            </o:OfficeDocumentSettings>
+        </xml>
+    </noscript>
+    <![endif]-->
+    <style>
+        /* Reset */
+        body, table, td, p, a, li, blockquote {
+            -webkit-text-size-adjust: 100%;
+            -ms-text-size-adjust: 100%;
+        }
+        table, td {
+            mso-table-lspace: 0pt;
+            mso-table-rspace: 0pt;
+        }
+        img {
+            -ms-interpolation-mode: bicubic;
+            border: 0;
+            height: auto;
+            line-height: 100%;
+            outline: none;
+            text-decoration: none;
+        }
+
+        /* Base styles */
+        body {
+            margin: 0 !important;
+            padding: 0 !important;
+            background-color: #E8F5E9;
+            font-family: 'Ubuntu', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+
+        /* Container */
+        .email-container {
+            max-width: 600px;
+            margin: 0 auto;
+            background-color: #ffffff;
+        }
+
+        /* Header */
+        .header {
+            background: linear-gradient(135deg, #005100 0%, #047857 100%);
+            padding: 32px 40px;
+            text-align: center;
+        }
+
+        .logo {
+            font-size: 28px;
+            font-weight: 700;
+            color: #ffffff;
+            letter-spacing: 2px;
+            margin: 0;
+        }
+
+        .tagline {
+            font-size: 14px;
+            color: rgba(255, 255, 255, 0.85);
+            margin-top: 8px;
+            font-style: italic;
+        }
+
+        /* Content */
+        .content {
+            padding: 40px;
+            background-color: #ffffff;
+        }
+
+        .greeting {
+            font-size: 22px;
+            font-weight: 600;
+            color: #0f172a;
+            margin: 0 0 24px 0;
+        }
+
+        .text {
+            font-size: 16px;
+            line-height: 1.7;
+            color: #334155;
+            margin: 0 0 20px 0;
+        }
+
+        .text-secondary {
+            font-size: 14px;
+            line-height: 1.6;
+            color: #64748b;
+            margin: 0 0 16px 0;
+        }
+
+        /* Buttons */
+        .button-container {
+            text-align: center;
+            margin: 32px 0;
+        }
+
+        .button {
+            display: inline-block;
+            padding: 14px 32px;
+            background: linear-gradient(135deg, #059669 0%, #047857 100%);
+            color: #ffffff !important;
+            text-decoration: none;
+            font-size: 16px;
+            font-weight: 600;
+            border-radius: 12px;
+            box-shadow: 0 4px 14px rgba(5, 150, 105, 0.35);
+        }
+
+        .button:hover {
+            background: linear-gradient(135deg, #047857 0%, #005100 100%);
+        }
+
+        .button-secondary {
+            background: #ffffff;
+            color: #334155 !important;
+            border: 2px solid #e2e8f0;
+            box-shadow: none;
+        }
+
+        .button-danger {
+            background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+            box-shadow: 0 4px 14px rgba(220, 38, 38, 0.35);
+        }
+
+        /* Info Box */
+        .info-box {
+            background-color: #f0fdf4;
+            border: 1px solid #bbf7d0;
+            border-left: 4px solid #059669;
+            border-radius: 8px;
+            padding: 20px;
+            margin: 24px 0;
+        }
+
+        .info-box.warning {
+            background-color: #fffbeb;
+            border-color: #fde68a;
+            border-left-color: #f59e0b;
+        }
+
+        .info-box.danger {
+            background-color: #fef2f2;
+            border-color: #fecaca;
+            border-left-color: #dc2626;
+        }
+
+        .info-box.info {
+            background-color: #f0f9ff;
+            border-color: #bae6fd;
+            border-left-color: #0284c7;
+        }
+
+        .info-box-title {
+            font-size: 14px;
+            font-weight: 600;
+            color: #0f172a;
+            margin: 0 0 8px 0;
+        }
+
+        .info-box-text {
+            font-size: 14px;
+            color: #334155;
+            margin: 0;
+            line-height: 1.5;
+        }
+
+        /* Code/Token Box */
+        .code-box {
+            background: linear-gradient(135deg, #f8fafc 0%, #f1f5f9 100%);
+            border: 2px dashed #cbd5e1;
+            border-radius: 12px;
+            padding: 24px;
+            text-align: center;
+            margin: 24px 0;
+        }
+
+        .code {
+            font-size: 32px;
+            font-weight: 700;
+            letter-spacing: 8px;
+            color: #005100;
+            font-family: 'Courier New', monospace;
+        }
+
+        .code-label {
+            font-size: 12px;
+            color: #64748b;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-top: 12px;
+        }
+
+        /* Details List */
+        .details-table {
+            width: 100%;
+            margin: 24px 0;
+            border-collapse: collapse;
+        }
+
+        .details-table td {
+            padding: 12px 0;
+            border-bottom: 1px solid #e2e8f0;
+            font-size: 14px;
+        }
+
+        .details-table td:first-child {
+            color: #64748b;
+            font-weight: 500;
+            width: 40%;
+        }
+
+        .details-table td:last-child {
+            color: #0f172a;
+            font-weight: 600;
+        }
+
+        /* Divider */
+        .divider {
+            height: 1px;
+            background: linear-gradient(to right, transparent, #e2e8f0, transparent);
+            margin: 32px 0;
+        }
+
+        /* Footer */
+        .footer {
+            background-color: #f8fafc;
+            padding: 32px 40px;
+            text-align: center;
+            border-top: 1px solid #e2e8f0;
+        }
+
+        .footer-text {
+            font-size: 13px;
+            color: #64748b;
+            margin: 0 0 16px 0;
+            line-height: 1.6;
+        }
+
+        .footer-links {
+            margin: 20px 0;
+        }
+
+        .footer-link {
+            color: #059669;
+            text-decoration: none;
+            font-size: 13px;
+            font-weight: 500;
+            margin: 0 12px;
+        }
+
+        .footer-link:hover {
+            text-decoration: underline;
+        }
+
+        .social-links {
+            margin: 20px 0;
+        }
+
+        .social-link {
+            display: inline-block;
+            width: 36px;
+            height: 36px;
+            background-color: #e2e8f0;
+            border-radius: 50%;
+            margin: 0 6px;
+            line-height: 36px;
+            color: #64748b;
+            text-decoration: none;
+        }
+
+        .copyright {
+            font-size: 12px;
+            color: #94a3b8;
+            margin: 20px 0 0 0;
+        }
+
+        /* Security Notice */
+        .security-notice {
+            background-color: #fef2f2;
+            border: 1px solid #fecaca;
+            border-radius: 8px;
+            padding: 16px;
+            margin: 24px 0;
+            font-size: 13px;
+            color: #991b1b;
+            text-align: center;
+        }
+
+        .security-notice strong {
+            display: block;
+            margin-bottom: 4px;
+        }
+
+        /* Responsive */
+        @media screen and (max-width: 600px) {
+            .email-container {
+                width: 100% !important;
+            }
+            .content, .header, .footer {
+                padding: 24px !important;
+            }
+            .greeting {
+                font-size: 20px;
+            }
+            .code {
+                font-size: 24px;
+                letter-spacing: 4px;
+            }
+            .button {
+                display: block;
+                padding: 16px 24px;
+            }
+        }
+    </style>
+</head>
+<body>
+    <center style="width: 100%; background-color: #E8F5E9; padding: 40px 0;">
+        <!--[if mso]>
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" width="600" align="center">
+        <tr>
+        <td>
+        <![endif]-->
+
+        <table role="presentation" cellspacing="0" cellpadding="0" border="0" class="email-container" style="border-radius: 16px; overflow: hidden; box-shadow: 0 4px 20px rgba(0, 0, 0, 0.08);">
+            <!-- Header -->
+            <tr>
+                <td class="header">
+                    <h1 class="logo">QVARRY</h1>
+                    <p class="tagline">Map your adventure !</p>
+                </td>
+            </tr>
+
+            <!-- Content -->
+            <tr>
+                <td class="content">
+                    {{CONTENT}}
+                </td>
+            </tr>
+
+            <!-- Footer -->
+            <tr>
+                <td class="footer">
+                    <p class="footer-text">
+                        Cet email vous a été envoyé car vous êtes inscrit sur QVARRY.<br>
+                        Si vous n'êtes pas à l'origine de cette action, ignorez cet email.
+                    </p>
+
+                    <div class="footer-links">
+                        <a href="{{FRONTEND_URL}}" class="footer-link">Accéder à QVARRY</a>
+                        <a href="{{FRONTEND_URL}}/profil" class="footer-link">Mon profil</a>
+                        <a href="mailto:support@qvarry.com" class="footer-link">Support</a>
+                    </div>
+
+                    <p class="copyright">
+                        © {{YEAR}} QVARRY. Tous droits réservés.<br>
+                        Plateforme collaborative de cartographie géographique
+                    </p>
+                </td>
+            </tr>
+        </table>
+
+        <!--[if mso]>
+        </td>
+        </tr>
+        </table>
+        <![endif]-->
+    </center>
+</body>
+</html>
