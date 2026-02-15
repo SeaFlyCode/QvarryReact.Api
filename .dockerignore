@@ -1,0 +1,69 @@
+# =============================================================================
+# QvarryReact API - Docker Ignore
+# Exclut les fichiers inutiles du contexte de build Docker
+# =============================================================================
+
+# Dépendances (installées dans le container)
+node_modules/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build output (généré dans le container)
+dist/
+
+# Environnement local
+.env
+.env.local
+.env.development
+.env.test
+.env.production
+.env*.local
+
+# IDE et éditeurs
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+documentation/
+*.md
+!README.md
+
+# Tests
+coverage/
+*.test.ts
+*.spec.ts
+__tests__/
+jest.config.*
+
+# Fichiers temporaires
+*.log
+*.tmp
+*.temp
+.DS_Store
+Thumbs.db
+
+# Docker (évite la récursion)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# Scripts de développement non nécessaires au build
+scripts/audit-*.ts
+scripts/README*.md
+
+# Autres
+.npmrc
+.yarnrc
+.editorconfig
+.prettierrc*
+.eslintrc*
+tsconfig.tsbuildinfo
+

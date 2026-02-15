@@ -1,570 +1,626 @@
 {
-  "timestamp": "2026-01-27T16:20:35.182Z",
-  "totalFiles": 80,
-  "successCount": 80,
+  "timestamp": "2026-02-14T16:57:52.500Z",
+  "totalFiles": 88,
+  "successCount": 88,
   "failureCount": 0,
-  "totalOriginalSize": 1373953,
-  "totalNewSize": 3270394,
+  "totalOriginalSize": 1044155,
+  "totalNewSize": 1233918,
   "files": [
     {
       "file": "config/database.js",
       "success": true,
       "isCritical": true,
       "originalSize": 2526,
-      "newSize": 5791
+      "newSize": 5875
+    },
+    {
+      "file": "config/swagger.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 5164,
+      "newSize": 8463
     },
     {
       "file": "controllers/adminControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 52230,
-      "newSize": 53057
+      "newSize": 53653
     },
     {
       "file": "controllers/authControllers.js",
       "success": true,
       "isCritical": true,
       "originalSize": 95506,
-      "newSize": 68027
+      "newSize": 68473
     },
     {
       "file": "controllers/contactControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 27470,
-      "newSize": 29180
+      "newSize": 29575
     },
     {
       "file": "controllers/conversationsControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 46336,
-      "newSize": 48241
+      "newSize": 48573
     },
     {
       "file": "controllers/dataShareControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 15901,
-      "newSize": 21963
+      "newSize": 21695
     },
     {
       "file": "controllers/fichesControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 31395,
-      "newSize": 38555
+      "newSize": 38175
     },
     {
       "file": "controllers/listsControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 25734,
-      "newSize": 31542
+      "newSize": 31440
     },
     {
       "file": "controllers/messagesControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 22116,
-      "newSize": 24476
+      "newSize": 24807
+    },
+    {
+      "file": "controllers/mobileAuthControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 25902,
+      "newSize": 29445
+    },
+    {
+      "file": "controllers/mobileSyncControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 13064,
+      "newSize": 13873
+    },
+    {
+      "file": "controllers/mobileTwoFactorControllers.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 36063,
+      "newSize": 36266
     },
     {
       "file": "controllers/notificationsControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 8341,
-      "newSize": 13626
+      "newSize": 13694
     },
     {
       "file": "controllers/pointsControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 28618,
-      "newSize": 32464
+      "newSize": 32652
     },
     {
       "file": "controllers/securityControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 5344,
-      "newSize": 10345
+      "newSize": 10086
     },
     {
       "file": "controllers/sessionControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2388,
-      "newSize": 6004
+      "newSize": 5811
     },
     {
       "file": "controllers/syncController.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1039,
-      "newSize": 4255
+      "newSize": 4584
     },
     {
       "file": "controllers/twoFactorControllers.js",
       "success": true,
       "isCritical": true,
       "originalSize": 23168,
-      "newSize": 25617
+      "newSize": 26003
     },
     {
       "file": "controllers/userControllers.js",
       "success": true,
       "isCritical": false,
       "originalSize": 21863,
-      "newSize": 26780
+      "newSize": 27133
     },
     {
       "file": "middlewares/adminMiddleware.js",
       "success": true,
       "isCritical": true,
       "originalSize": 2255,
-      "newSize": 5811
+      "newSize": 6434
     },
     {
       "file": "middlewares/authMiddleware.js",
       "success": true,
       "isCritical": true,
-      "originalSize": 13880,
-      "newSize": 15453
+      "originalSize": 18622,
+      "newSize": 18376
     },
     {
       "file": "middlewares/console-interceptor.js",
       "success": true,
       "isCritical": false,
       "originalSize": 61,
-      "newSize": 2724
+      "newSize": 2679
     },
     {
       "file": "middlewares/maintenanceMiddleware.js",
       "success": true,
       "isCritical": false,
       "originalSize": 4651,
-      "newSize": 6384
+      "newSize": 6505
+    },
+    {
+      "file": "middlewares/mobileAuthMiddleware.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 8781,
+      "newSize": 11761
+    },
+    {
+      "file": "middlewares/mobileSecurityMiddleware.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 25368,
+      "newSize": 23581
     },
     {
       "file": "middlewares/rateLimitMiddleware.js",
       "success": true,
       "isCritical": false,
       "originalSize": 8534,
-      "newSize": 13739
+      "newSize": 13868
     },
     {
       "file": "middlewares/turnstileMiddleware.js",
       "success": true,
       "isCritical": false,
       "originalSize": 5776,
-      "newSize": 8505
+      "newSize": 8773
     },
     {
       "file": "models/auditLogs.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2511,
-      "newSize": 6381
+      "newSize": 6149
     },
     {
       "file": "models/blockedIps.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2720,
-      "newSize": 6228
+      "newSize": 6342
     },
     {
       "file": "models/contacts.js",
       "success": true,
       "isCritical": false,
       "originalSize": 666,
-      "newSize": 3769
+      "newSize": 3568
     },
     {
       "file": "models/conversations.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2476,
-      "newSize": 6054
-    },
-    {
-      "file": "models/dataHistory.js",
-      "success": true,
-      "isCritical": false,
-      "originalSize": 3628,
-      "newSize": 6978
+      "newSize": 6364
     },
     {
       "file": "models/dataShare.js",
       "success": true,
       "isCritical": false,
       "originalSize": 4517,
-      "newSize": 7887
+      "newSize": 7683
     },
     {
       "file": "models/deletedData.js",
       "success": true,
       "isCritical": false,
       "originalSize": 3942,
-      "newSize": 7194
+      "newSize": 7034
     },
     {
       "file": "models/fiches.js",
       "success": true,
       "isCritical": false,
       "originalSize": 3803,
-      "newSize": 7822
+      "newSize": 7537
     },
     {
       "file": "models/keys.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1991,
-      "newSize": 5560
+      "newSize": 5505
     },
     {
       "file": "models/lists.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2429,
-      "newSize": 6110
+      "newSize": 6007
     },
     {
       "file": "models/maintenance.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2304,
-      "newSize": 5753
+      "newSize": 5869
     },
     {
       "file": "models/messages.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2759,
-      "newSize": 6800
+      "newSize": 6884
     },
     {
       "file": "models/notifications.js",
       "success": true,
       "isCritical": false,
       "originalSize": 3582,
-      "newSize": 7552
+      "newSize": 7616
     },
     {
       "file": "models/points.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2679,
-      "newSize": 5929
+      "newSize": 6037
     },
     {
       "file": "models/refreshTokens.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2800,
-      "newSize": 6116
+      "newSize": 6144
     },
     {
       "file": "models/users.js",
       "success": true,
       "isCritical": false,
       "originalSize": 4026,
-      "newSize": 7009
+      "newSize": 7351
     },
     {
       "file": "routes/adminRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 4227,
-      "newSize": 6758
+      "newSize": 6838
     },
     {
       "file": "routes/authRoutes.js",
       "success": true,
       "isCritical": false,
-      "originalSize": 2301,
-      "newSize": 5411
+      "originalSize": 8559,
+      "newSize": 5558
     },
     {
       "file": "routes/contactRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1718,
-      "newSize": 4474
+      "newSize": 4556
     },
     {
       "file": "routes/conversationsRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1940,
-      "newSize": 5337
+      "newSize": 5562
     },
     {
       "file": "routes/dataShareRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1152,
-      "newSize": 4260
+      "newSize": 4243
     },
     {
       "file": "routes/fichesRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2222,
-      "newSize": 5734
+      "newSize": 5651
     },
     {
       "file": "routes/listsRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1788,
-      "newSize": 5436
+      "newSize": 5458
     },
     {
       "file": "routes/maintenanceRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 6206,
-      "newSize": 8999
+      "newSize": 8918
     },
     {
       "file": "routes/messagesRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1339,
-      "newSize": 4312
+      "newSize": 4416
+    },
+    {
+      "file": "routes/mobileAuthRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 3491,
+      "newSize": 4406
+    },
+    {
+      "file": "routes/mobileSyncRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 6055,
+      "newSize": 4518
+    },
+    {
+      "file": "routes/mobileTwoFactorRoutes.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 5913,
+      "newSize": 5293
     },
     {
       "file": "routes/notificationsRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1534,
-      "newSize": 4183
+      "newSize": 4567
     },
     {
       "file": "routes/pointsRoutes.js",
       "success": true,
       "isCritical": false,
-      "originalSize": 1186,
-      "newSize": 4737
+      "originalSize": 6351,
+      "newSize": 4803
     },
     {
       "file": "routes/securityRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1262,
-      "newSize": 4074
+      "newSize": 4038
     },
     {
       "file": "routes/twoFactorRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1791,
-      "newSize": 4597
+      "newSize": 4702
     },
     {
       "file": "routes/userRoutes.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1236,
-      "newSize": 4432
-    },
-    {
-      "file": "scripts/migrateAdminValidation.js",
-      "success": true,
-      "isCritical": false,
-      "originalSize": 498317,
-      "newSize": 2202017
+      "newSize": 4400
     },
     {
       "file": "server.js",
       "success": true,
       "isCritical": true,
-      "originalSize": 29612,
-      "newSize": 28437
+      "originalSize": 31603,
+      "newSize": 29132
     },
     {
       "file": "services/auditService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 10341,
-      "newSize": 13561
+      "newSize": 13383
     },
     {
       "file": "services/cronJobs.js",
       "success": true,
       "isCritical": false,
-      "originalSize": 4245,
-      "newSize": 8258
+      "originalSize": 4225,
+      "newSize": 8296
     },
     {
       "file": "services/dataArchiveService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 6534,
-      "newSize": 8329
+      "newSize": 8257
     },
     {
       "file": "services/dataShareService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 50156,
-      "newSize": 40758
+      "newSize": 40730
     },
     {
       "file": "services/emailService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 22080,
-      "newSize": 25840
+      "newSize": 25764
     },
     {
       "file": "services/fichesServices.js",
       "success": true,
       "isCritical": false,
       "originalSize": 7483,
-      "newSize": 8882
+      "newSize": 8889
     },
     {
       "file": "services/memoryStorageService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 37631,
-      "newSize": 40396
+      "newSize": 39953
+    },
+    {
+      "file": "services/mobileSyncService.js",
+      "success": true,
+      "isCritical": false,
+      "originalSize": 24220,
+      "newSize": 26893
     },
     {
       "file": "services/notificationService.js",
       "success": true,
       "isCritical": false,
-      "originalSize": 7559,
-      "newSize": 10969
+      "originalSize": 7549,
+      "newSize": 11092
     },
     {
       "file": "services/pointServices.js",
       "success": true,
       "isCritical": false,
       "originalSize": 4550,
-      "newSize": 8126
+      "newSize": 8509
     },
     {
       "file": "services/redisSessionService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 27141,
-      "newSize": 25611
+      "newSize": 25888
     },
     {
       "file": "services/refreshTokenService.js",
       "success": true,
       "isCritical": true,
       "originalSize": 9001,
-      "newSize": 12643
+      "newSize": 12022
     },
     {
       "file": "services/securityAlertService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 17206,
-      "newSize": 23966
+      "newSize": 24071
     },
     {
       "file": "services/sessionService.js",
       "success": true,
       "isCritical": true,
       "originalSize": 9456,
-      "newSize": 11411
+      "newSize": 11603
     },
     {
       "file": "services/syncService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 3108,
-      "newSize": 6908
+      "newSize": 6959
     },
     {
       "file": "services/userServices.js",
       "success": true,
       "isCritical": false,
       "originalSize": 12093,
-      "newSize": 15319
+      "newSize": 15532
     },
     {
       "file": "services/validationService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2577,
-      "newSize": 6014
+      "newSize": 6184
     },
     {
       "file": "services/webSocketService.js",
       "success": true,
       "isCritical": false,
       "originalSize": 50069,
-      "newSize": 41184
+      "newSize": 41543
     },
     {
       "file": "utils/communicationEncryptionUtils.js",
       "success": true,
       "isCritical": true,
       "originalSize": 5246,
-      "newSize": 7998
+      "newSize": 8235
     },
     {
       "file": "utils/deviceFingerprint.js",
       "success": true,
       "isCritical": false,
       "originalSize": 2625,
-      "newSize": 5045
+      "newSize": 5033
     },
     {
       "file": "utils/emailUtils.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1673,
-      "newSize": 4387
+      "newSize": 4430
     },
     {
       "file": "utils/errorUtils.js",
       "success": true,
       "isCritical": false,
       "originalSize": 1173,
-      "newSize": 3695
+      "newSize": 3553
     },
     {
       "file": "utils/jwtKeyManager.js",
       "success": true,
       "isCritical": true,
       "originalSize": 4756,
-      "newSize": 7193
+      "newSize": 7652
     },
     {
       "file": "utils/masterEncryptionUtils.js",
       "success": true,
       "isCritical": true,
       "originalSize": 5237,
-      "newSize": 7183
+      "newSize": 6951
     },
     {
       "file": "utils/passwordUtils.js",
       "success": true,
       "isCritical": true,
       "originalSize": 3798,
-      "newSize": 5771
+      "newSize": 5875
     },
     {
       "file": "utils/rsaEncryptionUtils.js",
       "success": true,
       "isCritical": true,
       "originalSize": 11794,
-      "newSize": 13059
+      "newSize": 12826
     },
     {
       "file": "utils/userEncryptionUtils.js",
       "success": true,
       "isCritical": true,
       "originalSize": 6625,
-      "newSize": 9009
+      "newSize": 8393
     }
   ]
 }

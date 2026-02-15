@@ -1,6 +1,6 @@
 import mongoose from "mongoose";
 import NotificationModel, { INotification, NotificationType } from "../models/notifications";
-import { webSocketService } from "../services/webSocketService"; // Correction de l'import nommé
+import { webSocketService } from "./webSocketService"; // Correction de l'import nommé
 import dataArchiveService from "./dataArchiveService";
 
 /**

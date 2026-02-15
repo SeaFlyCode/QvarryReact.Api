@@ -9,11 +9,11 @@ import * as path from "path";
 import * as fs from "fs";
 import { getErrorMessage } from "./utils/errorUtils";
 
-// Charger les variables d'environnement depuis la racine du monorepo
-// On remonte d'un niveau car le serveur est dans /server
-// Priorité : .env (dev) > .env (prod/déployé)
-const rootEnvLocalPath = path.resolve(__dirname, '../../.env');
-const rootEnvPath = path.resolve(__dirname, '../../.env');
+// Charger les variables d'environnement depuis la racine du projet
+// On remonte d'un niveau car le serveur est dans /src
+// Priorité : .env.local (dev) > .env (prod/déployé)
+const rootEnvLocalPath = path.resolve(__dirname, '../.env.local');
+const rootEnvPath = path.resolve(__dirname, '../.env');
 
 let envFile = rootEnvPath;
 let envType = 'deployed';
@@ -75,6 +75,41 @@ if (NODE_ENV === 'production') {
     console.log('🔒 [SECURITY] Trust proxy activé (production)');
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// RATE LIMITER GLOBAL - Filet de sécurité (catch-all)
+// ═══════════════════════════════════════════════════════════════════════════
+// Ce rate limiter très permissif s'applique à TOUTES les requêtes.
+// Il sert de protection de secours si un rate limiter spécifique a été oublié.
+// Les autres rate limiters (plus stricts) s'appliquent EN PLUS de celui-ci.
+// ═══════════════════════════════════════════════════════════════════════════
+const globalRateLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: NODE_ENV === 'production' ? 1000 : 5000, // 1000 req/min en prod, 5000 en dev
+    message: {
+        error: "Trop de requêtes globales, veuillez réessayer plus tard.",
+        code: "GLOBAL_RATE_LIMIT_EXCEEDED",
+        retryAfter: 60
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skip: (req) => {
+        // Ne pas limiter les health checks (nécessaires pour Docker/K8s)
+        return req.path === '/health';
+    },
+    handler: (req, res) => {
+        console.warn(`🚨 [GLOBAL RATE LIMIT] IP ${req.ip} a dépassé la limite globale (${req.path})`);
+        res.status(429).json({
+            error: "Trop de requêtes, veuillez réessayer plus tard.",
+            code: "GLOBAL_RATE_LIMIT_EXCEEDED",
+            retryAfter: 60
+        });
+    }
+});
+
+// Appliquer le rate limiter global EN PREMIER (avant tous les autres middlewares)
+app.use(globalRateLimiter);
+console.log(`🛡️ [SECURITY] Rate limiter global activé (${NODE_ENV === 'production' ? '1000' : '5000'} req/min)`);
+
 // Log de l'environnement au démarrage
 const modeIcon = NODE_ENV === 'production' ? '🚀' : '🔧';
 console.log(`\n${modeIcon} Express Server | ${NODE_ENV} | Port ${PORT} | ${envType}`);
@@ -135,6 +170,31 @@ app.use(morgan(morganFormat, {
     // Ne pas logger les health checks en production
     skip: (req) => NODE_ENV === 'production' && req.url === '/health'
 }));
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HEALTH CHECK - Route de santé pour Docker/Kubernetes
+// ═══════════════════════════════════════════════════════════════════════════
+// Cette route doit être définie AVANT tous les middlewares de sécurité
+// pour permettre aux health checks de fonctionner sans authentification
+// Rate limiter permissif pour éviter les abus (DDoS)
+// ═══════════════════════════════════════════════════════════════════════════
+const healthLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minute
+    max: 120, // 120 requêtes/min (2 par seconde, suffisant pour les health checks Docker)
+    message: "Too many health check requests",
+    standardHeaders: true,
+    legacyHeaders: false,
+});
+
+app.get('/health', healthLimiter, (req, res) => {
+    res.status(200).json({
+        status: 'healthy',
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+        environment: NODE_ENV,
+        version: process.env.npm_package_version || '1.0.0'
+    });
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SÉCURITÉ - VÉRIFICATION DES IPs BLOQUÉES
@@ -403,6 +463,14 @@ app.use('/api', generalLimiter);
 (async () => {
     try {
         await connectToDatabase();
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // SWAGGER - Documentation API (uniquement en développement)
+        // ═══════════════════════════════════════════════════════════════════════════
+        if (NODE_ENV !== 'production') {
+            const { setupSwagger } = await import('./config/swagger');
+            setupSwagger(app);
+        }
 
         // Démarrer les jobs cron
         startDataShareCleanupJob();

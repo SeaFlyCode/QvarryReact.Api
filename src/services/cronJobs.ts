@@ -1,7 +1,7 @@
 import cron from "node-cron";
-import { cleanupExpiredShares } from "../services/dataShareService";
+import { cleanupExpiredShares } from "./dataShareService";
 import NotificationModel from "../models/notifications";
-import { refreshTokenService } from "../services/refreshTokenService";
+import { refreshTokenService } from "./refreshTokenService";
 
 /**
  * Job de nettoyage automatique des partages expirés
