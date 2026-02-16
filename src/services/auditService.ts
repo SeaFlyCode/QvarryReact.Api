@@ -1,7 +1,6 @@
 // server/src/services/auditService.ts
 import AuditLog, { IAuditLog } from "../models/auditLogs";
 import mongoose from "mongoose";
-import crypto from "crypto";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
 
 type AuditLevel = 'info' | 'warning' | 'error' | 'critical';
@@ -23,54 +22,9 @@ interface AuditOptions {
     ipAddress?: string;
     userAgent?: string;
     details?: any;
-    pseudonymizeIp?: boolean; // RGPD-004: Option pour pseudonymiser l'IP
 }
 
 class AuditService {
-    // RGPD-004: Clé secrète pour le hachage des IPs (doit être en variable d'environnement)
-    private readonly IP_HASH_SECRET = process.env.IP_HASH_SECRET || 'qvarry-ip-hash-secret-change-in-production';
-
-    /**
-     * RGPD-004: Pseudonymiser une adresse IP en la hashant avec HMAC-SHA256
-     * Conserve le préfixe réseau pour permettre l'analyse géographique approximative
-     * tout en protégeant l'identité exacte de l'utilisateur
-     */
-    private pseudonymizeIp(ip: string): string {
-        if (!ip) return '';
-
-        try {
-            // Pour IPv4: garder les 2 premiers octets, hasher le reste
-            // Pour IPv6: garder les 4 premiers groupes, hasher le reste
-            const isIPv6 = ip.includes(':');
-
-            if (isIPv6) {
-                // IPv6: 2001:0db8:85a3:0000:0000:8a2e:0370:7334
-                const parts = ip.split(':');
-                const prefix = parts.slice(0, 4).join(':'); // Garder le préfixe /64
-                const suffix = parts.slice(4).join(':');
-                const hash = crypto.createHmac('sha256', this.IP_HASH_SECRET)
-                    .update(suffix)
-                    .digest('hex')
-                    .substring(0, 16);
-                return `${prefix}:${hash}`;
-            } else {
-                // IPv4: 192.168.1.100
-                const parts = ip.split('.');
-                const prefix = parts.slice(0, 2).join('.'); // Garder le préfixe /16
-                const suffix = parts.slice(2).join('.');
-                const hash = crypto.createHmac('sha256', this.IP_HASH_SECRET)
-                    .update(suffix)
-                    .digest('hex')
-                    .substring(0, 8);
-                return `${prefix}.${hash}`;
-            }
-        } catch (error) {
-            console.error('❌ [AUDIT] Erreur de pseudonymisation IP:', error);
-            // En cas d'erreur, retourner un hash complet pour ne pas exposer l'IP
-            return crypto.createHmac('sha256', this.IP_HASH_SECRET).update(ip).digest('hex').substring(0, 16);
-        }
-    }
-
     /**
      * Chiffrer une valeur si elle est définie
      */
@@ -101,19 +55,12 @@ class AuditService {
     /**
      * Enregistrer un événement dans les logs d'audit
      * Les données sensibles (IP, User-Agent, details) sont chiffrées
-     * RGPD-004: Les IPs sont pseudonymisées par défaut (Art. 32)
      * Déclenche les alertes de sécurité pour les événements critiques/error
      */
     async log(options: AuditOptions): Promise<void> {
         try {
-            // RGPD-004: Pseudonymiser l'IP par défaut (sauf si explicitement désactivé)
-            const shouldPseudonymize = options.pseudonymizeIp !== false;
-            const processedIp = shouldPseudonymize && options.ipAddress
-                ? this.pseudonymizeIp(options.ipAddress)
-                : options.ipAddress;
-
-            // Chiffrer les données sensibles (après pseudonymisation)
-            const encryptedIp = this.encryptIfPresent(processedIp);
+            // Chiffrer les données sensibles
+            const encryptedIp = this.encryptIfPresent(options.ipAddress);
             const encryptedUserAgent = this.encryptIfPresent(options.userAgent);
             const encryptedDetails = options.details
                 ? this.encryptIfPresent(JSON.stringify(options.details))

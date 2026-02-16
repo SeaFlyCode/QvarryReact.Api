@@ -12,7 +12,6 @@
 import { Request, Response, NextFunction } from 'express';
 import { auditService } from '../services/auditService';
 import { redisSessionService } from '../services/redisSessionService';
-import { rateLimitConfig } from '../config/rateLimitConfig';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES & INTERFACES
@@ -37,16 +36,23 @@ interface DeviceAttestationPayload {
 // CONFIGURATION
 // ═══════════════════════════════════════════════════════════════════════════
 
+const isProduction = process.env.NODE_ENV === 'production';
+const DEV_MULTIPLIER = 10;
+
 // LOW-003: Version minimale requise de l'application
 const MIN_APP_VERSION: Record<string, string> = {
     ios: process.env.MIN_IOS_VERSION || '1.0.0',
     android: process.env.MIN_ANDROID_VERSION || '1.0.0'
 };
 
-// Rate limiting pour mobile (utilise la config centralisée)
-const MOBILE_MAX_REQUESTS = rateLimitConfig.mobile.maxRequests;
-const MOBILE_WINDOW_MS = rateLimitConfig.mobile.windowMinutes * 60 * 1000;
-const MOBILE_BLOCK_DURATION_MS = rateLimitConfig.mobile.blockMinutes * 60 * 1000;
+// Rate limiting pour mobile (hardcodé, avec multiplicateur dev)
+const MOBILE_MAX_REQUESTS_BASE = 5;  // 5 en prod, 50 en dev
+const MOBILE_WINDOW_MINUTES = 15;
+const MOBILE_BLOCK_MINUTES = 30;
+
+const MOBILE_MAX_REQUESTS = isProduction ? MOBILE_MAX_REQUESTS_BASE : MOBILE_MAX_REQUESTS_BASE * DEV_MULTIPLIER;
+const MOBILE_WINDOW_MS = MOBILE_WINDOW_MINUTES * 60 * 1000;
+const MOBILE_BLOCK_DURATION_MS = MOBILE_BLOCK_MINUTES * 60 * 1000;
 
 // HIGH-003: Store en mémoire comme fallback, Redis utilisé via redisSessionService en production
 // Les fonctions ci-dessous utilisent Redis quand disponible

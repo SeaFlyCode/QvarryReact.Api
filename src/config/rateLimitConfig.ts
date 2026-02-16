@@ -2,9 +2,8 @@
 // CONFIGURATION CENTRALISÉE DU RATE LIMITING
 // ═══════════════════════════════════════════════════════════════════════════
 // Toutes les configurations de rate limiting sont définies ici
-// et utilisent les variables d'environnement du .env
-// Production: Limites strictes pour la sécurité
-// Development: Limites permissives pour faciliter le développement
+// Les limites sont hardcodées (valeurs PRODUCTION)
+// En développement: limites automatiquement multipliées par DEV_MULTIPLIER
 // ═══════════════════════════════════════════════════════════════════════════
 
 import rateLimit from 'express-rate-limit';
@@ -12,50 +11,58 @@ import rateLimit from 'express-rate-limit';
 const NODE_ENV = process.env.NODE_ENV || 'development';
 const isProduction = NODE_ENV === 'production';
 
+// En développement, les limites sont multipliées pour éviter les blocages
+const DEV_MULTIPLIER = 10;
+
+/**
+ * Applique le multiplicateur dev si nécessaire
+ */
+const limit = (value: number): number => {
+    return isProduction ? value : value * DEV_MULTIPLIER;
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
-// CONFIGURATION DEPUIS .ENV (avec valeurs par défaut prod/dev)
+// CONFIGURATION HARDCODÉE (valeurs PRODUCTION)
+// En dev, elles sont automatiquement multipliées par DEV_MULTIPLIER (10x)
 // ═══════════════════════════════════════════════════════════════════════════
 
 const config = {
-    // Rate limiting général (authentification)
+    // Rate limiting authentification
     auth: {
-        maxRequests: parseInt(process.env.RATE_LIMIT_MAX_REQUESTS || (isProduction ? '10' : '100')),
-        windowMinutes: parseInt(process.env.RATE_LIMIT_WINDOW_MINUTES || '15'),
-        blockMinutes: parseInt(process.env.RATE_LIMIT_BLOCK_MINUTES || '30'),
+        maxRequests: 10,        // 10 tentatives en prod, 100 en dev
+        windowMinutes: 15,      // Fenêtre de 15 minutes
     },
     // Rate limiting mobile
     mobile: {
-        maxRequests: parseInt(process.env.MOBILE_RATE_LIMIT_MAX || (isProduction ? '5' : '50')),
-        windowMinutes: parseInt(process.env.MOBILE_RATE_LIMIT_WINDOW_MINUTES || '15'),
-        blockMinutes: parseInt(process.env.MOBILE_RATE_LIMIT_BLOCK_MINUTES || '30'),
+        maxRequests: 5,         // 5 tentatives en prod, 50 en dev
+        windowMinutes: 15,      // Fenêtre de 15 minutes
     },
-    // Limites par type de route (PROD / DEV)
+    // Limites par type de route (valeurs PRODUCTION)
     limits: {
-        global:         { prod: 1000, dev: 10000 },     // Filet de sécurité
-        health:         { prod: 120,  dev: 1000 },      // Health checks
-        register:       { prod: 5,    dev: 50 },        // Création de compte
-        resendEmail:    { prod: 3,    dev: 30 },        // Renvoi d'emails
-        passwordReset:  { prod: 5,    dev: 50 },        // Reset mot de passe
-        twoFactor:      { prod: 5,    dev: 50 },        // 2FA (strict même en dev pour tester)
-        general:        { prod: 300,  dev: 3000 },      // Routes générales
-        highTraffic:    { prod: 500,  dev: 5000 },      // Fiches, listes, points
-        social:         { prod: 100,  dev: 1000 },      // Contacts, messages
-        import:         { prod: 1000, dev: 5000 },      // Import massif
-        wsConnection:   { prod: 30,   dev: 300 },       // WebSocket
-        refreshToken:   { prod: 10,   dev: 100 },       // Refresh token
-        admin:          { prod: 60,   dev: 600 },       // Routes admin
-        security:       { prod: 30,   dev: 300 },       // Routes sécurité
-        authCheck:      { prod: 60,   dev: 600 },       // Vérification auth
-        maintenance:    { prod: 30,   dev: 300 },       // Maintenance
+        global:         1000,   // Filet de sécurité global
+        health:         120,    // Health checks Docker/K8s
+        register:       5,      // Création de compte (par heure)
+        resendEmail:    3,      // Renvoi d'emails (par heure)
+        passwordReset:  5,      // Reset mot de passe
+        twoFactor:      5,      // 2FA (strict, brute-force TOTP)
+        general:        300,    // Routes générales
+        highTraffic:    500,    // Fiches, listes, points
+        social:         100,    // Contacts, messages, partages
+        import:         1000,   // Import massif de points
+        wsConnection:   30,     // Connexions WebSocket
+        refreshToken:   10,     // Refresh token
+        admin:          60,     // Routes admin
+        security:       30,     // Routes sécurité
+        authCheck:      60,     // Vérification auth
+        maintenance:    30,     // Routes maintenance
     }
 };
 
 /**
- * Retourne la limite appropriée selon l'environnement
+ * Retourne la limite avec multiplicateur dev appliqué
  */
 const getLimit = (key: keyof typeof config.limits): number => {
-    const limit = config.limits[key];
-    return isProduction ? limit.prod : limit.dev;
+    return limit(config.limits[key]);
 };
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -104,7 +111,7 @@ export const healthLimiter = rateLimit({
  */
 export const authLimiter = rateLimit({
     windowMs: config.auth.windowMinutes * 60 * 1000,
-    max: config.auth.maxRequests,
+    max: limit(config.auth.maxRequests),
     message: `Trop de tentatives de connexion, veuillez réessayer dans ${config.auth.windowMinutes} minutes.`,
     standardHeaders: true,
     legacyHeaders: false,
@@ -126,7 +133,7 @@ export const registerLimiter = rateLimit({
  */
 export const verifyEmailLimiter = rateLimit({
     windowMs: config.auth.windowMinutes * 60 * 1000,
-    max: config.auth.maxRequests,
+    max: limit(config.auth.maxRequests),
     message: "Trop de tentatives de vérification, veuillez réessayer plus tard.",
     standardHeaders: true,
     legacyHeaders: false,
@@ -305,17 +312,15 @@ export const maintenanceLimiter = rateLimit({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
-// EXPORTS DE CONFIGURATION (pour mobileSecurityMiddleware, webSocketService)
+// LOG DE CONFIGURATION AU DÉMARRAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
-export const rateLimitConfig = config;
-
-// Log de la configuration au démarrage
 const envIcon = isProduction ? '🔒' : '🔧';
 const envLabel = isProduction ? 'PRODUCTION' : 'DEVELOPMENT';
-console.log(`${envIcon} [RATE LIMIT] Environnement: ${envLabel}`);
-console.log(`   ├── Auth: ${config.auth.maxRequests} req/${config.auth.windowMinutes}min`);
-console.log(`   ├── Mobile: ${config.mobile.maxRequests} req/${config.mobile.windowMinutes}min`);
+const multiplierInfo = isProduction ? '' : ` (x${DEV_MULTIPLIER})`;
+console.log(`${envIcon} [RATE LIMIT] Environnement: ${envLabel}${multiplierInfo}`);
+console.log(`   ├── Auth: ${limit(config.auth.maxRequests)} req/${config.auth.windowMinutes}min`);
+console.log(`   ├── Mobile: ${limit(config.mobile.maxRequests)} req/${config.mobile.windowMinutes}min`);
 console.log(`   ├── 2FA: ${getLimit('twoFactor')} req/5min`);
 console.log(`   ├── General: ${getLimit('general')} req/min`);
 console.log(`   └── Global: ${getLimit('global')} req/min`);
