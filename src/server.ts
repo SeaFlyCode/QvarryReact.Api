@@ -38,7 +38,27 @@ import { connectToDatabase } from "./config/database";
 import userRoutes from './routes/userRoutes';
 import authRoutes from './routes/authRoutes';
 import conversationsRoutes from './routes/conversationsRoutes';
-import rateLimit from "express-rate-limit";
+// Rate limiters centralisés
+import {
+    globalRateLimiter,
+    healthLimiter,
+    authLimiter,
+    registerLimiter,
+    verifyEmailLimiter,
+    resendEmailLimiter,
+    passwordResetLimiter,
+    twoFactorLimiter,
+    generalLimiter,
+    highTrafficLimiter,
+    socialLimiter,
+    wsConnectionLimiter,
+    refreshTokenLimiter,
+    adminLimiter,
+    mobileAuthLimiter,
+    securityLimiter,
+    authCheckLimiter,
+    maintenanceLimiter
+} from './config/rateLimitConfig';
 import morgan from "morgan";
 import cors from "cors";
 import helmet from "helmet";
@@ -82,29 +102,6 @@ if (NODE_ENV === 'production') {
 // Il sert de protection de secours si un rate limiter spécifique a été oublié.
 // Les autres rate limiters (plus stricts) s'appliquent EN PLUS de celui-ci.
 // ═══════════════════════════════════════════════════════════════════════════
-const globalRateLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: NODE_ENV === 'production' ? 1000 : 5000, // 1000 req/min en prod, 5000 en dev
-    message: {
-        error: "Trop de requêtes globales, veuillez réessayer plus tard.",
-        code: "GLOBAL_RATE_LIMIT_EXCEEDED",
-        retryAfter: 60
-    },
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => {
-        // Ne pas limiter les health checks (nécessaires pour Docker/K8s)
-        return req.path === '/health';
-    },
-    handler: (req, res) => {
-        console.warn(`🚨 [GLOBAL RATE LIMIT] IP ${req.ip} a dépassé la limite globale (${req.path})`);
-        res.status(429).json({
-            error: "Trop de requêtes, veuillez réessayer plus tard.",
-            code: "GLOBAL_RATE_LIMIT_EXCEEDED",
-            retryAfter: 60
-        });
-    }
-});
 
 // Appliquer le rate limiter global EN PREMIER (avant tous les autres middlewares)
 app.use(globalRateLimiter);
@@ -178,13 +175,6 @@ app.use(morgan(morganFormat, {
 // pour permettre aux health checks de fonctionner sans authentification
 // Rate limiter permissif pour éviter les abus (DDoS)
 // ═══════════════════════════════════════════════════════════════════════════
-const healthLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 120, // 120 requêtes/min (2 par seconde, suffisant pour les health checks Docker)
-    message: "Too many health check requests",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
 
 app.get('/health', healthLimiter, (req, res) => {
     res.status(200).json({
@@ -309,131 +299,26 @@ console.log(`🛡️ [SECURITY] Helmet configuré avec CSP stricte${NODE_ENV ===
 
 app.use(cookieParser());
 
-// Rate limiter pour les routes d'authentification (plus strict)
-const authLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // Max 10 tentatives de login par 15 min
-    message: "Trop de tentatives de connexion, veuillez réessayer plus tard."
-});
+// ═══════════════════════════════════════════════════════════════════════════
+// RATE LIMITERS - Application des limiteurs (importés depuis rateLimitConfig.ts)
+// ═══════════════════════════════════════════════════════════════════════════
 
-// Rate limiter pour la création de compte (anti-spam)
-const registerLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 heure
-    max: 5, // Max 5 créations de compte par heure par IP
-    message: "Trop de créations de compte, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Rate limiter pour la vérification d'email (protection brute force code à 6 chiffres)
-const verifyEmailLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 10, // Max 10 tentatives par 15 min
-    message: "Trop de tentatives de vérification, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Rate limiter pour le renvoi d'emails (anti-spam)
-const resendEmailLimiter = rateLimit({
-    windowMs: 60 * 60 * 1000, // 1 heure
-    max: 3, // Max 3 renvois par heure
-    message: "Trop de demandes de renvoi d'email, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Rate limiter pour la réinitialisation de mot de passe
-const passwordResetLimiter = rateLimit({
-    windowMs: 15 * 60 * 1000, // 15 minutes
-    max: 5, // Max 5 tentatives par 15 min
-    message: "Trop de tentatives de réinitialisation, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Rate limiter pour la 2FA (strict pour éviter brute-force des codes TOTP)
-// SEC-2FA: Réduit à 5 tentatives pour limiter les attaques par force brute
-// Avec 5 essais / 5 min, un attaquant ne peut tester que 60 codes/heure
-const twoFactorLimiter = rateLimit({
-    windowMs: 5 * 60 * 1000, // 5 minutes
-    max: 5, // Max 5 tentatives par 5 min (sécurisé contre brute-force TOTP)
-    message: "Trop de tentatives 2FA, veuillez réessayer dans 5 minutes.",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Rate limiter général (plus permissif)
-const generalLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: NODE_ENV === 'production' ? 300 : 2000, // 2000 requêtes en dev, 300 en prod
-    message: "Trop de requêtes, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Rate limiter pour les routes à fort débit (fiches, listes, points en lecture)
-const highTrafficLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: NODE_ENV === 'production' ? 500 : 2000, // 500 en prod, 2000 en dev
-    message: "Trop de requêtes, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Rate limiter pour les actions sociales (contacts, messages, partages)
-const socialLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: NODE_ENV === 'production' ? 100 : 500, // 100 en prod, 500 en dev
-    message: "Trop de requêtes, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-});
-
-// Rate limiter pour l'import de points (adapté aux imports massifs)
-// CONF-006: Augmenté pour supporter les imports de 300+ points par batch
-const importLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: 1000, // 1000 requêtes par minute pour les imports (supports batch de 300+ points)
-    message: "Trop de requêtes d'import, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-    skip: (req) => req.method !== 'POST', // Seulement pour les POST
-    keyGenerator: (req) => {
-        // Utiliser l'ID utilisateur si disponible pour un rate limiting plus précis
-        return (req as any).user?.id || req.ip || 'unknown';
-    }
-});
-
-// Rate limiter pour les WebSocket (protection contre abus de connexions)
-const wsConnectionLimiter = rateLimit({
-    windowMs: 60 * 1000, // 1 minute
-    max: NODE_ENV === 'production' ? 30 : 100, // 30 connexions/min en prod, 100 en dev
-    message: "Trop de connexions WebSocket, veuillez réessayer plus tard.",
-    standardHeaders: true,
-    legacyHeaders: false,
-    skipSuccessfulRequests: false, // Compter même les connexions réussies
-    handler: (req, res) => {
-        console.warn(`⚠️ [WS RATE LIMIT] Trop de tentatives de connexion depuis ${req.ip}`);
-        res.status(429).json({
-            error: "Trop de connexions WebSocket",
-            code: "WS_RATE_LIMIT_EXCEEDED",
-            retryAfter: 60
-        });
-    }
-});
-
-// Appliquer les rate limiters
-// Routes d'authentification (très strictes)
+// Routes d'authentification (très strictes - RISQUE ÉLEVÉ)
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
 
-// Routes de réinitialisation de mot de passe
+// Routes de réinitialisation de mot de passe (RISQUE ÉLEVÉ)
 app.use('/api/auth/forgot-password', passwordResetLimiter);
 app.use('/api/auth/reset-password', passwordResetLimiter);
 
-// Routes 2FA (plus souples car après login réussi)
-app.use('/api/2fa/verify', twoFactorLimiter);
+// Refresh token (RISQUE MOYEN - déjà authentifié mais peut être abusé)
+app.use('/api/auth/refresh', refreshTokenLimiter);
+
+// Vérification d'auth (RISQUE FAIBLE - mais route publique)
+app.use('/api/auth/check', authCheckLimiter);
+
+// Routes 2FA - TOUTES les routes 2FA doivent être limitées (RISQUE ÉLEVÉ - brute force TOTP)
+app.use('/api/2fa', twoFactorLimiter);
 app.use('/api/auth/complete-2fa-login', twoFactorLimiter);
 
 // Routes de création de compte et vérification d'email
@@ -453,10 +338,27 @@ app.use('/api/messages', socialLimiter);
 app.use('/api/share', socialLimiter);
 app.use('/api/conversations', socialLimiter);
 
+// Routes mobiles (RISQUE ÉLEVÉ - pas de Turnstile)
+app.use('/api/mobile/auth', mobileAuthLimiter);
+app.use('/api/mobile/2fa', twoFactorLimiter); // 2FA mobile = même protection que web
+app.use('/api/mobile/sync', highTrafficLimiter); // Sync peut être fréquent
+
+// Routes admin (RISQUE MOYEN - déjà protégées par authMiddleware + adminMiddleware)
+app.use('/api/admin', adminLimiter);
+
+// Routes de sécurité (sessions, events - RISQUE MOYEN)
+app.use('/api/security', securityLimiter);
+
+// Routes de maintenance
+app.use('/api/maintenance', maintenanceLimiter);
+
+// Routes de notifications
+app.use('/api/notifications', socialLimiter);
+
 // WebSocket
 app.use('/ws', wsConnectionLimiter);
 
-// Rate limiter général pour toutes les autres routes /api
+// Rate limiter général pour toutes les autres routes /api (FALLBACK)
 app.use('/api', generalLimiter);
 
 // Connexion à la base de données obligatoire avant de démarrer le serveur

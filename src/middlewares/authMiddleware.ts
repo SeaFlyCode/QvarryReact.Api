@@ -147,12 +147,30 @@ export const authMiddleware = async (req: Request, res: Response, next: NextFunc
             } else {
                 // WEB: Vérifier via memoryStorage (comportement original)
                 if (!memoryStorage.hasSession(decoded.id)) {
-                    console.warn(`⚠️ [AUTH] Session expirée ou non initialisée pour userId: ${decoded.id}`);
-                    return res.status(401).json({
-                        message: "Session expirée. Veuillez rafraîchir votre token.",
-                        code: 'SESSION_EXPIRED',
-                        requiresRefresh: true
-                    });
+                    // ALLOW_SESSION_RECOVERY: Tenter de récupérer automatiquement la session
+                    const allowRecovery = process.env.ALLOW_SESSION_RECOVERY !== 'false';
+
+                    if (allowRecovery) {
+                        console.log(`🔄 [AUTH] Tentative de récupération de session pour userId: ${decoded.id}`);
+                        try {
+                            await loadAndDecryptUserData(decoded.id);
+                            console.log(`✅ [AUTH] Session récupérée pour userId: ${decoded.id}`);
+                        } catch (recoveryError) {
+                            console.error(`❌ [AUTH] Échec récupération session:`, getErrorMessage(recoveryError));
+                            return res.status(401).json({
+                                message: "Session expirée. Veuillez vous reconnecter.",
+                                code: 'SESSION_RECOVERY_FAILED',
+                                requiresRefresh: true
+                            });
+                        }
+                    } else {
+                        console.warn(`⚠️ [AUTH] Session expirée ou non initialisée pour userId: ${decoded.id}`);
+                        return res.status(401).json({
+                            message: "Session expirée. Veuillez rafraîchir votre token.",
+                            code: 'SESSION_EXPIRED',
+                            requiresRefresh: true
+                        });
+                    }
                 }
             }
         }

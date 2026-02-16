@@ -24,6 +24,7 @@ import { isPasswordInHistory, addToPasswordHistory } from "../utils/passwordUtil
 import { generateDeviceFingerprint } from "../utils/deviceFingerprint";
 import MaintenanceModel from "../models/maintenance";
 import dataArchiveService from "../services/dataArchiveService";
+import { getJwtCookieOptions, getRefreshTokenCookieOptions, clearCookieOptions, getCookieConfig } from "../config/cookieConfig";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GESTION DES TOKENS ET BLACKLIST (VIA REDIS)
@@ -371,27 +372,11 @@ export async function handleLoginUser(req: Request, res: Response) {
         // ─────────────────────────────────────────────────────────────────────
         // 6. CONFIGURATION DES COOKIES SÉCURISÉS
         // ─────────────────────────────────────────────────────────────────────
-        const isProduction = process.env.NODE_ENV === "production";
-        const jwtMaxAge = parseInt(process.env.JWT_EXPIRES_IN?.replace(/[^0-9]/g, '') || '15') * 60 * 1000; // Minutes -> ms
-        const refreshMaxAge = parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN || '48') * 60 * 60 * 1000; // Heures -> ms
-
         // Cookie pour le JWT (courte durée)
-        res.cookie("token", token, {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "strict" : "lax",
-            maxAge: jwtMaxAge,
-            path: '/',
-        });
+        res.cookie("token", token, getJwtCookieOptions());
 
         // Cookie pour le refresh token (longue durée)
-        res.cookie("refreshToken", refreshToken, {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "strict" : "lax",
-            maxAge: refreshMaxAge,
-            path: '/', // Accessible depuis tous les endpoints
-        });
+        res.cookie("refreshToken", refreshToken, getRefreshTokenCookieOptions());
 
         // ─────────────────────────────────────────────────────────────────────
         // 7. CHARGEMENT ET DÉCHIFFREMENT DES DONNÉES UTILISATEUR
@@ -465,6 +450,7 @@ export async function handleLoginUser(req: Request, res: Response) {
         // ─────────────────────────────────────────────────────────────────────
         // 10. PRÉPARATION DE LA RÉPONSE (MODE DEBUG OPTIONNEL)
         // ─────────────────────────────────────────────────────────────────────
+        const cookieConfig = getCookieConfig();
         const response: any = {
             login: true,
             userId: userId,
@@ -472,11 +458,11 @@ export async function handleLoginUser(req: Request, res: Response) {
             isAdmin: user.is_admin || false,
             redirectToAdmin: isMaintenanceActive && user.is_admin, // Rediriger vers /admin si maintenance active
             sessionCreated: new Date().toISOString(),
-            tokenExpiresIn: jwtMaxAge / 1000 // secondes
+            tokenExpiresIn: cookieConfig.jwtMaxAgeMinutes * 60 // secondes
         };
 
         // En développement, ajouter des infos de debug
-        if (!isProduction && process.env.DEBUG_MODE === 'true') {
+        if (!cookieConfig.isProduction && process.env.DEBUG_MODE === 'true') {
             const memoryData = memoryStorage.getAllUserData(userId);
             response.debug = {
                 pointsCount: memoryData.points?.length || 0,
@@ -635,25 +621,9 @@ export async function handleRefreshToken(req: Request, res: Response) {
         // ─────────────────────────────────────────────────────────────────────
         // 8. CONFIGURER LES NOUVEAUX COOKIES
         // ─────────────────────────────────────────────────────────────────────
-        const isProduction = process.env.NODE_ENV === "production";
-        const jwtMaxAge = parseInt(process.env.JWT_EXPIRES_IN?.replace(/[^0-9]/g, '') || '15') * 60 * 1000;
-        const refreshMaxAge = parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN || '48') * 60 * 60 * 1000;
+        res.cookie("token", newJwt, getJwtCookieOptions());
 
-        res.cookie("token", newJwt, {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "strict" : "lax",
-            maxAge: jwtMaxAge,
-            path: '/',
-        });
-
-        res.cookie("refreshToken", newRefreshToken, {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "strict" : "lax",
-            maxAge: refreshMaxAge,
-            path: '/', // Accessible depuis tous les endpoints
-        });
+        res.cookie("refreshToken", newRefreshToken, getRefreshTokenCookieOptions());
 
         // ─────────────────────────────────────────────────────────────────────
         // 9. AUDIT ET RÉPONSE
@@ -671,7 +641,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
 
         res.status(200).json({
             success: true,
-            tokenExpiresIn: jwtMaxAge / 1000,
+            tokenExpiresIn: getCookieConfig().jwtMaxAgeMinutes * 60,
             message: "Token renouvelé avec succès"
         });
     } catch (error: unknown) {
@@ -705,21 +675,9 @@ export async function handleLogoutUser(req: Request, res: Response) {
         // ─────────────────────────────────────────────────────────────────────
         // 2. SUPPRESSION DES COOKIES
         // ─────────────────────────────────────────────────────────────────────
-        const isProduction = process.env.NODE_ENV === "production";
+        res.clearCookie("token", clearCookieOptions);
 
-        res.clearCookie("token", {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "strict" : "lax",
-            path: '/'
-        });
-
-        res.clearCookie("refreshToken", {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "strict" : "lax",
-            path: '/' // Doit correspondre au path utilisé lors de la création
-        });
+        res.clearCookie("refreshToken", clearCookieOptions);
 
         // ─────────────────────────────────────────────────────────────────────
         // 3. AJOUT DU TOKEN À LA BLACKLIST ET RÉVOCATION DU REFRESH TOKEN
@@ -872,13 +830,7 @@ export const checkAuth = (req: Request, res: Response) => {
         if (blacklistedTokens.has(token)) {
             console.warn(`⚠️ [AUTH] Tentative d'utilisation d'un token blacklisté`);
             // Supprimer le cookie invalide
-            const isProduction = process.env.NODE_ENV === "production";
-            res.clearCookie("token", {
-                httpOnly: true,
-                secure: true,
-                sameSite: isProduction ? "strict" : "none",
-                path: '/'
-            });
+            res.clearCookie("token", clearCookieOptions);
             return res.status(401).json({
                 authenticated: false,
                 reason: 'token_revoked'
@@ -902,13 +854,7 @@ export const checkAuth = (req: Request, res: Response) => {
         if (decoded.exp && decoded.exp * 1000 < Date.now()) {
             console.warn(`⚠️ [AUTH] Token expiré pour userId: ${decoded.id}`);
             // Supprimer le cookie expiré
-            const isProduction = process.env.NODE_ENV === "production";
-            res.clearCookie("token", {
-                httpOnly: true,
-                secure: true,
-                sameSite: isProduction ? "strict" : "none",
-                path: '/'
-            });
+            res.clearCookie("token", clearCookieOptions);
             return res.status(401).json({
                 authenticated: false,
                 reason: 'token_expired'
@@ -939,13 +885,7 @@ export const checkAuth = (req: Request, res: Response) => {
         });
     } catch (error: unknown) {
         // Supprimer le cookie invalide dans tous les cas d'erreur
-        const isProduction = process.env.NODE_ENV === "production";
-        res.clearCookie("token", {
-            httpOnly: true,
-            secure: true,
-            sameSite: isProduction ? "strict" : "none",
-            path: '/'
-        });
+        res.clearCookie("token", clearCookieOptions);
 
         // Distinguer les différents types d'erreurs JWT
         if (isErrorWithName(error, 'TokenExpiredError')) {
@@ -1827,27 +1767,11 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
         });
 
         // Configuration des cookies
-        const isProduction = process.env.NODE_ENV === "production";
-        const jwtMaxAge = parseInt(process.env.JWT_EXPIRES_IN?.replace(/[^0-9]/g, '') || '15') * 60 * 1000;
-        const refreshMaxAge = parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN || '48') * 60 * 60 * 1000;
-
         // Cookie pour le JWT
-        res.cookie("token", token, {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "strict" : "lax",
-            maxAge: jwtMaxAge,
-            path: '/',
-        });
+        res.cookie("token", token, getJwtCookieOptions());
 
         // Cookie pour le refresh token
-        res.cookie("refreshToken", refreshToken, {
-            httpOnly: true,
-            secure: isProduction,
-            sameSite: isProduction ? "strict" : "lax",
-            maxAge: refreshMaxAge,
-            path: '/',
-        });
+        res.cookie("refreshToken", refreshToken, getRefreshTokenCookieOptions());
 
         // Charger les données utilisateur
         await loadAndDecryptUserData(userId);
@@ -1875,7 +1799,7 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
             userId,
             email: user.email,
             sessionCreated: new Date().toISOString(),
-            tokenExpiresIn: jwtMaxAge / 1000
+            tokenExpiresIn: getCookieConfig().jwtMaxAgeMinutes * 60
         });
 
     } catch (error: unknown) {

@@ -12,6 +12,7 @@
 import { Request, Response, NextFunction } from 'express';
 import { auditService } from '../services/auditService';
 import { redisSessionService } from '../services/redisSessionService';
+import { rateLimitConfig } from '../config/rateLimitConfig';
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES & INTERFACES
@@ -42,10 +43,10 @@ const MIN_APP_VERSION: Record<string, string> = {
     android: process.env.MIN_ANDROID_VERSION || '1.0.0'
 };
 
-// Rate limiting pour mobile (plus strict car pas de Turnstile)
-const MOBILE_MAX_REQUESTS = parseInt(process.env.MOBILE_RATE_LIMIT_MAX || '5');
-const MOBILE_WINDOW_MS = parseInt(process.env.MOBILE_RATE_LIMIT_WINDOW_MINUTES || '15') * 60 * 1000;
-const MOBILE_BLOCK_DURATION_MS = parseInt(process.env.MOBILE_RATE_LIMIT_BLOCK_MINUTES || '30') * 60 * 1000;
+// Rate limiting pour mobile (utilise la config centralisée)
+const MOBILE_MAX_REQUESTS = rateLimitConfig.mobile.maxRequests;
+const MOBILE_WINDOW_MS = rateLimitConfig.mobile.windowMinutes * 60 * 1000;
+const MOBILE_BLOCK_DURATION_MS = rateLimitConfig.mobile.blockMinutes * 60 * 1000;
 
 // HIGH-003: Store en mémoire comme fallback, Redis utilisé via redisSessionService en production
 // Les fonctions ci-dessous utilisent Redis quand disponible
