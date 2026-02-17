@@ -4,11 +4,8 @@ import { memoryStorage } from './memoryStorageService';
 class SyncService {  
   // Synchroniser maintenant et retourner le résultat
   async syncNow(userId: string): Promise<{success: boolean, message?: string, error?: any}> {
-    console.log(`Tentative de synchronisation pour l'utilisateur ${userId}`);
-    
     // Vérifier si une synchronisation est nécessaire
     if (!memoryStorage.isDirty(userId)) {
-      console.log(`Aucune synchronisation nécessaire pour l'utilisateur ${userId}`);
       return { success: true, message: "Aucune modification à synchroniser" };
     }
     
@@ -19,8 +16,7 @@ class SyncService {
       // Appeler la fonction de synchronisation et attendre le résultat
       await syncUserDataToDB(userId);
       
-      console.log(`Synchronisation réussie pour l'utilisateur ${userId}`);
-      return { 
+      return {
         success: true, 
         message: "Synchronisation effectuée avec succès" 
       };

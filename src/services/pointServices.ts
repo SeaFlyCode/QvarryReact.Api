@@ -56,13 +56,7 @@ export async function deletePoint(pointId: string): Promise<IPoint | null> {
         throw new Error("L'ID du point n'est pas valide");
     }
 
-    // Add debugging log
-    console.log('Attempting to delete point:', pointId);
-
     const deletedPoint = await PointModel.findByIdAndDelete(pointId);
-    
-    // Log the result
-    console.log('Delete result:', deletedPoint);
     
     return deletedPoint;
 }

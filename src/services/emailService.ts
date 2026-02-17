@@ -343,7 +343,6 @@ export const sendWelcomeEmail = async (
     verificationLink: string,
     verificationCode: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendWelcomeEmail appelé pour: ${to}`);
     return sendEmail({
         to,
         subject: '🎉 Bienvenue sur QVARRY !',
@@ -368,7 +367,6 @@ export const sendVerificationEmail = async (
     verificationCode: string,
     expiryTime: string = '24 heures'
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendVerificationEmail appelé pour: ${to}`);
     return sendEmail({
         to,
         subject: '📧 Vérifiez votre adresse email - QVARRY',
@@ -394,7 +392,6 @@ export const sendPasswordResetEmail = async (
     deviceInfo: string,
     expiryTime: string = '1 heure'
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendPasswordResetEmail appelé pour: ${to}`);
     return sendEmail({
         to,
         subject: '🔐 Réinitialisation de votre mot de passe - QVARRY',
@@ -420,7 +417,6 @@ export const sendPasswordChangedEmail = async (
     ipAddress: string,
     deviceInfo: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendPasswordChangedEmail appelé pour: ${to}`);
     return sendEmail({
         to,
         subject: '✅ Votre mot de passe a été modifié - QVARRY',
@@ -445,7 +441,6 @@ export const sendSecurityAlertEmail = async (
     deviceInfo: string,
     location: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendSecurityAlertEmail appelé pour: ${to}`);
     return sendEmail({
         to,
         subject: '🔔 Nouvelle connexion détectée - QVARRY',
@@ -474,7 +469,6 @@ export const sendShareNotificationEmail = async (
     itemsCount: number = 1,
     expiryDate?: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendShareNotificationEmail appelé pour: ${to}`);
     return sendEmail({
         to,
         subject: `📤 ${senderName} a partagé des données avec vous - QVARRY`,
@@ -504,7 +498,6 @@ export const sendContactRequestEmail = async (
     declineLink?: string,
     viewProfileLink?: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendContactRequestEmail appelé pour: ${to} (de: ${requesterName})`);
     const frontendUrl = process.env.FRONTEND_URL || 'https://qvarry.com';
     return sendEmail({
         to,
@@ -531,7 +524,6 @@ export const sendContactAcceptedEmail = async (
     contactProfileLink?: string,
     messageLink?: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendContactAcceptedEmail appelé pour: ${to} (contact: ${contactName})`);
     const frontendUrl = process.env.FRONTEND_URL || 'https://qvarry.com';
     return sendEmail({
         to,
@@ -553,7 +545,6 @@ export const sendAccountApprovedEmail = async (
     to: string,
     userName: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendAccountApprovedEmail appelé pour: ${to}`);
     const frontendUrl = process.env.FRONTEND_URL || 'https://qvarry.com';
     return sendEmail({
         to,
@@ -576,7 +567,6 @@ export const sendAccountRejectedEmail = async (
     userName: string,
     rejectionReason?: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendAccountRejectedEmail appelé pour: ${to}`);
     const contactEmail = process.env.CONTACT_EMAIL || 'contact@qvarry.com';
     return sendEmail({
         to,
@@ -603,7 +593,6 @@ export const sendAdminPendingValidationEmail = async (
     newUserEmail: string,
     registrationDate: string
 ): Promise<boolean> => {
-    console.log(`📧 [EMAIL] sendAdminPendingValidationEmail appelé pour admin: ${adminEmail}`);
     const frontendUrl = process.env.FRONTEND_URL || 'https://qvarry.com';
     return sendEmail({
         to: adminEmail,
@@ -625,7 +614,6 @@ export const sendAdminPendingValidationEmail = async (
 
 export const clearTemplateCache = (): void => {
     templateCache.clear();
-    console.log('🗑️ Cache des templates email vidé');
 };
 
 export default {

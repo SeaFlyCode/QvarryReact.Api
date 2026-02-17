@@ -19,7 +19,6 @@ export async function handleCreatePoint(req: Request, res: Response) {
         const { name, description, longitude, latitude, ficheId, listIds, accessType } = req.body;
         const userId = req.user.id;
 
-        console.log('[handleCreatePoint] Début création point:', { name, ficheId, listIds, userId });
 
         if (!name || longitude === undefined || latitude === undefined) {
             return res.status(400).json({ message: "Champs requis manquants" });
@@ -149,8 +148,6 @@ export async function handleCreatePoint(req: Request, res: Response) {
 
                     // Si la fiche n'est pas en mémoire, essayer de la recharger depuis la base
                     if (!ficheInMemory) {
-                        console.log(`[handleCreatePoint] Fiche ${fidStr} non trouvée en mémoire, tentative de rechargement depuis la base...`);
-
                         const ficheFromDB = await FicheModel.findOne({ _id: fidStr, userId: userId });
 
                         if (ficheFromDB) {
@@ -173,9 +170,6 @@ export async function handleCreatePoint(req: Request, res: Response) {
                             };
 
                             memoryStorage.storeFiche(userId, ficheData as any);
-                            console.log(`[handleCreatePoint] Fiche ${fidStr} rechargée depuis la base et stockée en mémoire`);
-                        } else {
-                            console.warn(`[handleCreatePoint] Fiche ${fidStr} non trouvée dans la base de données`);
                         }
                     }
 
@@ -183,9 +177,6 @@ export async function handleCreatePoint(req: Request, res: Response) {
                     const added = memoryStorage.addPointToFiche(userId, fidStr, newPointId.toString());
                     if (!added) {
                         assocSuccess = false;
-                        console.warn(`[handleCreatePoint] Impossible d'ajouter le point ${newPointId} à la fiche ${fidStr}`);
-                    } else {
-                        console.log(`[handleCreatePoint] Point ${newPointId} ajouté à la fiche ${fidStr}`);
                     }
                 }
             } catch (err) {
@@ -203,9 +194,6 @@ export async function handleCreatePoint(req: Request, res: Response) {
                     const added = memoryStorage.addPointToList(userId, listIdStr, newPointId.toString());
                     if (!added) {
                         assocSuccess = false;
-                        console.warn(`Impossible d'ajouter le point ${newPointId} à la liste ${listIdStr}`);
-                    } else {
-                        console.log(`[handleCreatePoint] Point ${newPointId} ajouté à la liste ${listIdStr}`);
                     }
                 }
             } catch (err) {
@@ -246,11 +234,8 @@ export async function handleCreatePoint(req: Request, res: Response) {
 
 export async function handleGetAllPointsByUserId(req: Request, res: Response) {
     try {
-        console.log('[handleGetAllPointsByUserId] Début de la requête');
-
         // Validation défensive - req.user devrait toujours exister grâce au middleware
         if (!req.user || !req.user.id) {
-            console.warn('[handleGetAllPointsByUserId] req.user manquant');
             return res.status(401).json({
                 message: "Authentification requise",
                 code: 'UNAUTHORIZED'
@@ -259,7 +244,6 @@ export async function handleGetAllPointsByUserId(req: Request, res: Response) {
 
         // Pour GET, utiliser uniquement req.user.id (pas req.body)
         const userId = req.user.id;
-        console.log('[handleGetAllPointsByUserId] userId:', userId);
 
         // Check if userId exists
         if (!userId) {
@@ -279,15 +263,12 @@ export async function handleGetAllPointsByUserId(req: Request, res: Response) {
         const limit = Math.min(Math.max(1, parseInt(req.query.limit as string) || 500), 1000); // Max 1000
         const offset = (page - 1) * limit;
 
-        console.log('[handleGetAllPointsByUserId] Récupération des points depuis la mémoire...');
         // Récupérer les points depuis la mémoire
         const allPoints = memoryStorage.getAllPoints(userId);
         const total = allPoints ? allPoints.length : 0;
-        console.log('[handleGetAllPointsByUserId] Points récupérés:', total);
 
         // Retourner un tableau vide si aucun point trouvé (pas une erreur 404)
         if (!allPoints || allPoints.length === 0) {
-            console.log('[handleGetAllPointsByUserId] Aucun point trouvé, retour tableau vide');
             return res.status(200).json({
                 data: [],
                 pagination: { page, limit, total: 0, totalPages: 0 }
@@ -297,7 +278,6 @@ export async function handleGetAllPointsByUserId(req: Request, res: Response) {
         // Appliquer la pagination
         const points = allPoints.slice(offset, offset + limit);
 
-        console.log('[handleGetAllPointsByUserId] Envoi des points au client');
         res.status(200).json({
             data: points,
             pagination: {
@@ -347,7 +327,6 @@ export async function handleSearchPoints(req: Request, res: Response) {
         if (ficheId) filters.ficheId = ficheId as string;
         if (listId) filters.listId = listId as string;
 
-        console.log(`[handleSearchPoints] Recherche avec filtres:`, filters);
 
         // Effectuer la recherche
         const points = memoryStorage.searchPoints(userId, filters);
@@ -415,8 +394,7 @@ export async function handleDeletePoint(req: Request, res: Response) {
         // Si le point est associé à une fiche, le retirer de cette fiche
         if ((point as any).ficheId) {
             const ficheId = (point as any).ficheId.toString();
-            console.log(`Point ${pointId} est associé à la fiche ${ficheId}, suppression du lien`);
-            
+
             // Supprimer la référence dans la fiche
             memoryStorage.removePointFromFiche(userId, ficheId, pointId);
         }
@@ -495,15 +473,9 @@ export async function handleUpdatePoint(req: Request, res: Response) {
                 // Retirer le point de l'ancienne liste si elle existait
                 if (oldListIds && Array.isArray(oldListIds) && oldListIds.length > 0) {
                     const oldListId = oldListIds[0];
-                    const removeResult = memoryStorage.removePointFromList(userId, oldListId, id);
-                    if (!removeResult) {
-                        console.warn(`Impossible de retirer le point ${id} de l'ancienne liste ${oldListId}`);
-                    } else {
-                        console.log(`[handleUpdatePoint] Point ${id} retiré de la liste ${oldListId}`);
-                    }
+                    memoryStorage.removePointFromList(userId, oldListId, id);
                 }
                 (point as any).listIds = undefined;
-                console.log(`[handleUpdatePoint] Association liste supprimée pour le point ${id}`);
             } else if (Array.isArray(listIds) && listIds.length > 0) {
                 const newListId = listIds[0]; // On ne prend que la première liste (sélection unique)
 
@@ -511,23 +483,13 @@ export async function handleUpdatePoint(req: Request, res: Response) {
                 if (oldListIds && Array.isArray(oldListIds) && oldListIds.length > 0) {
                     const oldListId = oldListIds[0];
                     if (oldListId !== newListId) {
-                        const removeResult = memoryStorage.removePointFromList(userId, oldListId, id);
-                        if (!removeResult) {
-                            console.warn(`Impossible de retirer le point ${id} de l'ancienne liste ${oldListId}`);
-                        } else {
-                            console.log(`[handleUpdatePoint] Point ${id} retiré de l'ancienne liste ${oldListId}`);
-                        }
+                        memoryStorage.removePointFromList(userId, oldListId, id);
                     }
                 }
 
                 // Ajouter le point à la nouvelle liste
                 (point as any).listIds = [newListId];
-                const addResult = memoryStorage.addPointToList(userId, newListId, id);
-                if (!addResult) {
-                    console.warn(`Impossible d'ajouter le point ${id} à la nouvelle liste ${newListId}`);
-                } else {
-                    console.log(`[handleUpdatePoint] Point ${id} ajouté à la liste ${newListId}`);
-                }
+                memoryStorage.addPointToList(userId, newListId, id);
             }
         }
 

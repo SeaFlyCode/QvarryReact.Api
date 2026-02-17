@@ -19,20 +19,16 @@ export async function handleCreateFiche(req: Request, res: Response) {
             commentaire
         } = req.body;
 
-        console.log('[handleCreateFiche] Début de la création de fiche:', { name, ville, type });
-
         // Validation des données
         const validation = validateFicheData(req.body);
         if (!validation.isValid) {
-            console.log('[handleCreateFiche] Validation échouée:', validation.errors);
             return res.status(400).json({
                 message: "Validation échouée",
-                errors: validation.errors // Ajout du détail des erreurs
+                errors: validation.errors
             });
         }
 
         const userId = req.user!.id;
-        console.log('[handleCreateFiche] userId:', userId);
 
         // Filtrer les IDs de points valides
         let validPointsIds = [];
@@ -67,16 +63,10 @@ export async function handleCreateFiche(req: Request, res: Response) {
         };
 
         // Stocker la fiche en mémoire
-        const storeResult = memoryStorage.storeFiche(userId, ficheMemory as any);
-        console.log(`[handleCreateFiche] Fiche ${newFicheId} stockée en mémoire:`, storeResult);
-
-        // Vérifier que la fiche est bien en mémoire
-        const ficheCheck = memoryStorage.getFicheById(userId, newFicheId.toString());
-        console.log(`[handleCreateFiche] Vérification fiche en mémoire:`, ficheCheck ? 'OK' : 'NON TROUVÉE');
+        memoryStorage.storeFiche(userId, ficheMemory as any);
 
         // Forcer la synchronisation immédiate et vérifier le résultat
         const syncResult = await syncService.syncNow(userId);
-        console.log(`[handleCreateFiche] Sync result:`, syncResult);
 
         if (!syncResult.success) {
             return res.status(500).json({
@@ -87,7 +77,6 @@ export async function handleCreateFiche(req: Request, res: Response) {
             });
         }
 
-        console.log(`[handleCreateFiche] Fiche ${newFicheId} créée avec succès pour userId ${userId}`);
         res.status(201).json({
             message: "Fiche créée avec succès",
             ficheId: newFicheId,
@@ -182,8 +171,6 @@ export async function handleDeleteFiche(req: Request, res: Response) {
         
         // Pour chaque point associé à la fiche, supprimer le lien ficheId
         if (fiche.points_ids && fiche.points_ids.length > 0) {
-            console.log(`La fiche ${ficheId} contient ${fiche.points_ids.length} points à délier`);
-            
             for (const pointIdObj of fiche.points_ids) {
                 const pointId = pointIdObj.toString();
                 const point = memoryStorage.getPointById(userId, pointId);
@@ -192,7 +179,6 @@ export async function handleDeleteFiche(req: Request, res: Response) {
                     // Supprimer la référence à la fiche dans le point
                     (point as any).ficheId = undefined;
                     memoryStorage.storePoint(userId, point);
-                    console.log(`Lien supprimé du point ${pointId} vers la fiche ${ficheId}`);
                 }
             }
         }
@@ -531,8 +517,7 @@ export async function handleGetFicheByPointId(req: Request, res: Response) {
     
     // Tentative d'obtenir la ficheId directement du point
     if ((point as any).ficheId) {
-      const ficheIdStr = (point as any).ficheId.toString(); // Fonctionne avec ObjectID ou string
-      console.log(`Point ${pointId} est associé à la fiche ${ficheIdStr}`);
+      const ficheIdStr = (point as any).ficheId.toString();
       const fiche = memoryStorage.getFicheById(userId, ficheIdStr);
       
       if (fiche) {
@@ -583,43 +568,16 @@ export async function handleSearchFiches(req: Request, res: Response) {
             return res.status(401).json({ message: "Utilisateur non authentifié" });
         }
 
-        console.log('[SEARCH] User ID:', userId);
-
         // Récupérer tous les fiches de l'utilisateur
         let fiches = memoryStorage.getAllFiches(userId);
-        console.log('[SEARCH] Fiches en mémoire:', fiches.length);
 
         // Si aucune fiche en mémoire, charger depuis MongoDB
         if (!fiches || fiches.length === 0) {
-            console.log('[SEARCH] Chargement depuis MongoDB...');
             fiches = await FicheModel.find({ userId }).lean() as unknown as IFiche[];
-            console.log('[SEARCH] Fiches depuis MongoDB:', fiches.length);
-        }
-
-        // Log de quelques fiches pour debug
-        if (fiches.length > 0) {
-            console.log('[SEARCH] Exemple de fiche:', {
-                name: fiches[0].name,
-                type: fiches[0].type,
-                ville: fiches[0].ville,
-                etat: fiches[0].etat
-            });
         }
 
         // Filtres textuels
         const { searchText, ville, type, etat, difficulte_acces, risque_oxygene, etat_general, rayonVille, rayonDistance } = req.query;
-
-        console.log('[SEARCH] Filtres reçus:', {
-            searchText,
-            ville,
-            type,
-            etat,
-            difficulte_acces,
-            risque_oxygene,
-            etat_general
-        });
-
-        let fichesBeforeFilter = fiches.length;
 
         if (searchText && typeof searchText === 'string' && searchText.trim()) {
             const searchLower = searchText.toLowerCase();
@@ -629,55 +587,40 @@ export async function handleSearchFiches(req: Request, res: Response) {
                 fiche.type.toLowerCase().includes(searchLower) ||
                 fiche.etat.toLowerCase().includes(searchLower)
             );
-            console.log('[SEARCH] Après filtre searchText:', fiches.length, '(était', fichesBeforeFilter, ')');
-            fichesBeforeFilter = fiches.length;
         }
 
         if (ville && typeof ville === 'string' && ville.trim()) {
             const villeLower = ville.toLowerCase();
             fiches = fiches.filter(fiche => fiche.ville && fiche.ville.toLowerCase().includes(villeLower));
-            console.log('[SEARCH] Après filtre ville:', fiches.length, '(était', fichesBeforeFilter, ')');
-            fichesBeforeFilter = fiches.length;
         }
 
         if (type && typeof type === 'string' && type.trim()) {
             const typeNorm = normalizeString(type);
-            console.log('[SEARCH] Type normalisé recherché:', typeNorm);
             fiches = fiches.filter(fiche => {
                 if (!fiche.type) return false;
                 const ficheTypeNorm = normalizeString(fiche.type);
-                console.log('[SEARCH] Comparaison:', ficheTypeNorm, '===', typeNorm, '?', ficheTypeNorm === typeNorm);
                 return ficheTypeNorm === typeNorm;
             });
-            console.log('[SEARCH] Après filtre type:', fiches.length, '(était', fichesBeforeFilter, ')');
-            fichesBeforeFilter = fiches.length;
         }
 
         if (etat && typeof etat === 'string' && etat.trim()) {
             const etatNorm = normalizeString(etat);
             fiches = fiches.filter(fiche => fiche.etat && normalizeString(fiche.etat) === etatNorm);
-            console.log('[SEARCH] Après filtre etat:', fiches.length, '(était', fichesBeforeFilter, ')');
-            fichesBeforeFilter = fiches.length;
         }
 
         if (difficulte_acces && typeof difficulte_acces === 'string' && difficulte_acces.trim()) {
             const diffNorm = normalizeString(difficulte_acces);
             fiches = fiches.filter(fiche => fiche.difficulte_acces && normalizeString(fiche.difficulte_acces) === diffNorm);
-            console.log('[SEARCH] Après filtre difficulte_acces:', fiches.length, '(était', fichesBeforeFilter, ')');
-            fichesBeforeFilter = fiches.length;
         }
 
         if (risque_oxygene && typeof risque_oxygene === 'string' && risque_oxygene.trim()) {
             const risqueNorm = normalizeString(risque_oxygene);
             fiches = fiches.filter(fiche => fiche.risque_oxygene && normalizeString(fiche.risque_oxygene) === risqueNorm);
-            console.log('[SEARCH] Après filtre risque_oxygene:', fiches.length, '(était', fichesBeforeFilter, ')');
-            fichesBeforeFilter = fiches.length;
         }
 
         if (etat_general && typeof etat_general === 'string' && etat_general.trim()) {
             const etatGenNorm = normalizeString(etat_general);
             fiches = fiches.filter(fiche => fiche.etat_general && normalizeString(fiche.etat_general) === etatGenNorm);
-            console.log('[SEARCH] Après filtre etat_general:', fiches.length, '(était', fichesBeforeFilter, ')');
         }
 
         // Filtre géographique par rayon autour d'une ville
@@ -685,11 +628,8 @@ export async function handleSearchFiches(req: Request, res: Response) {
             const rayonLat = Number(req.query.rayonVilleLat);
             const rayonLng = Number(req.query.rayonVilleLng);
             const rayonKm = Number(rayonDistance);
-            console.log('[SEARCH] Filtre rayon:', { rayonVille, rayonLat, rayonLng, rayonKm });
 
             if (!isNaN(rayonLat) && !isNaN(rayonLng)) {
-                const fichesAvantFiltre = fiches.length;
-
                 fiches = fiches.filter(fiche => {
                     // Méthode 1: Vérifier les points associés
                     if (fiche.points_ids && fiche.points_ids.length > 0) {
@@ -705,7 +645,6 @@ export async function handleSearchFiches(req: Request, res: Response) {
                             }
                             if (lat !== null && lng !== null && !isNaN(lat) && !isNaN(lng)) {
                                 const dist = haversineDistanceKm([lat, lng], [rayonLat, rayonLng]);
-                                console.log(`[SEARCH] Distance point ${pointAny._id} → centre:`, dist.toFixed(2), 'km');
                                 if (dist <= rayonKm) {
                                     return true;
                                 }
@@ -714,29 +653,22 @@ export async function handleSearchFiches(req: Request, res: Response) {
                     }
 
                     // Méthode 2: Comparer la ville de la fiche avec la ville du rayon
-                    // Si la fiche est dans la même ville ou une ville proche, l'inclure
                     if (fiche.ville) {
                         const ficheVilleLower = fiche.ville.toLowerCase().trim();
                         const rayonVilleLower = rayonVille.toLowerCase().trim();
 
-                        // Si c'est la même ville, l'inclure automatiquement
                         if (ficheVilleLower === rayonVilleLower ||
                             ficheVilleLower.includes(rayonVilleLower) ||
                             rayonVilleLower.includes(ficheVilleLower)) {
-                            console.log(`[SEARCH] Fiche ${fiche._id} incluse car même ville: ${fiche.ville}`);
                             return true;
                         }
                     }
 
-                    console.log(`[SEARCH] Fiche ${fiche._id} exclue du rayon (pas de points/coords ou ville différente)`);
                     return false;
                 });
-
-                console.log('[SEARCH] Après filtre rayon:', fiches.length, '(était', fichesAvantFiltre, ')');
             }
         }
 
-        console.log('[SEARCH] Résultat final:', fiches.length, 'fiches trouvées');
         res.status(200).json(fiches);
     } catch (error: unknown) {
         console.error("Erreur lors de la recherche avancée de fiches:", error);

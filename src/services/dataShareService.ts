@@ -177,25 +177,20 @@ async function getListWithPoints(listId: mongoose.Types.ObjectId, userId: mongoo
     const userIdStr = userId.toString();
     const listIdStr = listId.toString();
 
-    console.log(`🔍 [SHARE] Recherche de la liste ${listIdStr} pour l'utilisateur ${userIdStr}`);
-
     // D'abord chercher la liste en mémoire
     let listData: any = null;
     let pointsFromMemory: any[] = [];
 
     if (memoryStorage.hasSession(userIdStr)) {
-        console.log(`✅ [SHARE] Session trouvée pour l'utilisateur ${userIdStr}`);
         const listInMemory = memoryStorage.getListById(userIdStr, listIdStr);
 
         if (listInMemory) {
-            console.log(`✅ [SHARE] Liste ${listIdStr} trouvée en mémoire avec ${listInMemory.points?.length || 0} points`);
             listData = listInMemory;
 
             // Récupérer les points de cette liste depuis la mémoire
             if (listInMemory.points && listInMemory.points.length > 0) {
                 const pointIds = listInMemory.points.map((id: any) => id.toString());
                 pointsFromMemory = memoryStorage.getPointsByIds(userIdStr, pointIds);
-                console.log(`✅ [SHARE] ${pointsFromMemory.length} points récupérés en mémoire`);
             }
         }
     }
@@ -208,7 +203,6 @@ async function getListWithPoints(listId: mongoose.Types.ObjectId, userId: mongoo
         try {
             return await decryptUserKeys(userId, value);
         } catch (e) {
-            console.warn(`[SHARE] Erreur déchiffrement liste, valeur retournée telle quelle:`, e);
             return value;
         }
     };
@@ -266,7 +260,6 @@ async function getListWithPoints(listId: mongoose.Types.ObjectId, userId: mongoo
     const missingPointIds = pointIdsInList.filter((id: string) => !pointIdsFoundInMemory.has(id));
 
     if (missingPointIds.length > 0) {
-        console.log(`⚠️ [SHARE] ${missingPointIds.length} points manquants en mémoire, récupération depuis la DB...`);
 
         // Récupérer les points manquants depuis la DB
         const missingPointsFromDB = await PointModel.find({
@@ -294,7 +287,6 @@ async function getListWithPoints(listId: mongoose.Types.ObjectId, userId: mongoo
 
         // Ajouter les points manquants à la liste des points
         pointsFromMemory.push(...missingPointsDecrypted);
-        console.log(`✅ [SHARE] ${missingPointsDecrypted.length} points récupérés depuis la DB, total: ${pointsFromMemory.length}`);
     }
 
     // Formater les points pour être compatibles avec le format attendu
@@ -334,42 +326,24 @@ async function getPoint(pointId: mongoose.Types.ObjectId, userId: mongoose.Types
     const userIdStr = userId.toString();
     const pointIdStr = pointId.toString();
 
-    console.log(`🔍 [SHARE] Recherche du point ${pointIdStr} pour l'utilisateur ${userIdStr}`);
-
     if (memoryStorage.hasSession(userIdStr)) {
-        console.log(`✅ [SHARE] Session trouvée pour l'utilisateur ${userIdStr}`);
         const userData = memoryStorage.getAllUserData(userIdStr);
-        console.log(`📊 [SHARE] Nombre de points en mémoire: ${userData.points?.length || 0}`);
-
-        if (userData.points && userData.points.length > 0) {
-            console.log(`📍 [SHARE] IDs des points en mémoire:`, userData.points.map((p: any) => p._id?.toString() || 'no-id'));
-        }
-
         const pointInMemory = userData.points?.find((p: any) => p._id?.toString() === pointIdStr);
 
         if (pointInMemory) {
-            console.log(`✅ [SHARE] Point ${pointIdStr} trouvé en mémoire`);
             return {
                 point: pointInMemory,
                 location_decrypted: pointInMemory.location // Déjà déchiffré en mémoire
             };
-        } else {
-            console.log(`❌ [SHARE] Point ${pointIdStr} NON trouvé en mémoire`);
         }
-    } else {
-        console.log(`❌ [SHARE] Aucune session active pour l'utilisateur ${userIdStr}`);
     }
 
     // 2. Si pas en mémoire, chercher en base de données
-    console.log(`🔍 [SHARE] Recherche en base de données pour le point ${pointIdStr}...`);
     const point = await PointModel.findOne({ _id: pointId, userId: userId });
 
     if (!point) {
-        console.error(`❌ [SHARE] Point ${pointIdStr} NON trouvé en base de données pour l'utilisateur ${userIdStr}`);
         throw new Error("Point non trouvé ou accès non autorisé");
     }
-
-    console.log(`✅ [SHARE] Point ${pointIdStr} trouvé en base de données`);
 
     // Helper pour déchiffrer seulement si c'est une string chiffrée
     const safeDecrypt = async (value: any): Promise<any> => {
@@ -379,7 +353,6 @@ async function getPoint(pointId: mongoose.Types.ObjectId, userId: mongoose.Types
         try {
             return await decryptUserKeys(userId, value);
         } catch (e) {
-            console.warn(`[SHARE] Erreur déchiffrement point, valeur retournée telle quelle:`, e);
             return value;
         }
     };

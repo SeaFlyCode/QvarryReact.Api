@@ -31,7 +31,6 @@ export class MemoryStorageService {
   private logAccess(method: string, userId: string, details?: any): void {
     // Vérifier que userId est défini
     if (!userId) {
-      console.warn(`⚠️ [MemoryStorage] ${method} appelé sans userId`);
       return;
     }
 
@@ -40,15 +39,6 @@ export class MemoryStorageService {
       this.accessCounter[method] = 0;
     }
     this.accessCounter[method]++;
-    
-    // Log complet pour le débogage
-    console.log(`📊 [MemoryStorage] ${method} - user: ${userId.substring(0, 6)}... ${details ? JSON.stringify(details) : ''}`);
-    
-    // Afficher les statistiques d'accès toutes les 10 opérations
-    const totalAccess = Object.values(this.accessCounter).reduce((a, b) => a + b, 0);
-    if (totalAccess % 10 === 0) {
-      console.log('📈 Statistiques d\'accès mémoire:', this.accessCounter);
-    }
   }
 
   // Initialiser une session utilisateur avec toutes les données déchiffrées
@@ -212,7 +202,6 @@ export class MemoryStorageService {
       if (deleted) {
         session.isDirty = true;
         this.touchSession(userId);
-        console.log(`🗑️ [MEMORY] Conversation ${conversationId} supprimée du cache pour l'utilisateur ${userId}`);
       }
       return deleted;
     } catch (error) {
@@ -235,7 +224,6 @@ export class MemoryStorageService {
           conversation.updatedAt = new Date();
           session.isDirty = true;
           this.touchSession(odId);
-          console.log(`🔄 [MEMORY] lastMessage mis à jour pour conversation ${conversationId} (user: ${odId})`);
         }
       }
     } catch (error) {
@@ -389,7 +377,6 @@ export class MemoryStorageService {
           if (fiche && fiche.points_ids) {
             // Supprimer le point de la liste des points de la fiche
             fiche.points_ids = fiche.points_ids.filter(id => id.toString() !== pointId);
-            console.log(`Point ${pointId} retiré de la fiche ${ficheId}`);
           }
         } catch (refError) {
           console.error(`Erreur lors de la suppression de la référence du point ${pointId} dans sa fiche:`, refError);
@@ -401,7 +388,6 @@ export class MemoryStorageService {
         for (const [listId, list] of session.lists.entries()) {
           if (list.points && list.points.some(id => id.toString() === pointId)) {
             list.points = list.points.filter(id => id.toString() !== pointId);
-            console.log(`Point ${pointId} retiré de la liste ${listId}`);
           }
         }
       } catch (listError) {
@@ -442,7 +428,6 @@ export class MemoryStorageService {
             
             if (point && (point as any).ficheId && (point as any).ficheId.toString() === ficheId) {
               (point as any).ficheId = undefined;
-              console.log(`Référence à la fiche ${ficheId} supprimée du point ${pointId}`);
             }
           } catch (pointRefError) {
             console.error(`Erreur lors de la suppression de la référence à la fiche ${ficheId} dans le point:`, pointRefError);
@@ -520,10 +505,6 @@ export class MemoryStorageService {
         this.endSession(userId);
         expiredSessions++;
       }
-    }
-    
-    if (expiredSessions > 0) {
-      console.log(`🧹 Nettoyage: ${expiredSessions} sessions expirées supprimées. ${this.sessions.size} sessions actives.`);
     }
   }
 
@@ -617,18 +598,12 @@ export class MemoryStorageService {
       const session = this.getSession(userId);
       const fiche = session.fiches.get(ficheId);
       const point = session.points.get(pointId);
-      
-      // Debug: lister les fiches disponibles
-      console.log(`[addPointToFiche] Fiches en mémoire pour ${userId}:`, Array.from(session.fiches.keys()));
 
       if (!point) {
-        console.warn(`[addPointToFiche] Point ${pointId} n'existe pas en mémoire pour l'utilisateur ${userId}`);
         return false;
       }
 
       if (!fiche) {
-        console.warn(`[addPointToFiche] Fiche ${ficheId} n'existe pas en mémoire pour l'utilisateur ${userId}`);
-        console.warn(`[addPointToFiche] Fiches disponibles:`, Array.from(session.fiches.keys()));
         return false;
       }
       
@@ -645,14 +620,7 @@ export class MemoryStorageService {
           
           // Assigner la valeur ObjectID au point
           (point as any).ficheId = objectIdFicheId;
-          
-          console.log(`Point ${pointId} associé à la fiche ${ficheId} avec ficheId: ${(point as any).ficheId}`);
         } catch (idError) {
-          if (idError instanceof Error) {
-            console.error(`Erreur lors de la conversion de ficheId en ObjectID: ${idError.message}`);
-          } else {
-            console.error(`Erreur lors de la conversion de ficheId en ObjectID:`, idError);
-          }
           // Fallback à une chaîne simple si la conversion échoue
           (point as any).ficheId = ficheId;
         }
@@ -664,7 +632,7 @@ export class MemoryStorageService {
       
       return false;
     } catch (error) {
-      console.error(`❌ Erreur lors de l'ajout du point ${pointId} à la fiche ${ficheId} pour l'utilisateur ${userId}:`, error);
+      console.error(`❌ Erreur lors de l'ajout du point ${pointId} à la fiche ${ficheId}:`, error);
       return false;
     }
   }
@@ -678,7 +646,6 @@ export class MemoryStorageService {
       const point = session.points.get(pointId);
       
       if (!fiche) {
-        console.warn(`Tentative de supprimer un point (${pointId}) d'une fiche (${ficheId}) qui n'existe pas`);
         return false;
       }
       
@@ -688,7 +655,6 @@ export class MemoryStorageService {
       try {
         fiche.points_ids = fiche.points_ids.filter(id => id.toString() !== pointId);
       } catch (filterError) {
-        console.error(`❌ Erreur lors du filtrage des points_ids pour la fiche ${ficheId}:`, filterError);
         return false;
       }
       
@@ -697,11 +663,9 @@ export class MemoryStorageService {
         try {
           // Vérifier si le point est associé à la fiche qu'on modifie
           if ((point as any).ficheId && (point as any).ficheId.toString() === ficheId) {
-            console.log(`Suppression de la référence à la fiche ${ficheId} dans le point ${pointId}`);
             (point as any).ficheId = undefined;
           }
         } catch (pointError) {
-          console.error(`❌ Erreur lors de la suppression du ficheId du point ${pointId}:`, pointError);
           // On continue malgré l'erreur pour au moins mettre à jour la fiche
         }
       }
@@ -715,7 +679,7 @@ export class MemoryStorageService {
       
       return false;
     } catch (error) {
-      console.error(`❌ Erreur lors de la suppression du point ${pointId} de la fiche ${ficheId}:`, error);
+      console.error(`❌ Erreur lors de la suppression du point de la fiche:`, error);
       return false;
     }
   }
@@ -729,7 +693,6 @@ export class MemoryStorageService {
       const point = session.points.get(pointId);
       
       if (!list || !point) {
-        console.warn(`Tentative d'ajouter un point (${pointId}) à une liste (${listId}) qui n'existe pas pour l'utilisateur ${userId}`);
         return false;
       }
       

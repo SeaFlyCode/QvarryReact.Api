@@ -136,7 +136,7 @@ export const addContact = async (req: Request, res: Response): Promise<void> => 
                 try {
                     memoryStorage.storeContact((targetUser._id as Types.ObjectId).toString(), reverseContact);
                 } catch (error) {
-                    console.log(`⚠️ Impossible de rafraîchir la session de ${targetUser._id}`);
+                    // Session refresh silencieux
                 }
             }
 
@@ -219,9 +219,7 @@ export const listContacts = async (req: Request, res: Response): Promise<void> =
         }
         const { status } = req.query;
 
-        console.log(`[CONTACTS] Récupération des contacts pour userId: ${userId}, status: ${status}`);
-
-        // Sinon, récupérer depuis la DB
+        // Récupérer depuis la DB
         // Correction : inclure les contacts où l'utilisateur est soit userId, soit contactId
         const query: any = {
             $or: [
@@ -238,7 +236,6 @@ export const listContacts = async (req: Request, res: Response): Promise<void> =
             .populate('userId', 'name surname contact_code pseudo showPseudo')
             .sort({ createdAt: -1 });
 
-        console.log(`[CONTACTS] ${contacts.length} contacts trouvés`);
 
         // Formatter la réponse avec contactInfo enrichi et déchiffrement
         const { decrypt } = await import('../utils/masterEncryptionUtils');
@@ -256,26 +253,14 @@ export const listContacts = async (req: Request, res: Response): Promise<void> =
                 let contactInfo = undefined;
                 if (otherUser && otherUser._id) {
                     try {
-                        console.log(`[CONTACTS] Infos brutes pour ${otherUser._id}:`, {
-                            name: otherUser.name ? 'encrypted' : 'undefined',
-                            surname: otherUser.surname ? 'encrypted' : 'undefined',
-                            hasPseudo: !!otherUser.pseudo,
-                            showPseudo: otherUser.showPseudo,
-                            pseudoLength: otherUser.pseudo?.length
-                        });
-
                         // Déchiffrer le pseudo seulement s'il existe et n'est pas vide
                         let decryptedPseudo = undefined;
                         if (otherUser.pseudo && otherUser.pseudo.trim() !== '') {
                             try {
                                 decryptedPseudo = decrypt(otherUser.pseudo);
-                                console.log(`[CONTACTS] Pseudo déchiffré avec succès:`, decryptedPseudo);
                             } catch (pseudoError) {
-                                console.warn(`[CONTACTS] Erreur déchiffrement pseudo, sera ignoré:`, pseudoError);
                                 decryptedPseudo = undefined;
                             }
-                        } else {
-                            console.log(`[CONTACTS] Pas de pseudo défini pour ${otherUser._id}`);
                         }
 
                         // SÉCURITÉ : Si showPseudo est activé et qu'un pseudo existe,
@@ -289,7 +274,6 @@ export const listContacts = async (req: Request, res: Response): Promise<void> =
                                 pseudo: decryptedPseudo,
                                 showPseudo: true
                             };
-                            console.log(`[CONTACTS] 🔒 Mode pseudo activé - données personnelles masquées pour ${otherUser._id}`);
                         } else {
                             // Mode normal : envoyer nom/prénom (JAMAIS l'email)
                             const decryptedName = otherUser.name ? decrypt(otherUser.name) : 'Inconnu';
@@ -304,13 +288,6 @@ export const listContacts = async (req: Request, res: Response): Promise<void> =
                                 showPseudo: otherUser.showPseudo || false
                             };
                         }
-
-                        console.log(`[CONTACTS] ContactInfo final:`, {
-                            name: contactInfo.name,
-                            surname: contactInfo.surname,
-                            pseudo: contactInfo.pseudo,
-                            showPseudo: contactInfo.showPseudo
-                        });
                     } catch (decryptError) {
                         console.error(`[CONTACTS] Erreur déchiffrement pour contact ${otherUser._id}:`, decryptError);
                         contactInfo = {
