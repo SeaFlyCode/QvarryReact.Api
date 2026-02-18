@@ -1,12 +1,12 @@
 import express from "express";
 import {
-    handleCreatePoint,
-    handleGetAllPointsByUserId,
-    handleSearchPoints,
-    handleGetPointById,
-    handleDeletePoint,
-    handleUpdatePoint,
-} from "../controllers/pointsControllers"
+  handleCreatePoint,
+  handleGetAllPointsByUserId,
+  handleSearchPoints,
+  handleGetPointById,
+  handleDeletePoint,
+  handleUpdatePoint,
+} from "../controllers/pointsControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
 
 const router = express.Router();
@@ -137,8 +137,7 @@ router.get("/search", authMiddleware, handleSearchPoints);
  *       401:
  *         description: Non authentifié
  */
-router.get("/", authMiddleware , handleGetAllPointsByUserId);
-router.get("/user", authMiddleware, handleGetAllPointsByUserId);
+router.get("/", authMiddleware, handleGetAllPointsByUserId);
 
 /**
  * @swagger

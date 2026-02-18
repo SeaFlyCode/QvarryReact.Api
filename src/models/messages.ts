@@ -1,4 +1,4 @@
-import mongoose, { Document, Schema, Types } from 'mongoose';
+import mongoose, { Document, Schema, Types } from "mongoose";
 
 export interface IMessageReply {
   userId: Types.ObjectId;
@@ -16,7 +16,7 @@ export interface IMessage extends Document {
   conversationId: Types.ObjectId;
   senderId: Types.ObjectId;
   content: string;
-  type: 'text' | 'system';
+  type: "text" | "system";
   readBy: Types.ObjectId[];
   replies: IMessageReply[];
   metadata?: IMessageMetadata;
@@ -24,29 +24,44 @@ export interface IMessage extends Document {
   updatedAt: Date;
 }
 
-const MessageReplySchema = new Schema<IMessageReply>({
-  userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-  content: { type: String, required: true },
-  createdAt: { type: Date, default: Date.now }
-}, { _id: false });
+const MessageReplySchema = new Schema<IMessageReply>(
+  {
+    userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
+    content: { type: String, required: true },
+    createdAt: { type: Date, default: Date.now },
+  },
+  { _id: false },
+);
 
-const MessageMetadataSchema = new Schema<IMessageMetadata>({
-  mentions: [{ type: Schema.Types.ObjectId, ref: 'User' }],
-  edited: { type: Boolean, default: false },
-  deleted: { type: Boolean, default: false }
-}, { _id: false });
+const MessageMetadataSchema = new Schema<IMessageMetadata>(
+  {
+    mentions: [{ type: Schema.Types.ObjectId, ref: "User" }],
+    edited: { type: Boolean, default: false },
+    deleted: { type: Boolean, default: false },
+  },
+  { _id: false },
+);
 
 const MessageSchema = new Schema<IMessage>({
-  conversationId: { type: Schema.Types.ObjectId, ref: 'Conversation', required: true },
-  senderId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
+  conversationId: {
+    type: Schema.Types.ObjectId,
+    ref: "Conversation",
+    required: true,
+  },
+  senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
   content: { type: String, required: true },
-  type: { type: String, enum: ['text', 'system'], default: 'text' },
-  readBy: [{ type: Schema.Types.ObjectId, ref: 'User' }],
+  type: { type: String, enum: ["text", "system"], default: "text" },
+  readBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
   replies: [MessageReplySchema],
   metadata: MessageMetadataSchema,
   createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
+  updatedAt: { type: Date, default: Date.now },
 });
 
-const MessageModel = mongoose.models.Message || mongoose.model<IMessage>('Message', MessageSchema);
+MessageSchema.index({ conversationId: 1, createdAt: -1 });
+MessageSchema.index({ conversationId: 1, readBy: 1 });
+MessageSchema.index({ senderId: 1 });
+
+const MessageModel =
+  mongoose.models.Message || mongoose.model<IMessage>("Message", MessageSchema);
 export default MessageModel;

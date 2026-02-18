@@ -9,7 +9,7 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
 import { redisSessionService } from "../services/redisSessionService";
-import { blacklistedTokens } from "../controllers/authControllers";
+// CRIT-10: blacklistedTokens Set supprimé, on utilise redisSessionService exclusivement
 import { jwtKeyManager } from "../utils/jwtKeyManager";
 import UserModel from "../models/users";
 
@@ -18,14 +18,14 @@ import UserModel from "../models/users";
 // ═══════════════════════════════════════════════════════════════════════════
 
 interface MobileDecodedToken {
-    id: string;
-    isAdmin?: boolean;
-    iat?: number;
-    exp?: number;
-    jti?: string;
-    kv?: string;
-    platform?: 'mobile' | 'web';
-    deviceId?: string; // MED-001: Device binding
+  id: string;
+  isAdmin?: boolean;
+  iat?: number;
+  exp?: number;
+  jti?: string;
+  kv?: string;
+  platform?: "mobile" | "web";
+  deviceId?: string; // MED-001: Device binding
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -37,173 +37,197 @@ interface MobileDecodedToken {
  * Vérifie le JWT sans dépendre de memoryStorage
  * Idéal pour les routes qui n'ont pas besoin des données utilisateur en cache
  */
-export const mobileAuthMiddleware = async (req: Request, res: Response, next: NextFunction) => {
-    try {
-        // 1. RÉCUPÉRATION DU TOKEN (Header Authorization uniquement)
-        const authHeader = req.headers.authorization;
+export const mobileAuthMiddleware = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  try {
+    // 1. RÉCUPÉRATION DU TOKEN (Header Authorization uniquement)
+    const authHeader = req.headers.authorization;
 
-        if (!authHeader || !authHeader.startsWith('Bearer ')) {
-            console.warn(`⚠️ [MOBILE-AUTH] Token manquant - ${req.method} ${req.path}`);
-            return res.status(401).json({
-                error: "Token d'authentification requis",
-                code: 'NO_TOKEN',
-                hint: "Header 'Authorization: Bearer <token>' requis"
-            });
-        }
-
-        const token = authHeader.split(' ')[1];
-
-        if (!token) {
-            return res.status(401).json({
-                error: "Token d'authentification invalide",
-                code: 'INVALID_TOKEN_FORMAT'
-            });
-        }
-
-        // 2. VÉRIFICATION DE LA BLACKLIST
-        const isBlacklisted = await redisSessionService.isTokenBlacklisted(token) ||
-                              blacklistedTokens.has(token);
-
-        if (isBlacklisted) {
-            console.warn(`🚫 [MOBILE-AUTH] Token révoqué utilisé - ${req.method} ${req.path}`);
-            return res.status(401).json({
-                error: "Token révoqué. Veuillez vous reconnecter.",
-                code: 'TOKEN_REVOKED'
-            });
-        }
-
-        // 3. DÉCODAGE ET VÉRIFICATION DU JWT
-        // Support du key versioning pour la rotation de clés
-        const unverifiedPayload = jwt.decode(token) as MobileDecodedToken | null;
-
-        if (!unverifiedPayload) {
-            return res.status(401).json({
-                error: "Token invalide",
-                code: 'TOKEN_DECODE_ERROR'
-            });
-        }
-
-        const keyVersion = unverifiedPayload.kv;
-        let jwtSecret: string;
-
-        if (keyVersion && jwtKeyManager.hasVersion(keyVersion)) {
-            const versionedSecret = jwtKeyManager.getKeyByVersion(keyVersion);
-            if (!versionedSecret) {
-                console.error(`❌ [MOBILE-AUTH] Clé JWT version ${keyVersion} non trouvée`);
-                return res.status(401).json({
-                    error: "Token invalide",
-                    code: 'KEY_VERSION_INVALID'
-                });
-            }
-            jwtSecret = versionedSecret;
-        } else {
-            const mainSecret = process.env.JWT_SECRET;
-            if (!mainSecret) {
-                console.error('❌ [MOBILE-AUTH] JWT_SECRET non défini');
-                throw new Error('Configuration de sécurité manquante');
-            }
-            jwtSecret = mainSecret;
-        }
-
-        // Vérifier le token avec les options d'audience pour mobile
-        const decoded = jwt.verify(token, jwtSecret, {
-            audience: 'qvarry-mobile',
-            issuer: 'qvarry-api'
-        }) as MobileDecodedToken;
-
-        // 4. MED-001: VÉRIFICATION DU BINDING DEVICE-TOKEN
-        const headerDeviceId = req.headers['x-device-id'] as string;
-        if (decoded.deviceId && headerDeviceId && decoded.deviceId !== headerDeviceId) {
-            console.warn(`🚨 [MOBILE-AUTH] Device mismatch: token=${decoded.deviceId}, header=${headerDeviceId}`);
-            return res.status(401).json({
-                error: "Token invalide pour cet appareil. Veuillez vous reconnecter.",
-                code: 'DEVICE_MISMATCH'
-            });
-        }
-
-        // 5. VÉRIFICATION DU JTI (Session ID)
-        if (decoded.jti) {
-            const isValidJti = await redisSessionService.validateSessionJti(decoded.id, decoded.jti);
-            if (!isValidJti) {
-                console.warn(`⚠️ [MOBILE-AUTH] JTI invalide pour userId: ${decoded.id}`);
-                return res.status(401).json({
-                    error: "Session expirée. Veuillez rafraîchir votre token.",
-                    code: 'SESSION_EXPIRED',
-                    requiresRefresh: true
-                });
-            }
-        }
-
-        // 6. VÉRIFICATION QUE L'UTILISATEUR EXISTE TOUJOURS
-        const userExists = await UserModel.exists({ _id: decoded.id });
-        if (!userExists) {
-            console.warn(`⚠️ [MOBILE-AUTH] Utilisateur ${decoded.id} n'existe plus`);
-            return res.status(401).json({
-                error: "Utilisateur non trouvé",
-                code: 'USER_NOT_FOUND'
-            });
-        }
-
-        // 6. ATTACHER LES INFOS À LA REQUÊTE
-        req.user = {
-            id: decoded.id,
-            isAdmin: decoded.isAdmin || false
-        };
-
-        // Log de debug en développement
-        if (process.env.NODE_ENV === 'development') {
-            console.log(`📱 [MOBILE-AUTH] Authentifié: userId=${decoded.id}, admin=${decoded.isAdmin}`);
-        }
-
-        next();
-
-    } catch (error: any) {
-        // Gestion des erreurs JWT spécifiques
-        if (error.name === 'TokenExpiredError') {
-            console.warn(`⚠️ [MOBILE-AUTH] Token expiré`);
-            return res.status(401).json({
-                error: "Token expiré. Veuillez rafraîchir votre token.",
-                code: 'TOKEN_EXPIRED',
-                requiresRefresh: true
-            });
-        }
-
-        if (error.name === 'JsonWebTokenError') {
-            console.warn(`⚠️ [MOBILE-AUTH] Token JWT invalide: ${error.message}`);
-            return res.status(401).json({
-                error: "Token invalide",
-                code: 'TOKEN_INVALID'
-            });
-        }
-
-        if (error.name === 'NotBeforeError') {
-            return res.status(401).json({
-                error: "Token pas encore valide",
-                code: 'TOKEN_NOT_ACTIVE'
-            });
-        }
-
-        console.error(`❌ [MOBILE-AUTH] Erreur inattendue:`, error);
-        return res.status(500).json({
-            error: "Erreur d'authentification",
-            code: 'AUTH_ERROR'
-        });
+    if (!authHeader || !authHeader.startsWith("Bearer ")) {
+      console.warn(
+        `⚠️ [MOBILE-AUTH] Token manquant - ${req.method} ${req.path}`,
+      );
+      return res.status(401).json({
+        error: "Token d'authentification requis",
+        code: "NO_TOKEN",
+        hint: "Header 'Authorization: Bearer <token>' requis",
+      });
     }
+
+    const token = authHeader.split(" ")[1];
+
+    if (!token) {
+      return res.status(401).json({
+        error: "Token d'authentification invalide",
+        code: "INVALID_TOKEN_FORMAT",
+      });
+    }
+
+    // 2. VÉRIFICATION DE LA BLACKLIST (CRIT-10: Redis uniquement)
+    const isBlacklisted = await redisSessionService.isTokenBlacklisted(token);
+
+    if (isBlacklisted) {
+      console.warn(
+        `🚫 [MOBILE-AUTH] Token révoqué utilisé - ${req.method} ${req.path}`,
+      );
+      return res.status(401).json({
+        error: "Token révoqué. Veuillez vous reconnecter.",
+        code: "TOKEN_REVOKED",
+      });
+    }
+
+    // 3. DÉCODAGE ET VÉRIFICATION DU JWT
+    // Support du key versioning pour la rotation de clés
+    const unverifiedPayload = jwt.decode(token) as MobileDecodedToken | null;
+
+    if (!unverifiedPayload) {
+      return res.status(401).json({
+        error: "Token invalide",
+        code: "TOKEN_DECODE_ERROR",
+      });
+    }
+
+    const keyVersion = unverifiedPayload.kv;
+    let jwtSecret: string;
+
+    if (keyVersion && jwtKeyManager.hasVersion(keyVersion)) {
+      const versionedSecret = jwtKeyManager.getKeyByVersion(keyVersion);
+      if (!versionedSecret) {
+        console.error(
+          `❌ [MOBILE-AUTH] Clé JWT version ${keyVersion} non trouvée`,
+        );
+        return res.status(401).json({
+          error: "Token invalide",
+          code: "KEY_VERSION_INVALID",
+        });
+      }
+      jwtSecret = versionedSecret;
+    } else {
+      const mainSecret = process.env.JWT_SECRET;
+      if (!mainSecret) {
+        console.error("❌ [MOBILE-AUTH] JWT_SECRET non défini");
+        throw new Error("Configuration de sécurité manquante");
+      }
+      jwtSecret = mainSecret;
+    }
+
+    // Vérifier le token avec les options d'audience pour mobile
+    const decoded = jwt.verify(token, jwtSecret, {
+      audience: "qvarry-mobile",
+      issuer: "qvarry-api",
+    }) as MobileDecodedToken;
+
+    // 4. MED-001: VÉRIFICATION DU BINDING DEVICE-TOKEN
+    const headerDeviceId = req.headers["x-device-id"] as string;
+    if (
+      decoded.deviceId &&
+      headerDeviceId &&
+      decoded.deviceId !== headerDeviceId
+    ) {
+      console.warn(
+        `🚨 [MOBILE-AUTH] Device mismatch: token=${decoded.deviceId}, header=${headerDeviceId}`,
+      );
+      return res.status(401).json({
+        error: "Token invalide pour cet appareil. Veuillez vous reconnecter.",
+        code: "DEVICE_MISMATCH",
+      });
+    }
+
+    // 5. VÉRIFICATION DU JTI (Session ID)
+    if (decoded.jti) {
+      const isValidJti = await redisSessionService.validateSessionJti(
+        decoded.id,
+        decoded.jti,
+      );
+      if (!isValidJti) {
+        console.warn(
+          `⚠️ [MOBILE-AUTH] JTI invalide pour userId: ${decoded.id}`,
+        );
+        return res.status(401).json({
+          error: "Session expirée. Veuillez rafraîchir votre token.",
+          code: "SESSION_EXPIRED",
+          requiresRefresh: true,
+        });
+      }
+    }
+
+    // 6. VÉRIFICATION QUE L'UTILISATEUR EXISTE TOUJOURS
+    const userExists = await UserModel.exists({ _id: decoded.id });
+    if (!userExists) {
+      console.warn(`⚠️ [MOBILE-AUTH] Utilisateur ${decoded.id} n'existe plus`);
+      return res.status(401).json({
+        error: "Utilisateur non trouvé",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    // 6. ATTACHER LES INFOS À LA REQUÊTE
+    req.user = {
+      id: decoded.id,
+      isAdmin: decoded.isAdmin || false,
+    };
+
+    // Log de debug en développement
+    if (process.env.NODE_ENV === "development") {
+      console.log(
+        `📱 [MOBILE-AUTH] Authentifié: userId=${decoded.id}, admin=${decoded.isAdmin}`,
+      );
+    }
+
+    next();
+  } catch (error: any) {
+    // Gestion des erreurs JWT spécifiques
+    if (error.name === "TokenExpiredError") {
+      console.warn(`⚠️ [MOBILE-AUTH] Token expiré`);
+      return res.status(401).json({
+        error: "Token expiré. Veuillez rafraîchir votre token.",
+        code: "TOKEN_EXPIRED",
+        requiresRefresh: true,
+      });
+    }
+
+    if (error.name === "JsonWebTokenError") {
+      console.warn(`⚠️ [MOBILE-AUTH] Token JWT invalide: ${error.message}`);
+      return res.status(401).json({
+        error: "Token invalide",
+        code: "TOKEN_INVALID",
+      });
+    }
+
+    if (error.name === "NotBeforeError") {
+      return res.status(401).json({
+        error: "Token pas encore valide",
+        code: "TOKEN_NOT_ACTIVE",
+      });
+    }
+
+    console.error(`❌ [MOBILE-AUTH] Erreur inattendue:`, error);
+    return res.status(500).json({
+      error: "Erreur d'authentification",
+      code: "AUTH_ERROR",
+    });
+  }
 };
 
 /**
  * Version optionnelle du middleware
  * Continue même si pas de token (pour les routes accessibles aux deux)
  */
-export const mobileAuthMiddlewareOptional = async (req: Request, res: Response, next: NextFunction) => {
-    const authHeader = req.headers.authorization;
+export const mobileAuthMiddlewareOptional = async (
+  req: Request,
+  res: Response,
+  next: NextFunction,
+) => {
+  const authHeader = req.headers.authorization;
 
-    // Pas de token = continuer sans authentification
-    if (!authHeader || !authHeader.startsWith('Bearer ')) {
-        return next();
-    }
+  // Pas de token = continuer sans authentification
+  if (!authHeader || !authHeader.startsWith("Bearer ")) {
+    return next();
+  }
 
-    // Sinon, utiliser le middleware normal
-    return mobileAuthMiddleware(req, res, next);
+  // Sinon, utiliser le middleware normal
+  return mobileAuthMiddleware(req, res, next);
 };
-

@@ -2,7 +2,7 @@ import mongoose, { Document, Schema, Types } from "mongoose";
 
 export interface IParticipant {
   userId: Types.ObjectId;
-  role: 'admin' | 'member';
+  role: "admin" | "member";
   joinedAt: Date;
   leftAt?: Date | null;
 }
@@ -19,21 +19,30 @@ export interface IConversation extends Document {
 }
 
 const ParticipantSchema = new Schema<IParticipant>({
-  userId: { type: Schema.Types.ObjectId, required: true, ref: 'User' },
-  role: { type: String, enum: ['admin', 'member'], required: true },
+  userId: { type: Schema.Types.ObjectId, required: true, ref: "User" },
+  role: { type: String, enum: ["admin", "member"], required: true },
   joinedAt: { type: Date, required: true },
   leftAt: { type: Date, default: null },
 });
 
-const ConversationSchema = new Schema<IConversation>({
-  name: { type: String, default: null, trim: true },
-  isGroup: { type: Boolean, required: true },
-  creatorId: { type: Schema.Types.ObjectId, ref: 'User', default: null },
-  participants: { type: [ParticipantSchema], required: true },
-  lastMessage: { type: Schema.Types.ObjectId, ref: 'Message', default: null },
-  deletedBy: { type: [Schema.Types.ObjectId], ref: 'User', default: [] },
-}, {
-  timestamps: true, // createdAt et updatedAt gérés automatiquement
-});
+const ConversationSchema = new Schema<IConversation>(
+  {
+    name: { type: String, default: null, trim: true },
+    isGroup: { type: Boolean, required: true },
+    creatorId: { type: Schema.Types.ObjectId, ref: "User", default: null },
+    participants: { type: [ParticipantSchema], required: true },
+    lastMessage: { type: Schema.Types.ObjectId, ref: "Message", default: null },
+    deletedBy: { type: [Schema.Types.ObjectId], ref: "User", default: [] },
+  },
+  {
+    timestamps: true, // createdAt et updatedAt gérés automatiquement
+  },
+);
 
-export default mongoose.model<IConversation>('Conversation', ConversationSchema);
+ConversationSchema.index({ "participants.userId": 1, updatedAt: -1 });
+ConversationSchema.index({ creatorId: 1 });
+
+export default mongoose.model<IConversation>(
+  "Conversation",
+  ConversationSchema,
+);

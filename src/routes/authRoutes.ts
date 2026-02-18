@@ -1,16 +1,19 @@
 import express from "express";
 import {
-    handleLoginUser,
-    handleLogoutUser,
-    handleRefreshToken,
-    checkAuth,
-    getWebSocketToken,
-    handleForgotPassword,
-    handleResetPassword,
-    completeLoginAfter2FA,
-} from "../controllers/authControllers";
-import { handleManualSync } from "../controllers/syncController";
-import { getUserSessions, revokeAllOtherSessions } from "../controllers/sessionControllers";
+  handleLoginUser,
+  handleLogoutUser,
+  handleRefreshToken,
+  checkAuth,
+  getWebSocketToken,
+  handleForgotPassword,
+  handleResetPassword,
+  completeLoginAfter2FA,
+} from "../controllers/auth";
+import { handleManualSync } from "../controllers/syncControllers";
+import {
+  getUserSessions,
+  revokeAllOtherSessions,
+} from "../controllers/sessionControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import { verifyTurnstileOptional } from "../middlewares/turnstileMiddleware";
 

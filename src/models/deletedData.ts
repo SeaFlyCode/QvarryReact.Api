@@ -15,16 +15,16 @@
 import mongoose, { Schema, Document } from "mongoose";
 
 export type DeletedEntityType =
-  | 'fiche'
-  | 'point'
-  | 'list'
-  | 'user'
-  | 'message'
-  | 'conversation'
-  | 'contact'
-  | 'notification'
-  | 'dataShare'
-  | 'maintenance';
+  | "fiche"
+  | "point"
+  | "list"
+  | "user"
+  | "message"
+  | "conversation"
+  | "contact"
+  | "notification"
+  | "dataShare"
+  | "maintenance";
 
 export interface IDeletedData extends Document {
   // Identification de l'entité supprimée
@@ -58,55 +58,77 @@ const deletedDataSchema = new Schema<IDeletedData>({
   entityType: {
     type: String,
     required: true,
-    enum: ['fiche', 'point', 'list', 'user', 'message', 'conversation', 'contact', 'notification', 'dataShare', 'maintenance'],
-    index: true
+    enum: [
+      "fiche",
+      "point",
+      "list",
+      "user",
+      "message",
+      "conversation",
+      "contact",
+      "notification",
+      "dataShare",
+      "maintenance",
+    ],
+    index: true,
   },
   entityId: {
     type: Schema.Types.ObjectId,
     required: true,
-    index: true
+    index: true,
   },
   data: {
     type: Schema.Types.Mixed,
-    required: true
+    required: true,
   },
   deletedBy: {
     type: Schema.Types.ObjectId,
-    ref: 'User',
+    ref: "User",
     required: true,
-    index: true
+    index: true,
   },
   deletedAt: {
     type: Date,
     default: Date.now,
-    index: true
+    index: true,
   },
   deletionReason: {
     type: String,
-    maxlength: 500
+    maxlength: 500,
   },
   deletionContext: {
     ipAddress: String,
     userAgent: String,
-    requestId: String
+    requestId: String,
   },
   parentEntityType: {
     type: String,
-    enum: ['fiche', 'point', 'list', 'user', 'message', 'conversation', 'contact', 'notification', 'dataShare', 'maintenance']
+    enum: [
+      "fiche",
+      "point",
+      "list",
+      "user",
+      "message",
+      "conversation",
+      "contact",
+      "notification",
+      "dataShare",
+      "maintenance",
+    ],
   },
   parentEntityId: {
-    type: Schema.Types.ObjectId
+    type: Schema.Types.ObjectId,
   },
   isRestored: {
     type: Boolean,
     default: false,
-    index: true
+    index: true,
   },
   restoredAt: Date,
   restoredBy: {
     type: Schema.Types.ObjectId,
-    ref: 'User'
-  }
+    ref: "User",
+  },
 });
 
 // Index composés pour recherches fréquentes
@@ -115,8 +137,10 @@ deletedDataSchema.index({ deletedBy: 1, deletedAt: -1 });
 deletedDataSchema.index({ entityType: 1, entityId: 1 });
 deletedDataSchema.index({ parentEntityType: 1, parentEntityId: 1 });
 
-// TTL index optionnel - garder les données supprimées pendant 2 ans (730 jours)
-// Commenté par défaut, décommenter si vous souhaitez une purge automatique
-// deletedDataSchema.index({ deletedAt: 1 }, { expireAfterSeconds: 730 * 24 * 60 * 60 });
+// TTL index — purge automatique des données supprimées après 90 jours (conformité RGPD)
+deletedDataSchema.index(
+  { deletedAt: 1 },
+  { expireAfterSeconds: 90 * 24 * 60 * 60 },
+);
 
 export default mongoose.model<IDeletedData>("DeletedData", deletedDataSchema);
