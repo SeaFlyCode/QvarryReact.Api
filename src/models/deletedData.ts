@@ -5,11 +5,15 @@
  * Les données sont physiquement supprimées de leur table d'origine
  * mais conservées ici pour audit et récupération potentielle.
  *
+ * ⚠️ L'archivage + suppression ne sont pas atomiques (nécessite replica set pour transactions).
+ * Design actuel : archiver d'abord, supprimer ensuite (principe de précaution).
+ *
  * WORKFLOW:
  * 1. Utilisateur demande suppression
- * 2. Données copiées dans DeletedData
+ * 2. Données copiées dans DeletedData (cette table)
  * 3. Données supprimées de la table d'origine
  * 4. Les données archivées ne sont JAMAIS utilisées par l'application
+ * 5. TTL: purge automatique après 90 jours (ligne 161)
  */
 
 import mongoose, { Schema, Document } from "mongoose";

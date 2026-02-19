@@ -2,11 +2,11 @@
 import express from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import {
-    getUserSessions,
-    revokeSession,
-    revokeAllOtherSessions,
-    getSecurityEvents
+  getUserSessions,
+  revokeSession,
+  getSecurityEvents,
 } from "../controllers/securityControllers";
+import { revokeAllOtherSessions } from "../controllers/sessionControllers";
 
 const router = express.Router();
 

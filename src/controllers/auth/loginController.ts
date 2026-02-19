@@ -554,12 +554,11 @@ export const checkAuth = async (req: Request, res: Response) => {
   try {
     // ─────────────────────────────────────────────────────────────────────
     // 1. RÉCUPÉRATION DU TOKEN
+    // HIGH-2 FIX: Suppression des sources non sécurisées (query/body)
+    // Seuls les cookies et Authorization header sont acceptés
     // ─────────────────────────────────────────────────────────────────────
     const token =
-      req.cookies?.token ||
-      req.headers.authorization?.split(" ")[1] ||
-      (req.query?.token as string) ||
-      req.body?.token;
+      req.cookies?.token || req.headers.authorization?.split(" ")[1];
 
     if (!token) {
       return res.status(401).json({

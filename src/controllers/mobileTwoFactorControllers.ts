@@ -65,16 +65,6 @@ async function hashRecoveryCodes(codes: string[]): Promise<string[]> {
 }
 
 /**
- * Génère un token JWT mobile
- */
-function generateMobileToken(
-  userId: string,
-  isAdmin: boolean = false,
-): { token: string; tokenId: string; keyVersion: string } {
-  return generateMobileTokenWithDevice(userId, isAdmin, undefined);
-}
-
-/**
  * Génère un token JWT mobile avec binding au deviceId (MED-001)
  */
 function generateMobileTokenWithDevice(
@@ -476,6 +466,50 @@ const twoFactorAttempts = new Map<
   string,
   { count: number; firstAttempt: Date; blockedUntil?: Date }
 >();
+
+// BUG-002: Nettoyage périodique de la Map twoFactorAttempts pour éviter la croissance non bornée
+const TWO_FACTOR_CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const TWO_FACTOR_MAX_ENTRIES = 10_000;
+
+function cleanupTwoFactorAttempts(): void {
+  const now = Date.now();
+  const thirtyMinutesMs = 30 * 60 * 1000;
+
+  for (const [key, entry] of twoFactorAttempts) {
+    // Supprimer les entrées dont le blocage a expiré ET qui sont anciennes
+    const blockedExpired =
+      entry.blockedUntil && entry.blockedUntil.getTime() < now;
+    const firstAttemptExpired =
+      now - entry.firstAttempt.getTime() > thirtyMinutesMs;
+
+    if (blockedExpired || firstAttemptExpired) {
+      twoFactorAttempts.delete(key);
+    }
+  }
+
+  // Si toujours trop d'entrées, supprimer les plus anciennes
+  if (twoFactorAttempts.size > TWO_FACTOR_MAX_ENTRIES) {
+    const entries = Array.from(twoFactorAttempts.entries()).sort(
+      (a, b) => a[1].firstAttempt.getTime() - b[1].firstAttempt.getTime(),
+    );
+
+    const toRemove = entries.length - TWO_FACTOR_MAX_ENTRIES;
+    for (let i = 0; i < toRemove; i++) {
+      twoFactorAttempts.delete(entries[i][0]);
+    }
+  }
+
+  if (twoFactorAttempts.size > 0) {
+    console.log(
+      `🧹 [2FA CLEANUP] twoFactorAttempts: ${twoFactorAttempts.size} entrées restantes`,
+    );
+  }
+}
+
+setInterval(cleanupTwoFactorAttempts, TWO_FACTOR_CLEANUP_INTERVAL_MS);
+console.log(
+  `✅ [2FA CLEANUP] Nettoyage automatique démarré (intervalle: ${TWO_FACTOR_CLEANUP_INTERVAL_MS / 1000}s)`,
+);
 
 /**
  * Vérifie les tentatives 2FA pour un userId donné

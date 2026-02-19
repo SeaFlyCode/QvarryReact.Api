@@ -128,11 +128,12 @@ export async function handleCreateUser(req: Request, res: Response) {
     const emailVerificationCode = generateVerificationCode(6);
     const emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 heures
 
+    // Log sécurisé sans exposer les valeurs sensibles
     console.log(
-      `📧 [CREATE USER] Token de vérification généré: ${emailVerificationToken}`,
+      `📧 [CREATE USER] Token de vérification généré (longueur: ${emailVerificationToken.length})`,
     );
     console.log(
-      `📧 [CREATE USER] Code de vérification: ${emailVerificationCode}`,
+      `📧 [CREATE USER] Code de vérification envoyé (longueur: ${emailVerificationCode.length})`,
     );
 
     const passwordHash = await bcrypt.hash(password, 10);
@@ -188,16 +189,16 @@ export async function handleCreateUser(req: Request, res: Response) {
       emailVerificationCode,
     ).catch((err) => console.error("Erreur envoi email bienvenue:", err));
 
+    // SEC-043: Ne pas exposer contact_code dans la réponse (donnée sensible)
     res.status(201).json({
       message:
         "Utilisateur créé avec succès ! Un email de vérification a été envoyé.",
       userId: createdUser._id,
-      contact_code: `@${contact_code}`, // Retourner le code de contact pour affichage
       requiresEmailVerification: true,
     });
   } catch (error: unknown) {
     console.error("Erreur création utilisateur:", error);
-    res.status(500).json({
+    return res.status(500).json({
       message: "Erreur lors de la création de l'utilisateur.",
       error: getErrorMessage(error),
     });
@@ -206,11 +207,32 @@ export async function handleCreateUser(req: Request, res: Response) {
 
 export async function handleGetAllUsers(req: Request, res: Response) {
   try {
-    const users = await getAllUsers();
-    res.status(200).json(users.map((user) => decryptUser(user)));
+    // Pagination
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(
+      Math.max(1, parseInt(req.query.limit as string) || 50),
+      200,
+    );
+    const skip = (page - 1) * limit;
+
+    // Récupérer les utilisateurs avec pagination depuis MongoDB
+    const [users, total] = await Promise.all([
+      UserModel.find().sort({ creation_date: -1 }).skip(skip).limit(limit),
+      UserModel.countDocuments(),
+    ]);
+
+    res.status(200).json({
+      data: users.map((user) => decryptUser(user)),
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (error: unknown) {
     console.error("Erreur récupération utilisateurs:", error);
-    res.status(500).json({
+    return res.status(500).json({
       message: "Erreur lors de la récupération des utilisateurs.",
       error: getErrorMessage(error),
     });
@@ -224,6 +246,19 @@ export async function handleGetUserById(req: Request, res: Response) {
       return res.status(400).json({ message: "ID utilisateur requis" });
     }
 
+    // SEC-033: Vérifier que l'utilisateur peut accéder à ce profil
+    const requestingUser = (req as any).user;
+    if (!requestingUser) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+
+    // Autoriser si: même utilisateur OU admin
+    if (requestingUser.id !== userId && !requestingUser.is_admin) {
+      return res.status(403).json({
+        message: "Vous n'êtes pas autorisé à accéder à ce profil.",
+      });
+    }
+
     const user = await getUserById(userId);
     if (!user) {
       return res.status(404).json({ message: "Utilisateur non trouvé." });
@@ -232,7 +267,7 @@ export async function handleGetUserById(req: Request, res: Response) {
     res.status(200).json(decryptUser(user));
   } catch (error: unknown) {
     console.error("Erreur récupération utilisateur:", error);
-    res.status(400).json({ message: getErrorMessage(error) });
+    return res.status(400).json({ message: getErrorMessage(error) });
   }
 }
 
@@ -243,11 +278,24 @@ export async function handleDeleteUser(req: Request, res: Response) {
       return res.status(400).json({ message: "ID utilisateur requis" });
     }
 
+    // SEC-035: Vérifier que l'utilisateur peut supprimer ce compte
+    const requestingUser = (req as any).user;
+    if (!requestingUser) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+
+    // Autoriser si: même utilisateur OU admin
+    if (requestingUser.id !== userId && !requestingUser.is_admin) {
+      return res.status(403).json({
+        message: "Vous n'êtes pas autorisé à supprimer ce compte.",
+      });
+    }
+
     await deleteUserById(userId);
     res.status(200).json({ message: "Utilisateur supprimé avec succès." });
   } catch (error: unknown) {
     console.error("Erreur suppression utilisateur:", error);
-    res.status(400).json({ message: getErrorMessage(error) });
+    return res.status(400).json({ message: getErrorMessage(error) });
   }
 }
 
@@ -264,6 +312,19 @@ export async function handleUpdateUser(req: Request, res: Response) {
       currentPassword,
       login_notifications_enabled,
     } = req.body;
+
+    // SEC-034: Vérifier que l'utilisateur peut modifier ce compte
+    const requestingUser = (req as any).user;
+    if (!requestingUser) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+
+    // Autoriser si: même utilisateur OU admin
+    if (requestingUser.id !== userId && !requestingUser.is_admin) {
+      return res.status(403).json({
+        message: "Vous n'êtes pas autorisé à modifier ce compte.",
+      });
+    }
 
     // Vérification obligatoire du mot de passe actuel
     if (!currentPassword) {
@@ -409,7 +470,7 @@ export async function handleUpdateUser(req: Request, res: Response) {
     res.status(200).json({ message: "Profil mis à jour avec succès." });
   } catch (error: unknown) {
     console.error("Erreur mise à jour utilisateur:", error);
-    res.status(400).json({ message: getErrorMessage(error) });
+    return res.status(400).json({ message: getErrorMessage(error) });
   }
 }
 
@@ -503,7 +564,7 @@ export async function handleVerifyEmailByCode(req: Request, res: Response) {
     });
   } catch (error: unknown) {
     console.error("Erreur vérification email par code:", error);
-    res.status(500).json({
+    return res.status(500).json({
       message: "Erreur lors de la vérification de l'email.",
       error: getErrorMessage(error),
     });
@@ -574,7 +635,7 @@ export async function handleResendVerificationEmail(
     });
   } catch (error: unknown) {
     console.error("Erreur renvoi email vérification:", error);
-    res.status(500).json({
+    return res.status(500).json({
       message: "Erreur lors de l'envoi du code de vérification.",
       error: getErrorMessage(error),
     });

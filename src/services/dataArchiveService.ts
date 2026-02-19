@@ -16,8 +16,11 @@
  * └─────────────────────────────────────────────────────────────┘
  */
 
-import mongoose from 'mongoose';
-import DeletedData, { DeletedEntityType, IDeletedData } from '../models/deletedData';
+import mongoose from "mongoose";
+import DeletedData, {
+  DeletedEntityType,
+  IDeletedData,
+} from "../models/deletedData";
 
 // Types pour le contexte de l'action
 export interface ActionContext {
@@ -51,6 +54,9 @@ class DataArchiveService {
    * Archive une entité avant suppression physique
    * Les données sont copiées CHIFFRÉES dans DeletedData
    *
+   * ⚠️ L'archivage et la suppression ne sont pas atomiques (pas de transaction MongoDB, nécessite replica set).
+   * L'archivage se fait AVANT la suppression pour éviter toute perte de données.
+   *
    * @param entityType - Type de l'entité (fiche, point, user, etc.)
    * @param entityId - ID de l'entité
    * @param data - Données complètes de l'entité (chiffrées)
@@ -62,7 +68,7 @@ class DataArchiveService {
     entityId: mongoose.Types.ObjectId | string,
     data: Record<string, unknown>,
     deletedBy: mongoose.Types.ObjectId | string,
-    options: ArchiveOptions = {}
+    options: ArchiveOptions = {},
   ): Promise<IDeletedData> {
     try {
       const archived = await DeletedData.create({
@@ -74,14 +80,21 @@ class DataArchiveService {
         deletionReason: options.reason,
         deletionContext: options.context,
         parentEntityType: options.parentEntityType,
-        parentEntityId: options.parentEntityId ? new mongoose.Types.ObjectId(options.parentEntityId.toString()) : undefined,
-        isRestored: false
+        parentEntityId: options.parentEntityId
+          ? new mongoose.Types.ObjectId(options.parentEntityId.toString())
+          : undefined,
+        isRestored: false,
       });
 
-      console.log(`📦 [ARCHIVE] ${entityType} ${entityId} archivé par ${deletedBy}`);
+      console.log(
+        `📦 [ARCHIVE] ${entityType} ${entityId} archivé par ${deletedBy}`,
+      );
       return archived;
     } catch (error) {
-      console.error(`❌ [ARCHIVE] Erreur archivage ${entityType} ${entityId}:`, error);
+      console.error(
+        `❌ [ARCHIVE] Erreur archivage ${entityType} ${entityId}:`,
+        error,
+      );
       throw error;
     }
   }
@@ -100,7 +113,7 @@ class DataArchiveService {
     entityId: mongoose.Types.ObjectId | string,
     data: Record<string, unknown>,
     performedBy: mongoose.Types.ObjectId | string,
-    options: ArchiveOptions = {}
+    options: ArchiveOptions = {},
   ): Promise<IDeletedData> {
     return this.archiveEntity(entityType, entityId, data, performedBy, options);
   }
@@ -110,11 +123,15 @@ class DataArchiveService {
    */
   async getDeletedByUser(
     userId: mongoose.Types.ObjectId | string,
-    options: { limit?: number; skip?: number; entityType?: DeletedEntityType } = {}
+    options: {
+      limit?: number;
+      skip?: number;
+      entityType?: DeletedEntityType;
+    } = {},
   ): Promise<IDeletedData[]> {
     const query: Record<string, unknown> = {
       deletedBy: new mongoose.Types.ObjectId(userId.toString()),
-      isRestored: false
+      isRestored: false,
     };
 
     if (options.entityType) {
@@ -133,12 +150,12 @@ class DataArchiveService {
    */
   async getArchivedEntity(
     entityType: DeletedEntityType,
-    entityId: mongoose.Types.ObjectId | string
+    entityId: mongoose.Types.ObjectId | string,
   ): Promise<IDeletedData | null> {
     return DeletedData.findOne({
       entityType,
       entityId: new mongoose.Types.ObjectId(entityId.toString()),
-      isRestored: false
+      isRestored: false,
     });
   }
 
@@ -149,24 +166,26 @@ class DataArchiveService {
   async markAsRestored(
     entityType: DeletedEntityType,
     entityId: mongoose.Types.ObjectId | string,
-    restoredBy: mongoose.Types.ObjectId | string
+    restoredBy: mongoose.Types.ObjectId | string,
   ): Promise<IDeletedData | null> {
     const archived = await DeletedData.findOneAndUpdate(
       {
         entityType,
         entityId: new mongoose.Types.ObjectId(entityId.toString()),
-        isRestored: false
+        isRestored: false,
       },
       {
         isRestored: true,
         restoredAt: new Date(),
-        restoredBy: new mongoose.Types.ObjectId(restoredBy.toString())
+        restoredBy: new mongoose.Types.ObjectId(restoredBy.toString()),
       },
-      { new: true }
+      { new: true },
     );
 
     if (archived) {
-      console.log(`♻️ [RESTORE] ${entityType} ${entityId} restauré par ${restoredBy}`);
+      console.log(
+        `♻️ [RESTORE] ${entityType} ${entityId} restauré par ${restoredBy}`,
+      );
     }
 
     return archived;
@@ -181,23 +200,19 @@ class DataArchiveService {
     totalRestored: number;
     recentDeletions: number;
   }> {
-    const [
-      totalDeleted,
-      deletedByType,
-      totalRestored,
-      recentDeletions
-    ] = await Promise.all([
-      DeletedData.countDocuments({ isRestored: false }),
-      DeletedData.aggregate([
-        { $match: { isRestored: false } },
-        { $group: { _id: '$entityType', count: { $sum: 1 } } }
-      ]),
-      DeletedData.countDocuments({ isRestored: true }),
-      DeletedData.countDocuments({
-        isRestored: false,
-        deletedAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) } // 7 derniers jours
-      })
-    ]);
+    const [totalDeleted, deletedByType, totalRestored, recentDeletions] =
+      await Promise.all([
+        DeletedData.countDocuments({ isRestored: false }),
+        DeletedData.aggregate([
+          { $match: { isRestored: false } },
+          { $group: { _id: "$entityType", count: { $sum: 1 } } },
+        ]),
+        DeletedData.countDocuments({ isRestored: true }),
+        DeletedData.countDocuments({
+          isRestored: false,
+          deletedAt: { $gte: new Date(Date.now() - 7 * 24 * 60 * 60 * 1000) }, // 7 derniers jours
+        }),
+      ]);
 
     const byType: Record<string, number> = {};
     deletedByType.forEach((item: { _id: string; count: number }) => {
@@ -208,7 +223,7 @@ class DataArchiveService {
       totalDeleted,
       deletedByType: byType,
       totalRestored,
-      recentDeletions
+      recentDeletions,
     };
   }
 }

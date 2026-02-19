@@ -46,6 +46,81 @@ const MAX_MESSAGES_PER_MINUTE = 60;
 const MESSAGE_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// HIGH-6: CACHE POUR PARTICIPATION AUX CONVERSATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+interface ConversationParticipationCache {
+  isParticipant: boolean;
+  timestamp: number;
+}
+
+const conversationParticipationCache = new Map<
+  string,
+  ConversationParticipationCache
+>();
+const PARTICIPATION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+const MAX_CACHE_ENTRIES = 10000; // Limite pour éviter fuite mémoire
+
+/**
+ * Vérifie si un utilisateur est participant d'une conversation (avec cache)
+ */
+async function checkConversationParticipation(
+  userId: string,
+  conversationId: string,
+): Promise<boolean> {
+  const cacheKey = `${userId}:${conversationId}`;
+  const now = Date.now();
+
+  // Vérifier le cache
+  const cached = conversationParticipationCache.get(cacheKey);
+  if (cached && now - cached.timestamp < PARTICIPATION_CACHE_TTL) {
+    return cached.isParticipant;
+  }
+
+  // Cache miss - requête DB
+  const conversation = await ConversationModel.findOne({
+    _id: conversationId,
+    "participants.userId": userId,
+  }).lean();
+
+  const isParticipant = !!conversation;
+
+  // Mettre en cache le résultat
+  conversationParticipationCache.set(cacheKey, {
+    isParticipant,
+    timestamp: now,
+  });
+
+  // Nettoyer le cache si trop d'entrées
+  if (conversationParticipationCache.size > MAX_CACHE_ENTRIES) {
+    const entriesToDelete =
+      conversationParticipationCache.size - MAX_CACHE_ENTRIES * 0.8;
+    let deleted = 0;
+    for (const [key, value] of conversationParticipationCache.entries()) {
+      if (deleted >= entriesToDelete) break;
+      // Supprimer les entrées expirées en priorité
+      if (now - value.timestamp > PARTICIPATION_CACHE_TTL) {
+        conversationParticipationCache.delete(key);
+        deleted++;
+      }
+    }
+  }
+
+  return isParticipant;
+}
+
+/**
+ * Invalider le cache de participation pour une conversation
+ * (à appeler quand les membres changent)
+ */
+export function invalidateConversationCache(conversationId: string): void {
+  for (const key of conversationParticipationCache.keys()) {
+    if (key.endsWith(`:${conversationId}`)) {
+      conversationParticipationCache.delete(key);
+    }
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITING POUR WEBSOCKET (CONNEXIONS)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -600,14 +675,20 @@ class WebSocketService {
             return;
           }
 
-          // WS-001 CORRIGÉ: Vérification de participation à CHAQUE message
+          // WS-001 CORRIGÉ + HIGH-6: Vérification de participation à CHAQUE message (avec cache)
           // Cela empêche un utilisateur retiré d'une conversation de continuer à envoyer des messages
-          const currentConversation = await ConversationModel.findOne({
-            _id: conversationId,
-            "participants.userId": client.userId,
-          }).lean();
+          if (!client.userId) {
+            console.error(`❌ [WS-Messages] userId manquant`);
+            client.close(4002, "Invalid session");
+            return;
+          }
 
-          if (!currentConversation) {
+          const isParticipant = await checkConversationParticipation(
+            client.userId,
+            conversationId,
+          );
+
+          if (!isParticipant) {
             console.warn(
               `⚠️ [WS-Messages] Accès révoqué: ${client.userId} n'est plus participant de ${conversationId}`,
             );

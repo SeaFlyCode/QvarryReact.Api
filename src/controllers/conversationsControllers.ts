@@ -117,6 +117,16 @@ export async function createPrivateConversation(req: Request, res: Response) {
         // Recharger la conversation mise à jour
         conversation = await Conversation.findById(conversation._id);
 
+        // BUG-007: Null check après refetch - la conversation pourrait avoir été supprimée entre-temps
+        if (!conversation) {
+          console.error(
+            `❌ [CONVERSATIONS] Conversation ${conversation} introuvable après réactivation`,
+          );
+          return res
+            .status(404)
+            .json({ error: "Conversation introuvable après réactivation" });
+        }
+
         // Stocker en mémoire
         const conversationToStore = {
           _id: conversation!._id,
@@ -315,21 +325,38 @@ export async function listConversations(req: Request, res: Response) {
     if (!userId) {
       return res.status(401).json({ error: "Utilisateur non authentifié" });
     }
-    const limit = parseInt(req.query.limit as string) || 20;
-    const offset = parseInt(req.query.offset as string) || 0;
+
+    // Pagination standard
+    const page = Math.max(1, parseInt(req.query.page as string) || 1);
+    const limit = Math.min(
+      Math.max(1, parseInt(req.query.limit as string) || 20),
+      100,
+    );
+    const skip = (page - 1) * limit;
     const userObjectId = new Types.ObjectId(userId);
 
     let conversations = memoryStorage.getAllConversations(userId);
+    let total = 0;
+
     if (!conversations || conversations.length === 0) {
       // Filtrer les conversations où l'utilisateur n'a pas fait de soft delete
-      const dbConversations = await Conversation.find({
-        "participants.userId": userObjectId,
-        deletedBy: { $ne: userObjectId }, // Exclure les conversations supprimées par l'utilisateur
-      })
-        .sort({ updatedAt: -1 })
-        .skip(offset)
-        .limit(limit)
-        .lean();
+      const [dbConversations, totalCount] = await Promise.all([
+        Conversation.find({
+          "participants.userId": userObjectId,
+          deletedBy: { $ne: userObjectId }, // Exclure les conversations supprimées par l'utilisateur
+        })
+          .sort({ updatedAt: -1 })
+          .skip(skip)
+          .limit(limit)
+          .lean(),
+        Conversation.countDocuments({
+          "participants.userId": userObjectId,
+          deletedBy: { $ne: userObjectId },
+        }),
+      ]);
+
+      total = totalCount;
+
       dbConversations.forEach((conv: any) => {
         const conversationToStore = {
           _id: conv._id,
@@ -367,6 +394,10 @@ export async function listConversations(req: Request, res: Response) {
         (conv: any) =>
           !conv.deletedBy?.some((id: any) => id.toString() === userId),
       );
+
+      // Paginer les conversations en mémoire
+      total = conversations.length;
+      conversations = conversations.slice(skip, skip + limit);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -454,7 +485,16 @@ export async function listConversations(req: Request, res: Response) {
         },
       ),
     );
-    res.json({ conversations: result });
+
+    res.json({
+      data: result,
+      pagination: {
+        page,
+        limit,
+        total,
+        totalPages: Math.ceil(total / limit),
+      },
+    });
   } catch (err) {
     res.status(500).json({
       error: "Erreur lors de la récupération des conversations",

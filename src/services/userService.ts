@@ -30,6 +30,8 @@ export async function createUser(
   const newUser = await UserModel.create(userData);
 
   try {
+    // ⚠️ Pas de transaction MongoDB (nécessite replica set). Rollback manuel en cas d'échec (ligne 94).
+
     // 2. Générer la clé AES-256 pour le chiffrement des données utilisateur
     const aesKey = crypto.randomBytes(32).toString("hex"); // 256 bits
     const encryptedAESKey = encrypt(aesKey);
@@ -122,130 +124,147 @@ export async function deleteUserById(userId: string): Promise<{
   }
 
   // Archiver les points
+  // BUG-003: Utilisation de Promise.all pour paralléliser l'archivage (éviter le pattern N+1)
   const pointsToArchive = await PointModel.find({
     userId: userObjectId,
   }).lean();
-  for (const point of pointsToArchive) {
-    await dataArchiveService.archiveEntity(
-      "point",
-      point._id as mongoose.Types.ObjectId,
-      point as Record<string, unknown>,
-      userObjectId,
-      {
-        reason: "Suppression RGPD - cascade utilisateur",
-        parentEntityType: "user",
-        parentEntityId: userObjectId,
-      },
-    );
-  }
+  await Promise.all(
+    pointsToArchive.map((point) =>
+      dataArchiveService.archiveEntity(
+        "point",
+        point._id as mongoose.Types.ObjectId,
+        point as Record<string, unknown>,
+        userObjectId,
+        {
+          reason: "Suppression RGPD - cascade utilisateur",
+          parentEntityType: "user",
+          parentEntityId: userObjectId,
+        },
+      ),
+    ),
+  );
 
   // Archiver les fiches
   const fichesToArchive = await FicheModel.find({
     userId: userObjectId,
   }).lean();
-  for (const fiche of fichesToArchive) {
-    await dataArchiveService.archiveEntity(
-      "fiche",
-      fiche._id as mongoose.Types.ObjectId,
-      fiche as Record<string, unknown>,
-      userObjectId,
-      {
-        reason: "Suppression RGPD - cascade utilisateur",
-        parentEntityType: "user",
-        parentEntityId: userObjectId,
-      },
-    );
-  }
+  await Promise.all(
+    fichesToArchive.map((fiche) =>
+      dataArchiveService.archiveEntity(
+        "fiche",
+        fiche._id as mongoose.Types.ObjectId,
+        fiche as Record<string, unknown>,
+        userObjectId,
+        {
+          reason: "Suppression RGPD - cascade utilisateur",
+          parentEntityType: "user",
+          parentEntityId: userObjectId,
+        },
+      ),
+    ),
+  );
 
   // Archiver les listes
   const listsToArchive = await ListModel.find({ userId: userObjectId }).lean();
-  for (const list of listsToArchive) {
-    await dataArchiveService.archiveEntity(
-      "list",
-      list._id as mongoose.Types.ObjectId,
-      list as Record<string, unknown>,
-      userObjectId,
-      {
-        reason: "Suppression RGPD - cascade utilisateur",
-        parentEntityType: "user",
-        parentEntityId: userObjectId,
-      },
-    );
-  }
+  await Promise.all(
+    listsToArchive.map((list) =>
+      dataArchiveService.archiveEntity(
+        "list",
+        list._id as mongoose.Types.ObjectId,
+        list as Record<string, unknown>,
+        userObjectId,
+        {
+          reason: "Suppression RGPD - cascade utilisateur",
+          parentEntityType: "user",
+          parentEntityId: userObjectId,
+        },
+      ),
+    ),
+  );
 
   // Archiver les messages
   const messagesToArchive = await MessageModel.find({
     senderId: userObjectId,
   }).lean();
-  for (const msg of messagesToArchive) {
-    await dataArchiveService.archiveEntity(
-      "message",
-      msg._id as mongoose.Types.ObjectId,
-      msg as Record<string, unknown>,
-      userObjectId,
-      {
-        reason: "Suppression RGPD - cascade utilisateur",
-        parentEntityType: "user",
-        parentEntityId: userObjectId,
-      },
-    );
-  }
+  await Promise.all(
+    messagesToArchive.map((msg) =>
+      dataArchiveService.archiveEntity(
+        "message",
+        msg._id as mongoose.Types.ObjectId,
+        msg as Record<string, unknown>,
+        userObjectId,
+        {
+          reason: "Suppression RGPD - cascade utilisateur",
+          parentEntityType: "user",
+          parentEntityId: userObjectId,
+        },
+      ),
+    ),
+  );
 
   // Archiver les partages de données
   const sharesToArchive = await DataShareModel.find({
     $or: [{ senderId: userObjectId }, { recipientId: userObjectId }],
   }).lean();
-  for (const share of sharesToArchive) {
-    await dataArchiveService.archiveEntity(
-      "dataShare",
-      share._id as mongoose.Types.ObjectId,
-      share as Record<string, unknown>,
-      userObjectId,
-      {
-        reason: "Suppression RGPD - cascade utilisateur",
-        parentEntityType: "user",
-        parentEntityId: userObjectId,
-      },
-    );
-  }
+  await Promise.all(
+    sharesToArchive.map((share) =>
+      dataArchiveService.archiveEntity(
+        "dataShare",
+        share._id as mongoose.Types.ObjectId,
+        share as Record<string, unknown>,
+        userObjectId,
+        {
+          reason: "Suppression RGPD - cascade utilisateur",
+          parentEntityType: "user",
+          parentEntityId: userObjectId,
+        },
+      ),
+    ),
+  );
 
   // Archiver les contacts
   const contactsToArchive = await ContactModel.find({
     $or: [{ userId: userObjectId }, { contactId: userObjectId }],
   }).lean();
-  for (const contact of contactsToArchive) {
-    await dataArchiveService.archiveEntity(
-      "contact",
-      contact._id as mongoose.Types.ObjectId,
-      contact as Record<string, unknown>,
-      userObjectId,
-      {
-        reason: "Suppression RGPD - cascade utilisateur",
-        parentEntityType: "user",
-        parentEntityId: userObjectId,
-      },
-    );
-  }
+  await Promise.all(
+    contactsToArchive.map((contact) =>
+      dataArchiveService.archiveEntity(
+        "contact",
+        contact._id as mongoose.Types.ObjectId,
+        contact as Record<string, unknown>,
+        userObjectId,
+        {
+          reason: "Suppression RGPD - cascade utilisateur",
+          parentEntityType: "user",
+          parentEntityId: userObjectId,
+        },
+      ),
+    ),
+  );
 
   // Archiver les notifications
   const notificationsToArchive = await NotificationModel.find({
     userId: userObjectId,
   }).lean();
-  for (const notif of notificationsToArchive) {
-    await dataArchiveService.archiveEntity(
-      "notification",
-      notif._id as mongoose.Types.ObjectId,
-      notif as Record<string, unknown>,
-      userObjectId,
-      {
-        reason: "Suppression RGPD - cascade utilisateur",
-        parentEntityType: "user",
-        parentEntityId: userObjectId,
-      },
-    );
-  }
+  await Promise.all(
+    notificationsToArchive.map((notif) =>
+      dataArchiveService.archiveEntity(
+        "notification",
+        notif._id as mongoose.Types.ObjectId,
+        notif as Record<string, unknown>,
+        userObjectId,
+        {
+          reason: "Suppression RGPD - cascade utilisateur",
+          parentEntityType: "user",
+          parentEntityId: userObjectId,
+        },
+      ),
+    ),
+  );
 
   console.log(`✅ [RGPD] Archivage terminé. Suppression physique en cours...`);
+
+  // ⚠️ Pas de transaction MongoDB (nécessite replica set). L'archivage préalable permet la restauration en cas d'interruption.
 
   // Exécuter toutes les suppressions en parallèle pour l'efficacité
   const [

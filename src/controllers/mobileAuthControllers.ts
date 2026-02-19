@@ -32,6 +32,14 @@ import { associateDeviceWithUser } from "../middlewares/mobileSecurityMiddleware
 import { getErrorMessage } from "../utils/errorUtils";
 import { maskEmail } from "../utils/logUtils";
 
+// MEDIUM-7: Import des helpers partagés depuis authHelpers au lieu de dupliquer
+import {
+  checkLoginAttempts,
+  recordFailedLogin,
+  resetLoginAttempts,
+  generateSecureToken,
+} from "./auth/authHelpers";
+
 import UserModel, { IUserBase } from "../models/users";
 import MaintenanceModel from "../models/maintenance";
 import KeysModel from "../models/keys";
@@ -43,87 +51,11 @@ import ListModel from "../models/lists";
 // HELPERS (réutilisés depuis authControllers)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Vérification des tentatives de connexion via Redis
-async function checkLoginAttempts(
-  email: string,
-): Promise<{ allowed: boolean; message?: string; waitTime?: number }> {
-  const now = new Date();
-  const attempt = await redisSessionService.getLoginAttempts(email);
+// MEDIUM-7: Fonctions déplacées vers authHelpers.ts
+// checkLoginAttempts, recordFailedLogin, resetLoginAttempts
+// sont maintenant importés depuis auth/authHelpers.ts
 
-  if (!attempt) {
-    return { allowed: true };
-  }
-
-  if (attempt.blockedUntil && attempt.blockedUntil > now) {
-    const waitTimeMinutes = Math.ceil(
-      (attempt.blockedUntil.getTime() - now.getTime()) / 60000,
-    );
-    return {
-      allowed: false,
-      message: `Trop de tentatives échouées. Veuillez réessayer dans ${waitTimeMinutes} minute(s).`,
-      waitTime: waitTimeMinutes,
-    };
-  }
-
-  const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
-  if (attempt.lastAttempt > fifteenMinutesAgo && attempt.attempts >= 5) {
-    await redisSessionService.recordLoginAttempt(email, true, 30);
-    return {
-      allowed: false,
-      message:
-        "Trop de tentatives échouées. Compte temporairement bloqué pour 30 minutes.",
-      waitTime: 30,
-    };
-  }
-
-  return { allowed: true };
-}
-
-async function recordFailedLogin(email: string): Promise<void> {
-  await redisSessionService.recordLoginAttempt(email, false);
-}
-
-async function resetLoginAttempts(email: string): Promise<void> {
-  await redisSessionService.resetLoginAttempts(email);
-}
-
-// Génération de token JWT
-function generateSecureToken(
-  userId: string,
-  isAdmin: boolean = false,
-  tokenId?: string,
-): { token: string; tokenId: string; keyVersion: string } {
-  const { secret, version } = jwtKeyManager.getCurrentKey();
-
-  if (secret.length < 32) {
-    throw new Error("JWT_SECRET doit contenir au moins 32 caractères.");
-  }
-
-  const jti = tokenId || crypto.randomBytes(16).toString("hex");
-  const expiresIn = process.env.JWT_EXPIRES_IN || "15m";
-
-  const token = jwt.sign(
-    {
-      id: userId,
-      isAdmin,
-      iat: Math.floor(Date.now() / 1000),
-      jti,
-      kv: version,
-      platform: "mobile", // Identifier le token comme mobile
-    },
-    secret,
-    {
-      expiresIn,
-      algorithm: "HS256",
-      issuer: "qvarry-api",
-      audience: "qvarry-mobile",
-    } as jwt.SignOptions,
-  );
-
-  return { token, tokenId: jti, keyVersion: version };
-}
-
-// Génération code contact unique
+// Génération code contact unique (spécifique au mobile)
 function generateSecureContactCode(): number {
   const randomBytes = crypto.randomBytes(4);
   const randomNumber = randomBytes.readUInt32BE(0);

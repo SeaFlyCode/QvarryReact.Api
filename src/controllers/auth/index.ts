@@ -29,8 +29,6 @@ export {
   loadAndDecryptUserData,
   syncUserDataToDB,
   encryptUserData,
-  decryptPoint,
-  decryptFiche,
   decryptPointOptimized,
   decryptFicheOptimized,
   generateSecureToken,

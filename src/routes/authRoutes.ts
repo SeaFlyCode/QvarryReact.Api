@@ -10,10 +10,8 @@ import {
   completeLoginAfter2FA,
 } from "../controllers/auth";
 import { handleManualSync } from "../controllers/syncControllers";
-import {
-  getUserSessions,
-  revokeAllOtherSessions,
-} from "../controllers/sessionControllers";
+import { getUserSessions } from "../controllers/securityControllers";
+import { revokeAllOtherSessions } from "../controllers/sessionControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import { verifyTurnstileOptional } from "../middlewares/turnstileMiddleware";
 

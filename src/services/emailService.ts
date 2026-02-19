@@ -80,7 +80,7 @@ const generateEmailHash = (
   delete relevantVars.REGISTRATION_DATE;
 
   const data = `${to}:${template}:${JSON.stringify(relevantVars)}`;
-  return crypto.createHash("md5").update(data).digest("hex");
+  return crypto.createHash("sha256").update(data).digest("hex");
 };
 
 /**
@@ -144,6 +144,21 @@ const createTransporter = () => {
 const templateCache: Map<string, string> = new Map();
 
 /**
+ * Échappe les caractères HTML pour prévenir les injections XSS
+ * @param str - Chaîne à échapper
+ * @returns Chaîne échappée
+ */
+const escapeHtml = (str: string): string => {
+  if (!str) return "";
+  return str
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+};
+
+/**
  * Charge un template HTML depuis le système de fichiers
  */
 const loadTemplate = (templateName: string): string => {
@@ -176,12 +191,33 @@ const loadBaseTemplate = (): string => {
 
 /**
  * Remplace les variables dans un template
+ * MEDIUM-6: Échappe les variables utilisateur pour prévenir les injections XSS
  */
 const replaceVariables = (
   template: string,
   variables: Record<string, string>,
 ): string => {
   let result = template;
+
+  // Variables qui ne nécessitent PAS d'échappement HTML (système/URLs)
+  const noEscapeVars = new Set([
+    "YEAR",
+    "FRONTEND_URL",
+    "VERIFICATION_LINK",
+    "RESET_LINK",
+    "VIEW_SHARE_LINK",
+    "ACCEPT_LINK",
+    "DECLINE_LINK",
+    "VIEW_PROFILE_LINK",
+    "CONTACT_PROFILE_LINK",
+    "MESSAGE_LINK",
+    "LOGIN_LINK",
+    "ADMIN_PANEL_LINK",
+    "SECURE_ACCOUNT_LINK",
+    "VERIFICATION_CODE",
+    "RESET_CODE",
+    "CONTACT_CODE",
+  ]);
 
   // Ajouter les variables globales
   const allVariables: Record<string, string> = {
@@ -193,7 +229,11 @@ const replaceVariables = (
   // Remplacer les variables simples {{VAR}}
   for (const [key, value] of Object.entries(allVariables)) {
     const regex = new RegExp(`{{${key}}}`, "g");
-    result = result.replace(regex, value || "");
+    // MEDIUM-6: Échapper les variables utilisateur pour prévenir XSS
+    const safeValue = noEscapeVars.has(key)
+      ? value || ""
+      : escapeHtml(value || "");
+    result = result.replace(regex, safeValue);
   }
 
   // Gérer les conditionnels simples {{#if VAR}}...{{/if}}

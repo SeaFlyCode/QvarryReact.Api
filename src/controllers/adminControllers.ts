@@ -16,10 +16,14 @@ import { maskEmail } from "../utils/logUtils";
 import mongoose from "mongoose";
 
 // ═══════════════════════════════════════════════════════════════════════════
-// CACHE DES STATISTIQUES ADMIN (HIGH-08)
+// CACHE DES STATISTIQUES ADMIN (HIGH-08, MEDIUM-9)
 // ═══════════════════════════════════════════════════════════════════════════
 let statsCache: { data: any; timestamp: number } | null = null;
 const STATS_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
+
+// MEDIUM-9: Protection contre les race conditions lors du rafraîchissement du cache
+// Évite que plusieurs requêtes simultanées déclenchent plusieurs calculs coûteux
+let statsCacheLoading: Promise<any> | null = null;
 
 /**
  * Fonction utilitaire pour déchiffrer les données utilisateur de manière sécurisée
@@ -109,130 +113,41 @@ const ALLOWED_AUDIT_ACTIONS = [
 /**
  * Obtenir les statistiques globales de la plateforme
  * Aucune donnée personnelle n'est exposée
+ * MEDIUM-9: Protection contre les race conditions avec lock sur le rafraîchissement
  */
 export async function getGlobalStats(req: Request, res: Response) {
   try {
-    // HIGH-08: Vérifier le cache avant de recalculer
-    if (statsCache && Date.now() - statsCache.timestamp < STATS_CACHE_TTL) {
+    // HIGH-08 + MEDIUM-9: Vérifier le cache avant de recalculer
+    const now = Date.now();
+    const isCacheValid =
+      statsCache && now - statsCache.timestamp < STATS_CACHE_TTL;
+
+    if (isCacheValid && statsCache) {
       return res.json(statsCache.data);
     }
 
-    const now = new Date();
-    const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
-    const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
-    const today = new Date(now.setHours(0, 0, 0, 0));
+    // MEDIUM-9: Si un rafraîchissement est déjà en cours, attendre son résultat
+    if (statsCacheLoading) {
+      const data = await statsCacheLoading;
+      return res.json(data);
+    }
 
-    // Statistiques utilisateurs
-    const [
-      totalUsers,
-      verifiedUsers,
-      blockedUsers,
-      adminUsers,
-      usersLast30Days,
-      usersLast7Days,
-      usersToday,
-    ] = await Promise.all([
-      UserModel.countDocuments().maxTimeMS(5000),
-      UserModel.countDocuments({ is_verified: true }).maxTimeMS(5000),
-      UserModel.countDocuments({ is_blocked: true }).maxTimeMS(5000),
-      UserModel.countDocuments({ is_admin: true }).maxTimeMS(5000),
-      UserModel.countDocuments({
-        creation_date: { $gte: last30Days },
-      }).maxTimeMS(5000),
-      UserModel.countDocuments({
-        creation_date: { $gte: last7Days },
-      }).maxTimeMS(5000),
-      UserModel.countDocuments({ creation_date: { $gte: today } }).maxTimeMS(
-        5000,
-      ),
-    ]);
+    // MEDIUM-9: Marquer qu'un rafraîchissement est en cours
+    statsCacheLoading = (async () => {
+      try {
+        const computedStats = await computeGlobalStats();
 
-    // Statistiques contenu
-    const [
-      totalPoints,
-      totalFiches,
-      totalLists,
-      pointsLast30Days,
-      fichesLast30Days,
-    ] = await Promise.all([
-      PointModel.countDocuments().maxTimeMS(5000),
-      FicheModel.countDocuments().maxTimeMS(5000),
-      ListModel.countDocuments().maxTimeMS(5000),
-      PointModel.countDocuments({ createdAt: { $gte: last30Days } }).maxTimeMS(
-        5000,
-      ),
-      FicheModel.countDocuments({
-        date_creation: { $gte: last30Days },
-      }).maxTimeMS(5000),
-    ]);
+        // HIGH-08: Stocker en cache
+        statsCache = { data: computedStats, timestamp: Date.now() };
 
-    // Statistiques partages
-    const [totalShares, activeShares, acceptedShares] = await Promise.all([
-      DataShareModel.countDocuments().maxTimeMS(5000),
-      DataShareModel.countDocuments({
-        isActive: true,
-        expiresAt: { $gt: new Date() },
-      }).maxTimeMS(5000),
-      DataShareModel.countDocuments({
-        "encryptedDataPerReceiver.status": "accepted",
-      }).maxTimeMS(5000),
-    ]);
+        return computedStats;
+      } finally {
+        // MEDIUM-9: Libérer le lock une fois terminé
+        statsCacheLoading = null;
+      }
+    })();
 
-    // Statistiques messagerie (juste les compteurs)
-    const [totalConversations, totalMessages] = await Promise.all([
-      ConversationModel.countDocuments().maxTimeMS(5000),
-      MessageModel.countDocuments().maxTimeMS(5000),
-    ]);
-
-    // Statistiques d'activité (dernière connexion)
-    const activeUsersLast24h = await UserModel.countDocuments({
-      last_connection: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
-    }).maxTimeMS(5000);
-    const activeUsersLast7Days = await UserModel.countDocuments({
-      last_connection: { $gte: last7Days },
-    }).maxTimeMS(5000);
-
-    // HIGH-08: Construire l'objet stats et le mettre en cache
-    const stats = {
-      users: {
-        total: totalUsers,
-        verified: verifiedUsers,
-        blocked: blockedUsers,
-        admins: adminUsers,
-        newLast30Days: usersLast30Days,
-        newLast7Days: usersLast7Days,
-        newToday: usersToday,
-        activeLast24h: activeUsersLast24h,
-        activeLast7Days: activeUsersLast7Days,
-      },
-      content: {
-        points: {
-          total: totalPoints,
-          last30Days: pointsLast30Days,
-        },
-        fiches: {
-          total: totalFiches,
-          last30Days: fichesLast30Days,
-        },
-        lists: {
-          total: totalLists,
-        },
-      },
-      sharing: {
-        total: totalShares,
-        active: activeShares,
-        accepted: acceptedShares,
-      },
-      messaging: {
-        conversations: totalConversations,
-        messages: totalMessages,
-      },
-      generatedAt: new Date(),
-    };
-
-    // HIGH-08: Stocker en cache
-    statsCache = { data: stats, timestamp: Date.now() };
-
+    const stats = await statsCacheLoading;
     res.status(200).json(stats);
   } catch (error) {
     console.error("❌ [ADMIN] Erreur stats globales:", error);
@@ -240,6 +155,124 @@ export async function getGlobalStats(req: Request, res: Response) {
       .status(500)
       .json({ error: "Erreur lors de la récupération des statistiques" });
   }
+}
+
+/**
+ * MEDIUM-9: Fonction utilitaire pour calculer les statistiques
+ * Séparée de getGlobalStats pour faciliter le locking
+ */
+async function computeGlobalStats() {
+  const now = new Date();
+  const last30Days = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const last7Days = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+  const today = new Date(now.setHours(0, 0, 0, 0));
+
+  // Statistiques utilisateurs
+  const [
+    totalUsers,
+    verifiedUsers,
+    blockedUsers,
+    adminUsers,
+    usersLast30Days,
+    usersLast7Days,
+    usersToday,
+  ] = await Promise.all([
+    UserModel.countDocuments().maxTimeMS(5000),
+    UserModel.countDocuments({ is_verified: true }).maxTimeMS(5000),
+    UserModel.countDocuments({ is_blocked: true }).maxTimeMS(5000),
+    UserModel.countDocuments({ is_admin: true }).maxTimeMS(5000),
+    UserModel.countDocuments({
+      creation_date: { $gte: last30Days },
+    }).maxTimeMS(5000),
+    UserModel.countDocuments({
+      creation_date: { $gte: last7Days },
+    }).maxTimeMS(5000),
+    UserModel.countDocuments({ creation_date: { $gte: today } }).maxTimeMS(
+      5000,
+    ),
+  ]);
+
+  // Statistiques contenu
+  const [
+    totalPoints,
+    totalFiches,
+    totalLists,
+    pointsLast30Days,
+    fichesLast30Days,
+  ] = await Promise.all([
+    PointModel.countDocuments().maxTimeMS(5000),
+    FicheModel.countDocuments().maxTimeMS(5000),
+    ListModel.countDocuments().maxTimeMS(5000),
+    PointModel.countDocuments({ createdAt: { $gte: last30Days } }).maxTimeMS(
+      5000,
+    ),
+    FicheModel.countDocuments({
+      date_creation: { $gte: last30Days },
+    }).maxTimeMS(5000),
+  ]);
+
+  // Statistiques partages
+  const [totalShares, activeShares, acceptedShares] = await Promise.all([
+    DataShareModel.countDocuments().maxTimeMS(5000),
+    DataShareModel.countDocuments({
+      isActive: true,
+      expiresAt: { $gt: new Date() },
+    }).maxTimeMS(5000),
+    DataShareModel.countDocuments({
+      "encryptedDataPerReceiver.status": "accepted",
+    }).maxTimeMS(5000),
+  ]);
+
+  // Statistiques messagerie (juste les compteurs)
+  const [totalConversations, totalMessages] = await Promise.all([
+    ConversationModel.countDocuments().maxTimeMS(5000),
+    MessageModel.countDocuments().maxTimeMS(5000),
+  ]);
+
+  // Statistiques d'activité (dernière connexion)
+  const activeUsersLast24h = await UserModel.countDocuments({
+    last_connection: { $gte: new Date(Date.now() - 24 * 60 * 60 * 1000) },
+  }).maxTimeMS(5000);
+  const activeUsersLast7Days = await UserModel.countDocuments({
+    last_connection: { $gte: last7Days },
+  }).maxTimeMS(5000);
+
+  return {
+    users: {
+      total: totalUsers,
+      verified: verifiedUsers,
+      blocked: blockedUsers,
+      admins: adminUsers,
+      newLast30Days: usersLast30Days,
+      newLast7Days: usersLast7Days,
+      newToday: usersToday,
+      activeLast24h: activeUsersLast24h,
+      activeLast7Days: activeUsersLast7Days,
+    },
+    content: {
+      points: {
+        total: totalPoints,
+        last30Days: pointsLast30Days,
+      },
+      fiches: {
+        total: totalFiches,
+        last30Days: fichesLast30Days,
+      },
+      lists: {
+        total: totalLists,
+      },
+    },
+    sharing: {
+      total: totalShares,
+      active: activeShares,
+      accepted: acceptedShares,
+    },
+    messaging: {
+      conversations: totalConversations,
+      messages: totalMessages,
+    },
+    generatedAt: new Date(),
+  };
 }
 
 /**
@@ -1271,7 +1304,20 @@ export async function exportAuditLogs(req: Request, res: Response) {
     if (startDate) filter.timestamp = { ...filter.timestamp, $gte: startDate };
     if (endDate) filter.timestamp = { ...filter.timestamp, $lte: endDate };
     if (level) filter.level = level;
-    if (action) filter.action = { $regex: action, $options: "i" };
+    // HIGH-5: Utiliser la whitelist pour prévenir les injections regex
+    if (action) {
+      const requestedAction = action.toUpperCase();
+      // Vérifier si l'action est dans la whitelist
+      if (ALLOWED_AUDIT_ACTIONS.includes(requestedAction)) {
+        filter.action = requestedAction;
+      } else {
+        // Si pas dans la whitelist, chercher avec regex échappé
+        filter.action = {
+          $regex: action.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+          $options: "i",
+        };
+      }
+    }
 
     // Définir les headers pour le téléchargement
     const filename = `audit-logs-${new Date().toISOString().split("T")[0]}.${format}`;

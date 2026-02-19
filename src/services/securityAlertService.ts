@@ -32,6 +32,44 @@ interface ThreatScore {
 
 const threatScoreCache = new Map<string, ThreatScore>();
 
+// BUG-006: Nettoyage périodique du cache threatScore pour éviter la croissance non bornée
+const THREAT_CACHE_CLEANUP_INTERVAL_MS = 30 * 60 * 1000; // 30 minutes
+const THREAT_CACHE_MAX_ENTRIES = 10_000;
+const THREAT_CACHE_ENTRY_TTL_MS = 60 * 60 * 1000; // 1 heure
+
+function cleanupThreatScoreCache(): void {
+  const now = Date.now();
+
+  for (const [key, entry] of threatScoreCache) {
+    if (now - entry.lastUpdated.getTime() > THREAT_CACHE_ENTRY_TTL_MS) {
+      threatScoreCache.delete(key);
+    }
+  }
+
+  // Si toujours trop d'entrées, supprimer celles avec le score le plus bas
+  if (threatScoreCache.size > THREAT_CACHE_MAX_ENTRIES) {
+    const entries = Array.from(threatScoreCache.entries()).sort(
+      (a, b) => a[1].score - b[1].score,
+    );
+
+    const toRemove = entries.length - THREAT_CACHE_MAX_ENTRIES;
+    for (let i = 0; i < toRemove; i++) {
+      threatScoreCache.delete(entries[i][0]);
+    }
+  }
+
+  if (threatScoreCache.size > 0) {
+    console.log(
+      `🧹 [SECURITY CLEANUP] threatScoreCache: ${threatScoreCache.size} entrées restantes`,
+    );
+  }
+}
+
+setInterval(cleanupThreatScoreCache, THREAT_CACHE_CLEANUP_INTERVAL_MS);
+console.log(
+  `✅ [SECURITY CLEANUP] Nettoyage automatique du cache threat score démarré (intervalle: ${THREAT_CACHE_CLEANUP_INTERVAL_MS / 1000}s)`,
+);
+
 const CONFIG = {
   AUTO_BLOCK_THRESHOLD: parseInt(
     process.env.SECURITY_AUTO_BLOCK_THRESHOLD || "10",

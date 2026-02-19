@@ -29,10 +29,15 @@ export class MemoryStorageService {
   private sessions: Map<string, UserSession> = new Map();
   private readonly SESSION_TIMEOUT = 1000 * 60 * 30; // 30 minutes
   private accessCounter: Record<string, number> = {}; // Pour suivre le nombre d'accès
+  private readonly STATS_RESET_INTERVAL = 1000 * 60 * 60; // 1 heure
+  private lastStatsReset: Date = new Date();
 
   constructor() {
     // Démarrer un timer pour nettoyer les sessions expirées
     setInterval(() => this.cleanExpiredSessions(), 1000 * 60 * 5); // Toutes les 5 minutes
+
+    // Démarrer un timer pour réinitialiser les statistiques d'accès (éviter fuite mémoire)
+    setInterval(() => this.resetUsageStats(), this.STATS_RESET_INTERVAL);
   }
 
   private enforceLimit(map: Map<string, any>, maxSize: number): void {
@@ -1073,7 +1078,8 @@ export class MemoryStorageService {
         userData.listsError = "Erreur lors de la récupération des listes";
       }
 
-      userData.encryptionKey = session.encryptionKey;
+      // Note: encryptionKey is NOT exposed via getAllUserData for security reasons
+      // Use getUserEncryptionKey() method if you need the encryption key
       userData.lastAccessed = session.lastAccessed;
       userData.isDirty = session.isDirty;
       userData.user = { id: userId };
@@ -1095,9 +1101,25 @@ export class MemoryStorageService {
     return {
       activeSessions: this.sessions.size,
       totalAccesses: this.accessCounter,
+      lastStatsReset: this.lastStatsReset,
+      statsResetInterval: `${this.STATS_RESET_INTERVAL / 1000 / 60} minutes`,
       memoryUsage: process.memoryUsage(),
       uptime: process.uptime(),
     };
+  }
+
+  /**
+   * Réinitialiser les statistiques d'accès
+   * Cette méthode est appelée périodiquement pour éviter une fuite mémoire
+   * où accessCounter accumulerait indéfiniment des clés.
+   */
+  resetUsageStats(): void {
+    const previousCount = Object.keys(this.accessCounter).length;
+    this.accessCounter = {};
+    this.lastStatsReset = new Date();
+    console.log(
+      `♻️ [MemoryStorage] Statistiques d'accès réinitialisées (${previousCount} entrées supprimées)`,
+    );
   }
 
   // Trouver une fiche par pointId

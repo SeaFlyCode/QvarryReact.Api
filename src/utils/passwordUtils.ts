@@ -1,37 +1,55 @@
-import bcrypt from 'bcrypt';
+import bcrypt from "bcrypt";
 
 /**
  * Vérifie si un mot de passe est suffisamment robuste
  * @param password Le mot de passe à vérifier
  * @returns Un objet avec isValid (booléen) et message (string)
  */
-export function validatePasswordStrength(password: string): { isValid: boolean; message: string } {
-    // Vérifier la longueur minimale
-    if (password.length < 12) {
-        return { isValid: false, message: "Le mot de passe doit contenir au moins 12 caractères." };
-    }
+export function validatePasswordStrength(password: string): {
+  isValid: boolean;
+  message: string;
+} {
+  // Vérifier la longueur minimale
+  if (password.length < 12) {
+    return {
+      isValid: false,
+      message: "Le mot de passe doit contenir au moins 12 caractères.",
+    };
+  }
 
-    // Vérifier la présence d'au moins une lettre majuscule
-    if (!/[A-Z]/.test(password)) {
-        return { isValid: false, message: "Le mot de passe doit contenir au moins une lettre majuscule." };
-    }
+  // Vérifier la présence d'au moins une lettre majuscule
+  if (!/[A-Z]/.test(password)) {
+    return {
+      isValid: false,
+      message: "Le mot de passe doit contenir au moins une lettre majuscule.",
+    };
+  }
 
-    // Vérifier la présence d'au moins une lettre minuscule
-    if (!/[a-z]/.test(password)) {
-        return { isValid: false, message: "Le mot de passe doit contenir au moins une lettre minuscule." };
-    }
+  // Vérifier la présence d'au moins une lettre minuscule
+  if (!/[a-z]/.test(password)) {
+    return {
+      isValid: false,
+      message: "Le mot de passe doit contenir au moins une lettre minuscule.",
+    };
+  }
 
-    // Vérifier la présence d'au moins un chiffre
-    if (!/\d/.test(password)) {
-        return { isValid: false, message: "Le mot de passe doit contenir au moins un chiffre." };
-    }
+  // Vérifier la présence d'au moins un chiffre
+  if (!/\d/.test(password)) {
+    return {
+      isValid: false,
+      message: "Le mot de passe doit contenir au moins un chiffre.",
+    };
+  }
 
-    // Vérifier la présence d'au moins un caractère spécial
-    if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
-        return { isValid: false, message: "Le mot de passe doit contenir au moins un caractère spécial." };
-    }
+  // Vérifier la présence d'au moins un caractère spécial
+  if (!/[!@#$%^&*()_+\-=\[\]{};':"\\|,.<>\/?]/.test(password)) {
+    return {
+      isValid: false,
+      message: "Le mot de passe doit contenir au moins un caractère spécial.",
+    };
+  }
 
-    return { isValid: true, message: "Mot de passe valide." };
+  return { isValid: true, message: "Mot de passe valide." };
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -47,20 +65,23 @@ const PASSWORD_HISTORY_SIZE = 5;
  * @param passwordHistory Tableau des anciens mots de passe hashés
  * @returns true si le mot de passe est dans l'historique (interdit), false sinon
  */
-export async function isPasswordInHistory(newPassword: string, passwordHistory: string[]): Promise<boolean> {
-    if (!passwordHistory || passwordHistory.length === 0) {
-        return false;
-    }
-
-    // Vérifier contre chaque ancien mot de passe hashé
-    for (const oldPasswordHash of passwordHistory) {
-        const match = await bcrypt.compare(newPassword, oldPasswordHash);
-        if (match) {
-            return true;
-        }
-    }
-
+export async function isPasswordInHistory(
+  newPassword: string,
+  passwordHistory: string[],
+): Promise<boolean> {
+  if (!passwordHistory || passwordHistory.length === 0) {
     return false;
+  }
+
+  // Vérifier contre chaque ancien mot de passe hashé
+  for (const oldPasswordHash of passwordHistory) {
+    const match = await bcrypt.compare(newPassword, oldPasswordHash);
+    if (match) {
+      return true;
+    }
+  }
+
+  return false;
 }
 
 /**
@@ -69,15 +90,11 @@ export async function isPasswordInHistory(newPassword: string, passwordHistory: 
  * @param passwordHistory L'historique existant
  * @returns Le nouvel historique (max 5 entrées)
  */
-export function addToPasswordHistory(currentPasswordHash: string, passwordHistory: string[] = []): string[] {
-    const newHistory = [currentPasswordHash, ...passwordHistory];
-    // Garder seulement les 5 derniers
-    return newHistory.slice(0, PASSWORD_HISTORY_SIZE);
-}
-
-/**
- * Obtenir le nombre maximum d'éléments dans l'historique
- */
-export function getPasswordHistorySize(): number {
-    return PASSWORD_HISTORY_SIZE;
+export function addToPasswordHistory(
+  currentPasswordHash: string,
+  passwordHistory: string[] = [],
+): string[] {
+  const newHistory = [currentPasswordHash, ...passwordHistory];
+  // Garder seulement les 5 derniers
+  return newHistory.slice(0, PASSWORD_HISTORY_SIZE);
 }

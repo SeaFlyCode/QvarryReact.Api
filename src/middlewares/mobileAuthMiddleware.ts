@@ -164,10 +164,104 @@ export const mobileAuthMiddleware = async (
       });
     }
 
-    // 6. ATTACHER LES INFOS À LA REQUÊTE
+    // ─────────────────────────────────────────────────────────────────────
+    // HIGH-3 FIX: VALIDATION ISADMIN DEPUIS LA BASE DE DONNÉES
+    // ─────────────────────────────────────────────────────────────────────
+    // Empêche l'escalade de privilèges par modification du token
+    // Même pattern que authMiddleware.ts (ligne 237-262)
+    let verifiedIsAdmin = false;
+    if (decoded.isAdmin) {
+      const user = await UserModel.findById(decoded.id)
+        .select("is_admin is_blocked")
+        .lean();
+      if (!user) {
+        console.warn(
+          `🚫 [MOBILE-AUTH] Utilisateur non trouvé en DB: ${decoded.id}`,
+        );
+        return res.status(401).json({
+          error: "Utilisateur non trouvé",
+          code: "USER_NOT_FOUND",
+        });
+      }
+      if (user.is_blocked) {
+        console.warn(
+          `🚫 [MOBILE-AUTH] Utilisateur bloqué tente d'accéder: ${decoded.id}`,
+        );
+        return res.status(403).json({
+          error: "Votre compte a été suspendu",
+          code: "ACCOUNT_BLOCKED",
+        });
+      }
+
+      // Utiliser la valeur en base, pas celle du token
+      verifiedIsAdmin = user.is_admin === true;
+
+      // Rejet immédiat si escalade de privilèges détectée
+      if (decoded.isAdmin && !verifiedIsAdmin) {
+        console.error(
+          `🚨 [MOBILE-AUTH] TENTATIVE D'ESCALADE DE PRIVILÈGES BLOQUÉE! userId: ${decoded.id} - IP: ${req.ip}`,
+        );
+
+        // Logger l'incident de sécurité
+        try {
+          const { auditService } = await import("../services/auditService");
+          await auditService.log({
+            userId: decoded.id,
+            action: "PRIVILEGE_ESCALATION_ATTEMPT_MOBILE",
+            level: "critical",
+            ipAddress: req.ip,
+            userAgent: req.get("user-agent"),
+            details: {
+              path: req.path,
+              method: req.method,
+              tokenIsAdmin: decoded.isAdmin,
+              dbIsAdmin: verifiedIsAdmin,
+              tokenJti: decoded.jti,
+              platform: "mobile",
+            },
+          });
+        } catch (auditError) {
+          console.error(
+            "❌ [MOBILE-AUTH] Erreur lors du log de la tentative d'escalade:",
+            auditError,
+          );
+        }
+
+        // Blacklister le token
+        try {
+          const authHeader = req.headers.authorization;
+          const token = authHeader?.split(" ")[1];
+          if (token) {
+            await redisSessionService.blacklistToken(
+              token,
+              {
+                token,
+                userId: decoded.id,
+                blacklistedAt: new Date(),
+                expiresAt: new Date(Date.now() + 24 * 60 * 60 * 1000), // 24h
+                reason: "PRIVILEGE_ESCALATION_ATTEMPT_MOBILE",
+              },
+              24 * 60 * 60,
+            );
+          }
+        } catch (blacklistError) {
+          console.error(
+            "❌ [MOBILE-AUTH] Erreur blacklist token compromis:",
+            blacklistError,
+          );
+        }
+
+        return res.status(403).json({
+          error: "Accès refusé. Incident de sécurité enregistré.",
+          code: "PRIVILEGE_ESCALATION_BLOCKED",
+        });
+      }
+    }
+
+    // 7. ATTACHER LES INFOS À LA REQUÊTE
     req.user = {
       id: decoded.id,
-      isAdmin: decoded.isAdmin || false,
+      isAdmin: verifiedIsAdmin, // HIGH-3 FIX: Valeur vérifiée depuis la DB
     };
 
     // Log de debug en développement

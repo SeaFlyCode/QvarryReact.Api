@@ -202,7 +202,7 @@ export async function sendMessage(req: Request, res: Response) {
 
     res.status(201).json({ messageId: message._id });
   } catch (err) {
-    res
+    return res
       .status(500)
       .json({ error: "Erreur lors de l'envoi du message", details: err });
   }
@@ -301,7 +301,7 @@ export async function getMessages(req: Request, res: Response) {
       },
     });
   } catch (err) {
-    res.status(500).json({
+    return res.status(500).json({
       error: "Erreur lors de la récupération des messages",
       details: err,
     });
@@ -349,7 +349,7 @@ export async function markMessageAsRead(req: Request, res: Response) {
 
     res.json({ success: true });
   } catch (err) {
-    res
+    return res
       .status(500)
       .json({ error: "Erreur lors du marquage comme lu", details: err });
   }
@@ -382,7 +382,9 @@ export async function replyToMessage(req: Request, res: Response) {
     await message.save();
     res.status(201).json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: "Erreur lors de la réponse", details: err });
+    return res
+      .status(500)
+      .json({ error: "Erreur lors de la réponse", details: err });
   }
 }
 
@@ -410,7 +412,7 @@ export async function editMessage(req: Request, res: Response) {
     await message.save();
     res.json({ success: true });
   } catch (err) {
-    res
+    return res
       .status(500)
       .json({ error: "Erreur lors de la modification", details: err });
   }
@@ -436,7 +438,7 @@ export async function deleteMessage(req: Request, res: Response) {
     await message.save();
     res.json({ success: true });
   } catch (err) {
-    res
+    return res
       .status(500)
       .json({ error: "Erreur lors de la suppression", details: err });
   }
@@ -522,7 +524,7 @@ export async function markMessagesAsRead(req: Request, res: Response) {
     res.json({ success: true, markedAsRead: result.modifiedCount });
   } catch (err) {
     console.error("[MESSAGES] Erreur lors du marquage batch comme lu:", err);
-    res
+    return res
       .status(500)
       .json({ error: "Erreur lors du marquage comme lu", details: err });
   }

@@ -6,6 +6,7 @@ import { refreshTokenService } from "../../services/refreshTokenService";
 import { syncService } from "../../services/syncService";
 import { clearCookieOptions } from "../../config/cookieConfig";
 import { blacklistToken } from "./authHelpers";
+import UserModel from "../../models/users";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: LOGOUT UTILISATEUR
@@ -72,6 +73,20 @@ export async function handleLogoutUser(req: Request, res: Response) {
         await refreshTokenService.revokeToken(tokenId, "logout");
         console.log(`🚫 [AUTH] Refresh token révoqué (tokenId: ${tokenId})`);
       }
+
+      // SEC-040: Invalider le token de reset de mot de passe au logout
+      // Empêche un attaquant de réutiliser un code de reset après déconnexion
+      await UserModel.updateOne(
+        { _id: userId },
+        {
+          $set: {
+            reset_password_token: "",
+            reset_password_expires: new Date(0),
+          },
+        },
+      ).catch((err: unknown) => {
+        console.warn(`⚠️ [AUTH] Échec nettoyage reset token au logout:`, err);
+      });
 
       console.log(
         `🚫 [AUTH] Token blacklisté lors du logout (userId: ${userId})`,

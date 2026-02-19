@@ -17,6 +17,7 @@ import { decrypt } from "../../utils/masterEncryptionUtils";
 import {
   isPasswordInHistory,
   addToPasswordHistory,
+  validatePasswordStrength,
 } from "../../utils/passwordUtils";
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -25,7 +26,7 @@ import {
 
 /**
  * Demande de réinitialisation de mot de passe
- * Envoie un email avec un code à 6 chiffres
+ * Envoie un email avec un code à 8 chiffres (SEC-041)
  */
 export async function handleForgotPassword(req: Request, res: Response) {
   try {
@@ -48,7 +49,8 @@ export async function handleForgotPassword(req: Request, res: Response) {
 
     // Générer un token et un code de réinitialisation
     const resetToken = crypto.randomBytes(32).toString("hex");
-    const resetCode = generateVerificationCode(6);
+    // SEC-041: Code à 8 chiffres pour renforcer la résistance au brute-force
+    const resetCode = generateVerificationCode(8);
     const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 heure
 
     // Mettre à jour l'utilisateur
@@ -106,10 +108,11 @@ export async function handleResetPassword(req: Request, res: Response) {
       });
     }
 
-    // Validation du mot de passe
-    if (newPassword.length < 8) {
+    // Validation du mot de passe avec validatePasswordStrength
+    const passwordStrength = validatePasswordStrength(newPassword);
+    if (!passwordStrength.isValid) {
       return res.status(400).json({
-        message: "Le mot de passe doit contenir au moins 8 caractères.",
+        message: passwordStrength.message,
       });
     }
 
@@ -120,6 +123,14 @@ export async function handleResetPassword(req: Request, res: Response) {
       return res.status(400).json({
         message: "Code invalide ou expiré.",
         expired: true,
+      });
+    }
+
+    // SEC-039: Vérifier que l'utilisateur a vérifié son email avant de permettre le reset
+    if (!user.is_verified) {
+      return res.status(400).json({
+        message: "Veuillez d'abord vérifier votre adresse email.",
+        needsVerification: true,
       });
     }
 

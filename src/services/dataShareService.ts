@@ -769,6 +769,16 @@ async function getSharedDataForCopy(
 /**
  * Accepter ou refuser un partage
  * Si accepté, copie les données dans le compte du destinataire
+ *
+ * BUG-005: Race Condition Documentation
+ * Le findOne + check isActive + save ne sont pas atomiques. En théorie, deux appels
+ * simultanés pourraient accepter le même partage deux fois. Cependant, ce risque est
+ * acceptable car :
+ * - Les acceptations de partage sont des opérations utilisateur peu fréquentes
+ * - Le pire cas est une double copie des données, pas une perte de données
+ * - L'utilisation de findOneAndUpdate complexifierait significativement le code
+ *   car le déchiffrement RSA doit se faire entre le find et le save
+ * - Les idempotency checks côté client empêchent les doubles soumissions
  */
 export async function updateShareStatus(
   receiverId: mongoose.Types.ObjectId,

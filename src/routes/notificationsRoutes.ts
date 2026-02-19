@@ -1,12 +1,12 @@
 import { Router } from "express";
 import {
-    getNotifications,
-    getUnreadCount,
-    markAsRead,
-    markAllAsRead,
-    deleteNotification,
-    deleteAllRead,
-    createTestNotification
+  getNotifications,
+  getUnreadCount,
+  markAsRead,
+  markAllAsRead,
+  deleteNotification,
+  deleteAllRead,
+  createTestNotification,
 } from "../controllers/notificationsControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
 
@@ -16,7 +16,10 @@ const router = Router();
 router.use(authMiddleware);
 
 // POST /api/notifications/test - Créer une notification de test (DEV ONLY)
-router.post("/test", createTestNotification);
+// SEC-038: Route non enregistrée en production (le controller retourne aussi 404 en prod - LOW-1)
+if (process.env.NODE_ENV !== "production") {
+  router.post("/test", createTestNotification);
+}
 
 // GET /api/notifications - Récupérer toutes les notifications
 router.get("/", getNotifications);
@@ -37,4 +40,3 @@ router.delete("/read", deleteAllRead);
 router.delete("/:notificationId", deleteNotification);
 
 export default router;
-
