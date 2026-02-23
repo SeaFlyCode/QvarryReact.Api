@@ -25,7 +25,6 @@ export type SosResolvedBy =
 // Interface pour les sessions SOS
 export interface ISosSession extends Document {
   userId: mongoose.Types.ObjectId;
-  ficheId?: mongoose.Types.ObjectId; // Site/fiche associé (optionnel)
 
   // Statut
   status: SosSessionStatus;
@@ -66,10 +65,6 @@ const sosSessionSchema: Schema<ISosSession> = new Schema(
       ref: "User",
       required: true,
       index: true,
-    },
-    ficheId: {
-      type: Schema.Types.ObjectId,
-      ref: "Fiche",
     },
     status: {
       type: String,
@@ -150,8 +145,6 @@ const sosSessionSchema: Schema<ISosSession> = new Schema(
 sosSessionSchema.index({ userId: 1, status: 1, createdAt: -1 });
 sosSessionSchema.index({ status: 1, expiresAt: 1 }); // Pour le cron d'escalade
 sosSessionSchema.index({ status: 1, currentStage: 1 }); // Pour trouver les sessions à escalader
-sosSessionSchema.index({ ficheId: 1, status: 1 }); // Pour les sessions actives sur un site
-
 const SosSessionModel: Model<ISosSession> =
   mongoose.models.SosSession ||
   mongoose.model<ISosSession>("SosSession", sosSessionSchema);

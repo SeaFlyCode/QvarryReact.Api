@@ -9,6 +9,8 @@ import mongoose from "mongoose";
 import PointModel from "../models/points";
 import FicheModel from "../models/fiches";
 import ListModel from "../models/lists";
+import SosContactModel from "../models/sosContact";
+import SosSessionModel from "../models/sosSession";
 import KeysModel from "../models/keys";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import { decryptWithKey, encryptWithKey } from "../utils/userEncryptionUtils";
@@ -34,6 +36,12 @@ export interface SyncResult {
     updated: DecryptedList[];
     deleted: string[];
   };
+  sosContacts: {
+    created: SyncedSosContact[];
+    updated: SyncedSosContact[];
+    deleted: string[];
+  };
+  activeSosSession: SyncedSosSession | null;
   lastSyncDate: string;
   totalChanges: number;
 }
@@ -84,8 +92,31 @@ export interface DecryptedList {
   updatedAt: string;
 }
 
+export interface SyncedSosContact {
+  _id: string;
+  name: string;
+  phone: string;
+  relationship?: string;
+  isDefault: boolean;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface SyncedSosSession {
+  _id: string;
+  status: string;
+  currentStage: number;
+  activatedAt: string;
+  expectedDuration: number;
+  expiresAt: string;
+  lastHeartbeatAt?: string;
+  heartbeatCount: number;
+  extensionCount: number;
+  note?: string;
+}
+
 export interface LocalChange {
-  type: "point" | "fiche" | "list";
+  type: "point" | "fiche" | "list" | "sosContact";
   action: "create" | "update" | "delete";
   id?: string;
   localId?: string; // ID temporaire côté client
@@ -94,7 +125,7 @@ export interface LocalChange {
 }
 
 export interface SyncConflict {
-  type: "point" | "fiche" | "list";
+  type: "point" | "fiche" | "list" | "sosContact";
   id: string;
   localVersion: any;
   serverVersion: any;
@@ -250,6 +281,40 @@ class MobileSyncService {
   }
 
   /**
+   * Transforme un SosContact en format SyncedSosContact
+   */
+  transformSosContact(contact: any): SyncedSosContact {
+    return {
+      _id: contact._id.toString(),
+      name: contact.name,
+      phone: contact.phone,
+      relationship: contact.relationship,
+      isDefault: contact.isDefault || false,
+      createdAt: contact.createdAt?.toISOString() || new Date().toISOString(),
+      updatedAt: contact.updatedAt?.toISOString() || new Date().toISOString(),
+    };
+  }
+
+  /**
+   * Transforme une SosSession en format SyncedSosSession
+   */
+  transformSosSession(session: any): SyncedSosSession {
+    return {
+      _id: session._id.toString(),
+      status: session.status,
+      currentStage: session.currentStage,
+      activatedAt:
+        session.activatedAt?.toISOString() || new Date().toISOString(),
+      expectedDuration: session.expectedDuration,
+      expiresAt: session.expiresAt?.toISOString() || new Date().toISOString(),
+      lastHeartbeatAt: session.lastHeartbeatAt?.toISOString(),
+      heartbeatCount: session.heartbeatCount || 0,
+      extensionCount: session.extensionCount || 0,
+      note: session.note,
+    };
+  }
+
+  /**
    * Récupère toutes les données de l'utilisateur (premier sync / sync complet)
    */
   async getFullData(userId: string): Promise<SyncResult> {
@@ -259,11 +324,19 @@ class MobileSyncService {
     const userKey = await this.getUserKey(userId);
 
     // Charger toutes les données en parallèle (exclure les éléments soft-deleted)
-    const [points, fiches, lists] = await Promise.all([
-      PointModel.find({ userId, deletedAt: null }).lean(),
-      FicheModel.find({ userId, deletedAt: null }).lean(),
-      ListModel.find({ userId, deletedAt: null }).lean(),
-    ]);
+    const [points, fiches, lists, sosContacts, activeSosSession] =
+      await Promise.all([
+        PointModel.find({ userId, deletedAt: null }).lean(),
+        FicheModel.find({ userId, deletedAt: null }).lean(),
+        ListModel.find({ userId, deletedAt: null }).lean(),
+        SosContactModel.find({
+          userId: new mongoose.Types.ObjectId(userId),
+        }).lean(),
+        SosSessionModel.findOne({
+          userId: new mongoose.Types.ObjectId(userId),
+          status: { $in: ["ACTIVE", "ESCALATING"] },
+        }).lean(),
+      ]);
 
     // Déchiffrer/transformer les données
     // BUG-010: Wrap individual decrypt calls in try/catch to skip failed items
@@ -289,6 +362,9 @@ class MobileSyncService {
       })
       .filter((f): f is NonNullable<typeof f> => f !== null);
     const transformedLists = lists.map((l) => this.transformList(l));
+    const transformedSosContacts = sosContacts.map((c) =>
+      this.transformSosContact(c),
+    );
 
     const result: SyncResult = {
       points: {
@@ -306,8 +382,17 @@ class MobileSyncService {
         updated: [],
         deleted: [],
       },
+      sosContacts: {
+        created: transformedSosContacts,
+        updated: [],
+        deleted: [],
+      },
+      activeSosSession: activeSosSession
+        ? this.transformSosSession(activeSosSession)
+        : null,
       lastSyncDate: new Date().toISOString(),
-      totalChanges: points.length + fiches.length + lists.length,
+      totalChanges:
+        points.length + fiches.length + lists.length + sosContacts.length,
     };
 
     console.log(
@@ -331,23 +416,28 @@ class MobileSyncService {
     const userKey = await this.getUserKey(userId);
 
     // Récupérer les éléments créés/modifiés depuis la date (exclure les soft-deleted)
-    const [updatedPoints, updatedFiches, updatedLists] = await Promise.all([
-      PointModel.find({
-        userId,
-        updatedAt: { $gt: since },
-        deletedAt: null,
-      }).lean(),
-      FicheModel.find({
-        userId,
-        date_modification: { $gt: since },
-        deletedAt: null,
-      }).lean(),
-      ListModel.find({
-        userId,
-        updatedAt: { $gt: since },
-        deletedAt: null,
-      }).lean(),
-    ]);
+    const [updatedPoints, updatedFiches, updatedLists, updatedSosContacts] =
+      await Promise.all([
+        PointModel.find({
+          userId,
+          updatedAt: { $gt: since },
+          deletedAt: null,
+        }).lean(),
+        FicheModel.find({
+          userId,
+          date_modification: { $gt: since },
+          deletedAt: null,
+        }).lean(),
+        ListModel.find({
+          userId,
+          updatedAt: { $gt: since },
+          deletedAt: null,
+        }).lean(),
+        SosContactModel.find({
+          userId: new mongoose.Types.ObjectId(userId),
+          updatedAt: { $gt: since },
+        }).lean(),
+      ]);
 
     // Séparer créés et modifiés
     // BUG-010: Wrap individual decrypt calls in try/catch to skip failed items
@@ -406,6 +496,19 @@ class MobileSyncService {
       .filter((l) => l.createdAt && new Date(l.createdAt) <= since)
       .map((l) => this.transformList(l));
 
+    const createdSosContacts = updatedSosContacts
+      .filter((c) => c.createdAt && new Date(c.createdAt) > since)
+      .map((c) => this.transformSosContact(c));
+    const modifiedSosContacts = updatedSosContacts
+      .filter((c) => c.createdAt && new Date(c.createdAt) <= since)
+      .map((c) => this.transformSosContact(c));
+
+    // Récupérer la session SOS active
+    const activeSosSession = await SosSessionModel.findOne({
+      userId: new mongoose.Types.ObjectId(userId),
+      status: { $in: ["ACTIVE", "ESCALATING"] },
+    }).lean();
+
     // Détection des suppressions (soft-delete)
     const deletedPointsDocs = await PointModel.find({
       userId,
@@ -453,6 +556,14 @@ class MobileSyncService {
         updated: modifiedLists,
         deleted: deletedLists,
       },
+      sosContacts: {
+        created: createdSosContacts,
+        updated: modifiedSosContacts,
+        deleted: [], // Hard-delete, pas détectable en incrémental
+      },
+      activeSosSession: activeSosSession
+        ? this.transformSosSession(activeSosSession)
+        : null,
       lastSyncDate: new Date().toISOString(),
       totalChanges:
         createdPoints.length +
@@ -463,7 +574,9 @@ class MobileSyncService {
         deletedFiches.length +
         createdLists.length +
         modifiedLists.length +
-        deletedLists.length,
+        deletedLists.length +
+        createdSosContacts.length +
+        modifiedSosContacts.length,
     };
 
     console.log(
@@ -516,6 +629,9 @@ class MobileSyncService {
             break;
           case "list":
             await this.applyListChange(userId, change, synced, conflicts);
+            break;
+          case "sosContact":
+            await this.applySosContactChange(userId, change, synced, conflicts);
             break;
         }
       } catch (error) {
@@ -811,6 +927,85 @@ class MobileSyncService {
           { _id: change.id, userId: new mongoose.Types.ObjectId(userId) },
           { $set: { deletedAt: new Date() } },
         );
+
+        synced.push(change);
+        break;
+      }
+    }
+  }
+
+  /**
+   * Applique un changement sur un contact SOS
+   */
+  private async applySosContactChange(
+    userId: string,
+    change: LocalChange,
+    synced: LocalChange[],
+    conflicts: SyncConflict[],
+  ): Promise<void> {
+    const data = change.data;
+
+    switch (change.action) {
+      case "create": {
+        // Vérifier le nombre max de contacts (5)
+        const count = await SosContactModel.countDocuments({
+          userId: new mongoose.Types.ObjectId(userId),
+        });
+        if (count >= 5) {
+          throw new Error("MAX_CONTACTS_REACHED");
+        }
+
+        const newContact = await SosContactModel.create({
+          userId: new mongoose.Types.ObjectId(userId),
+          name: data.name,
+          phone: data.phone,
+          relationship: data.relationship || undefined,
+          isDefault: data.isDefault || false,
+        });
+
+        synced.push({
+          ...change,
+          id: newContact._id.toString(),
+        });
+        break;
+      }
+
+      case "update": {
+        if (!change.id) throw new Error("ID manquant pour update");
+
+        const existingContact = await SosContactModel.findOne({
+          _id: new mongoose.Types.ObjectId(change.id),
+          userId: new mongoose.Types.ObjectId(userId),
+        });
+
+        if (!existingContact) {
+          throw new Error(`Contact SOS ${change.id} non trouvé`);
+        }
+
+        const updateData: any = {};
+        if (data.name) updateData.name = data.name;
+        if (data.phone) updateData.phone = data.phone;
+        if (data.relationship !== undefined)
+          updateData.relationship = data.relationship;
+        if (data.isDefault !== undefined) updateData.isDefault = data.isDefault;
+
+        await SosContactModel.updateOne(
+          { _id: change.id, userId: new mongoose.Types.ObjectId(userId) },
+          { $set: updateData },
+        );
+
+        synced.push(change);
+        break;
+      }
+
+      case "delete": {
+        if (!change.id) throw new Error("ID manquant pour delete");
+
+        // Hard-delete pour les contacts SOS (pas de soft-delete)
+        await SosContactModel.deleteOne({
+          _id: new mongoose.Types.ObjectId(change.id),
+          userId: new mongoose.Types.ObjectId(userId),
+        });
 
         synced.push(change);
         break;

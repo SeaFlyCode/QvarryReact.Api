@@ -16,6 +16,7 @@ import {
   handleSosHeartbeat,
   handleSosExtend,
   handleSosDeactivate,
+  handleSosDeactivateByParam,
   handleSosStatus,
   handleSosHistory,
   handleSosActiveSessions,
@@ -54,7 +55,6 @@ const mobileSosMiddleware = [
  * Body:
  *   {
  *     "expectedDuration": 120,          // Durée en minutes (15-480)
- *     "ficheId": "mongoId",             // Optionnel - site/fiche associé
  *     "note": "Galerie nord",           // Optionnel - note libre
  *     "lat": 48.8566,                   // Optionnel - latitude
  *     "lng": 2.3522,                    // Optionnel - longitude
@@ -164,6 +164,26 @@ router.get("/history", ...mobileSosMiddleware, handleSosHistory);
  *   { success: true, sessions: [...], count: number }
  */
 router.get("/active", ...mobileSosMiddleware, handleSosActiveSessions);
+
+/**
+ * POST /api/mobile/sos/:sessionId/deactivate
+ * Désactiver une session SOS spécifique via son ID dans l'URL
+ * Alternative à POST /api/mobile/sos/deactivate avec sessionId dans le body
+ *
+ * Response 200:
+ *   { success: true, session: { id, status, resolvedAt, resolvedBy } }
+ *
+ * Codes d'erreur:
+ *   - 400: MISSING_SESSION_ID
+ *   - 401: UNAUTHORIZED
+ *   - 404: NO_ACTIVE_SESSION
+ *   - 500: INTERNAL_ERROR
+ */
+router.post(
+  "/:sessionId/deactivate",
+  ...mobileSosMiddleware,
+  handleSosDeactivateByParam,
+);
 
 /**
  * POST /api/mobile/sos/:sessionId/confirm-safe

@@ -5,8 +5,6 @@
 // Utilisé par le Mode SOS pour envoyer les alertes d'urgence (Stage 2)
 // ═══════════════════════════════════════════════════════════════════════════
 
-import { Vonage } from "@vonage/server-sdk";
-
 interface SmsSendResult {
   success: boolean;
   messageId?: string;
@@ -14,8 +12,22 @@ interface SmsSendResult {
   to: string;
 }
 
+interface VonageSmsResponse {
+  "message-count": string;
+  messages: Array<{
+    status: string;
+    "message-id": string;
+    to: string;
+    "error-text": string;
+    "remaining-balance": string;
+    "message-price": string;
+    network: string;
+  }>;
+}
+
 class VonageService {
-  private client: Vonage | null = null;
+  private apiKey: string = "";
+  private apiSecret: string = "";
   private smsFrom: string = "Qvarry";
   private isConfigured: boolean = false;
 
@@ -40,10 +52,8 @@ class VonageService {
     }
 
     try {
-      this.client = new Vonage({
-        apiKey,
-        apiSecret,
-      });
+      this.apiKey = apiKey;
+      this.apiSecret = apiSecret;
       this.isConfigured = true;
       console.log("✅ [VONAGE] Service SMS initialisé avec succès");
     } catch (error) {
@@ -56,7 +66,7 @@ class VonageService {
    * Vérifier si le service est correctement configuré
    */
   isReady(): boolean {
-    return this.isConfigured && this.client !== null;
+    return this.isConfigured && this.apiKey !== "" && this.apiSecret !== "";
   }
 
   /**
@@ -79,13 +89,34 @@ class VonageService {
       // Vonage attend le numéro sans le "+" pour certains formats
       const cleanNumber = to.startsWith("+") ? to.substring(1) : to;
 
-      const response = await this.client!.sms.send({
-        to: cleanNumber,
-        from: this.smsFrom,
-        text,
+      const response = await fetch("https://rest.nexmo.com/sms/json", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          api_key: this.apiKey,
+          api_secret: this.apiSecret,
+          from: this.smsFrom,
+          to: cleanNumber,
+          text,
+        }),
       });
 
-      const message = response.messages?.[0];
+      if (!response.ok) {
+        const errorText = `HTTP ${response.status} ${response.statusText}`;
+        console.error(
+          `❌ [VONAGE] Échec envoi SMS vers ${to.substring(0, 6)}***: ${errorText}`,
+        );
+        return {
+          success: false,
+          error: errorText,
+          to,
+        };
+      }
+
+      const data = (await response.json()) as VonageSmsResponse;
+      const message = data.messages?.[0];
 
       if (message?.status === "0") {
         console.log(
@@ -93,11 +124,11 @@ class VonageService {
         );
         return {
           success: true,
-          messageId: message.messageId,
+          messageId: message["message-id"],
           to,
         };
       } else {
-        const errorText = message?.errorText || "Erreur inconnue";
+        const errorText = message?.["error-text"] || "Erreur inconnue";
         console.error(
           `❌ [VONAGE] Échec envoi SMS vers ${to.substring(0, 6)}***: ${errorText}`,
         );

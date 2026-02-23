@@ -28,7 +28,8 @@ export type DeletedEntityType =
   | "contact"
   | "notification"
   | "dataShare"
-  | "maintenance";
+  | "maintenance"
+  | "sosContact";
 
 export interface IDeletedData extends Document {
   // Identification de l'entité supprimée
@@ -73,6 +74,7 @@ const deletedDataSchema = new Schema<IDeletedData>({
       "notification",
       "dataShare",
       "maintenance",
+      "sosContact",
     ],
     index: true,
   },
@@ -118,6 +120,7 @@ const deletedDataSchema = new Schema<IDeletedData>({
       "notification",
       "dataShare",
       "maintenance",
+      "sosContact",
     ],
   },
   parentEntityId: {

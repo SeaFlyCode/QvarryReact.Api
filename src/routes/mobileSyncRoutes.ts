@@ -8,14 +8,14 @@
 import express from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import {
-    verifyMobilePlatform,
-    mobileRateLimitMiddleware
+  verifyMobilePlatform,
+  mobileRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
 import {
-    handleMobileSync,
-    handleMobileSyncPush,
-    handleMobileFullData,
-    handleMobileSyncStatus
+  handleMobileSync,
+  handleMobileSyncPush,
+  handleMobileFullData,
+  handleMobileSyncStatus,
 } from "../controllers/mobileSyncControllers";
 
 const router = express.Router();
@@ -25,9 +25,9 @@ const router = express.Router();
 // ═══════════════════════════════════════════════════════════════════════════
 
 const mobileSyncMiddleware = [
-    verifyMobilePlatform,
-    authMiddleware,
-    mobileRateLimitMiddleware
+  verifyMobilePlatform,
+  authMiddleware,
+  mobileRateLimitMiddleware,
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -58,6 +58,18 @@ const mobileSyncMiddleware = [
  *     },
  *     "fiches": { ... },     // Même structure
  *     "lists": { ... },      // Même structure
+ *     "sosContacts": {
+ *       "created": [...],    // Nouveaux contacts SOS depuis 'since'
+ *       "updated": [...],    // Contacts SOS modifiés depuis 'since'
+ *       "deleted": [...]     // IDs des contacts SOS supprimés
+ *     },
+ *     "activeSosSession": {  // Session SOS active (ou null)
+ *       "id": "...",
+ *       "status": "ACTIVE",
+ *       "currentStage": -1,
+ *       "expiresAt": "...",
+ *       ...
+ *     } | null,
  *     "lastSyncDate": "2026-02-11T10:00:00.000Z",
  *     "totalChanges": 42,
  *     "syncDuration": 156    // ms
@@ -80,7 +92,7 @@ router.get("/", ...mobileSyncMiddleware, handleMobileSync);
  *   {
  *     "changes": [
  *       {
- *         "type": "point" | "fiche" | "list",
+ *         "type": "point" | "fiche" | "list" | "sosContact",
  *         "action": "create" | "update" | "delete",
  *         "id": "serverId",           // Requis pour update/delete
  *         "localId": "uuid-local",    // Pour create (mapping retourné)
@@ -130,7 +142,8 @@ router.post("/", ...mobileSyncMiddleware, handleMobileSyncPush);
  *     "breakdown": {
  *       "points": 2,
  *       "fiches": 3,
- *       "lists": 0
+ *       "lists": 0,
+ *       "sosContacts": 1
  *     }
  *   }
  */
@@ -151,4 +164,3 @@ router.get("/status", ...mobileSyncMiddleware, handleMobileSyncStatus);
 router.get("/full", ...mobileSyncMiddleware, handleMobileFullData);
 
 export default router;
-

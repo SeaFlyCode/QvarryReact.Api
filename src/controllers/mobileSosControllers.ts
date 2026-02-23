@@ -26,7 +26,7 @@ export async function handleSosActivate(req: Request, res: Response) {
       });
     }
 
-    const { expectedDuration, ficheId, note, lat, lng, accuracy } = req.body;
+    const { expectedDuration, note, lat, lng, accuracy } = req.body;
 
     // Validation
     if (!expectedDuration || typeof expectedDuration !== "number") {
@@ -46,7 +46,6 @@ export async function handleSosActivate(req: Request, res: Response) {
     const session = await sosService.activateSession({
       userId,
       expectedDuration,
-      ficheId,
       note,
       lat,
       lng,
@@ -290,6 +289,65 @@ export async function handleSosDeactivate(req: Request, res: Response) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// HANDLER: DÉSACTIVER LE SOS (VIA PARAMÈTRE URL)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function handleSosDeactivateByParam(req: Request, res: Response) {
+  const startTime = Date.now();
+
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        error: "Authentification requise.",
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    const { sessionId } = req.params;
+    if (!sessionId) {
+      return res.status(400).json({
+        error: "ID de session requis.",
+        code: "MISSING_SESSION_ID",
+      });
+    }
+
+    const session = await sosService.deactivateSession(userId, sessionId);
+
+    const duration = Date.now() - startTime;
+    console.log(
+      `✅ [MOBILE-SOS] Session désactivée: ${session._id} en ${duration}ms`,
+    );
+
+    res.status(200).json({
+      success: true,
+      session: {
+        id: session._id,
+        status: session.status,
+        resolvedAt: session.resolvedAt,
+        resolvedBy: session.resolvedBy,
+      },
+    });
+  } catch (error) {
+    if (error instanceof Error && error.message === "NO_ACTIVE_SESSION") {
+      return res.status(404).json({
+        error: "Aucune session SOS active.",
+        code: "NO_ACTIVE_SESSION",
+      });
+    }
+
+    console.error(
+      `❌ [MOBILE-SOS] Erreur désactivation:`,
+      getErrorMessage(error),
+    );
+    res.status(500).json({
+      error: "Erreur lors de la désactivation.",
+      code: "INTERNAL_ERROR",
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: STATUT DE LA SESSION ACTIVE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -319,7 +377,6 @@ export async function handleSosStatus(req: Request, res: Response) {
             heartbeatCount: session.heartbeatCount,
             extensionCount: session.extensionCount,
             lastHeartbeatAt: session.lastHeartbeatAt,
-            ficheId: session.ficheId,
             note: session.note,
           }
         : null,

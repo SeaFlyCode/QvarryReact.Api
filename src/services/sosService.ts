@@ -38,7 +38,6 @@ const MAX_ACTIVE_SESSIONS = 1; // Une seule session active par utilisateur
 interface ActivateSessionParams {
   userId: string;
   expectedDuration: number; // En minutes
-  ficheId?: string;
   note?: string;
   lat?: number;
   lng?: number;
@@ -71,8 +70,7 @@ class SosService {
    * L'utilisateur DOIT avoir une connexion réseau (avant d'aller sous terre)
    */
   async activateSession(params: ActivateSessionParams): Promise<ISosSession> {
-    const { userId, expectedDuration, ficheId, note, lat, lng, accuracy } =
-      params;
+    const { userId, expectedDuration, note, lat, lng, accuracy } = params;
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
     // Vérifier qu'il n'y a pas déjà une session active
@@ -108,7 +106,6 @@ class SosService {
     // Créer la session
     const session = new SosSessionModel({
       userId: userObjectId,
-      ficheId: ficheId ? new mongoose.Types.ObjectId(ficheId) : undefined,
       status: "ACTIVE",
       currentStage: -1,
       activatedAt: now,
@@ -131,7 +128,6 @@ class SosService {
       "ACTIVATED",
       {
         expectedDuration,
-        ficheId,
         expiresAt,
       },
     );
@@ -144,7 +140,6 @@ class SosService {
       details: {
         sessionId: session._id,
         expectedDuration,
-        ficheId,
         expiresAt,
       },
     });
@@ -434,10 +429,9 @@ class SosService {
 
   /**
    * Obtenir les sessions actives visibles par un utilisateur
-   * (sessions sur le même site/fiche)
+   * (sessions en escalade visibles par tous les utilisateurs)
    */
   async getActiveSessions(userId: string): Promise<any[]> {
-    // Récupérer les fiches de l'utilisateur pour trouver les sessions sur les mêmes sites
     // Pour le MVP, on retourne toutes les sessions en escalade (stage 1+)
     return SosSessionModel.find({
       status: "ESCALATING",
@@ -537,7 +531,7 @@ class SosService {
   }
 
   /**
-   * Stage 1: Notifier les utilisateurs Qvarry sur le même site
+   * Stage 1: Notifier TOUS les utilisateurs Qvarry
    */
   private async triggerStage1(session: ISosSession): Promise<void> {
     const sessionId = session._id as mongoose.Types.ObjectId;
@@ -558,9 +552,45 @@ class SosService {
       message: "Escalade Stage 1 — D'autres utilisateurs sont notifiés !",
     });
 
-    // TODO MVP+: Notifier les utilisateurs sur la même fiche
-    // Pour le MVP, on log simplement le stage change
-    // En v2, on utilisera ficheId pour trouver les utilisateurs sur le même site
+    // Notifier TOUS les utilisateurs Qvarry vérifiés (sauf le propriétaire de la session)
+    const allVerifiedUsers = await UserModel.find({
+      _id: { $ne: session.userId },
+      isVerified: true,
+    })
+      .select("_id name")
+      .lean();
+
+    console.log(
+      `📣 [SOS] Notification de ${allVerifiedUsers.length} utilisateurs pour session ${sessionId}`,
+    );
+
+    // Envoyer les notifications à chaque utilisateur
+    for (const targetUser of allVerifiedUsers) {
+      try {
+        // Push notification
+        await createNotification(
+          targetUser._id,
+          "contact_request",
+          "🆘 Alerte SOS",
+          `${userName} a besoin d'aide ! Consultez la carte SOS.`,
+        );
+
+        // WebSocket notification
+        webSocketService.sendNotificationToUser(targetUser._id.toString(), {
+          type: "sos_alert_stage1",
+          stage: 1,
+          sessionId: sessionId.toString(),
+          userName,
+          message: `${userName} a besoin d'aide ! Consultez la carte SOS.`,
+        });
+      } catch (error) {
+        console.error(
+          `⚠️ [SOS] Erreur notification userId ${targetUser._id}:`,
+          error,
+        );
+        // On continue même si une notification échoue
+      }
+    }
 
     await this.logEvent(sessionId, session.userId.toString(), "STAGE_CHANGE", {
       stage: 1,
@@ -574,12 +604,13 @@ class SosService {
       "NOTIFICATION_SENT",
       {
         stage: 1,
-        target: "site_users",
+        target: "all_users",
+        notifiedCount: allVerifiedUsers.length,
       },
     );
 
     console.log(
-      `🚨🚨 [SOS] Stage 1 déclenché pour session ${sessionId} — Notification aux utilisateurs du site`,
+      `🚨🚨 [SOS] Stage 1 déclenché pour session ${sessionId} — Notification à TOUS les utilisateurs (${allVerifiedUsers.length} notifiés)`,
     );
   }
 

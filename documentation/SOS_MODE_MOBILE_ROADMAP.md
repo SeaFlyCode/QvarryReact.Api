@@ -12,7 +12,7 @@
 
 L'app mobile Qvarry sera en **React Native (TypeScript)**.
 Le backend expose deja les routes `/api/mobile/auth`, `/api/mobile/2fa`, `/api/mobile/sync`.
-Le Mode SOS necessite de nouveaux endpoints (`/api/mobile/sos/*`) et de nouvelles dependances (Twilio, Firebase).
+Le Mode SOS necessite de nouveaux endpoints (`/api/mobile/sos/*`) et de nouvelles dependances (Vonage, Firebase).
 
 Ce document decrit **uniquement le travail cote app mobile** pour le Mode SOS.
 
@@ -89,7 +89,7 @@ interface SosContact {
 - [ ] Selection de la duree : boutons rapides [30min] [1H] [2H] [4H] + saisie custom
 - [ ] Validation : min 30min, max 12H
 - [ ] Affichage des contacts qui seront prevenus (contacts par defaut)
-- [ ] Selection du site/fiche (auto-detecte si GPS proche d'un point d'acces connu, sinon selection manuelle)
+- [ ] Note optionnelle (zone precise, ex: "Galerie nord, niveau -2")
 - [ ] Confirmation par **swipe** (pas un simple tap, pour eviter les activations accidentelles)
 - [ ] A la confirmation :
   - Enregistrer la derniere position GPS
@@ -104,7 +104,6 @@ interface SosContact {
 {
   expectedDuration: number;    // en minutes
   contactIds: string[];        // IDs des contacts selectionnes
-  ficheId?: string;            // site/carriere (nullable)
   lastKnownLat: number;
   lastKnownLng: number;
   lastKnownAccuracy: number;
@@ -126,7 +125,7 @@ interface SosContact {
 - [ ] Bouton **"Je suis OK (+15min)"** → prolonge le timer (serveur + local)
 - [ ] Bouton **"Je suis sorti"** → desactive le SOS proprement
 - [ ] Confirmation avant desactivation (eviter le tap accidentel)
-- [ ] Affichage du site et de la note si renseignes
+- [ ] Affichage de la note si renseignee
 - [ ] Indicateur du stade actuel si timer expire (STADE 0, 1, 2)
 
 **Notification persistante Android/iOS** :
@@ -271,7 +270,7 @@ A chaque stade, en plus de l'alarme, l'user voit clairement ce qui se passe :
 │                                 │
 │  Timer expire depuis 15 min     │
 │                                 │
-│  → Les users Qvarry du site     │
+│  → TOUS les users Qvarry        │
 │    ont ete PREVENUS              │
 │                                 │
 │  Dans 15 min :                  │
@@ -323,7 +322,6 @@ Le SOS doit survivre a tout :
   activeSessionId: string;
   expiresAt: string;        // ISO timestamp
   activatedAt: string;
-  ficheId?: string;
   contactIds: string[];
 }
 ```
@@ -395,10 +393,10 @@ Le SOS doit survivre a tout :
 
 **Ou** : Ecran dedie accessible depuis le menu
 
-- [ ] Liste des sessions SOS actives des users Qvarry qui partagent un site avec toi
-- [ ] Pour chaque session : nom de l'user, site, temps restant, stade actuel
+- [ ] Liste des sessions SOS actives de TOUS les users Qvarry en escalade
+- [ ] Pour chaque session : nom de l'user, temps restant, stade actuel
 - [ ] Bouton "Il est avec moi, tout va bien" → confirme au serveur que l'user est safe
-- [ ] Notifications push quand un user de ton site passe en stade 1
+- [ ] Notifications push quand un user Qvarry passe en stade 1
 
 **API** :
 
@@ -457,7 +455,7 @@ Le SOS doit survivre a tout :
 
 ---
 
-### 3. Appel vocal automatise Twilio
+### 3. Appel vocal automatise Vonage
 
 > Uniquement si le besoin est identifie apres retours utilisateurs.
 

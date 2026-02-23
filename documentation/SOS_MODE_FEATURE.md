@@ -59,13 +59,13 @@ Temps 0                    Timer expire
     │                      → L'alarme s'arrete si l'user interagit
     │
     ├── STADE 1 (T+15min)  ALARME SONORE 3 MIN sur le telephone
-    │                       + Alerte aux utilisateurs Qvarry du meme site
+    │                       + Alerte a TOUS les utilisateurs Qvarry
     │                       Notification : "[User] n'a pas donne signe de vie
     │                       depuis la fin de sa session sous terre"
     │                       → Les autres users peuvent confirmer "Il est avec moi"
     │
     └── STADE 2 (T+30min)  ALARME SONORE 3 MIN sur le telephone
-                            + SMS aux contacts d'urgence via Twilio
+                            + SMS aux contacts d'urgence via Vonage
                             Message : "Alerte Qvarry - [User] est entre sous terre
                             a [heure] sur le site [nom] et n'a pas donne signe
                             de vie depuis [duree]. Derniere position connue : [GPS]"
@@ -109,7 +109,7 @@ Le Mode SOS repose sur **deux timers qui tournent en parallele** :
 │                              │                                              │
 │  → Gere l'envoi des          │  → Fonctionne SANS RESEAU                   │
 │    notifications push        │    (countdown purement local)               │
-│    et SMS Twilio             │                                              │
+│    et SMS Vonage             │                                              │
 │                              │  → Se RESYNCHRONISE avec le                 │
 │  → Prolonge par heartbeat    │    timer serveur des qu'un                   │
 │    (+15 min)                 │    heartbeat passe                           │
@@ -164,7 +164,7 @@ Le Mode SOS repose sur **deux timers qui tournent en parallele** :
 │  depuis 15 minutes              │
 │                                 │
 │  STADE 1 ACTIF                  │
-│  Les users Qvarry du site       │
+│  TOUS les users Qvarry          │
 │  ont ete prevenus               │
 │                                 │
 │  Dans 15 min → SMS envoye       │
@@ -242,7 +242,7 @@ Plusieurs mecanismes combines pour detecter si l'utilisateur est en vie / sorti 
 
 ### Informations transmises aux contacts
 
-| Info                           | Stade 1 (Qvarry users) | Stade 2 (SMS Twilio) |
+| Info                           | Stade 1 (Qvarry users) | Stade 2 (SMS Vonage) |
 | ------------------------------ | ---------------------- | -------------------- |
 | Nom de l'utilisateur           | Oui                    | Oui                  |
 | Nom du site / carriere         | Oui                    | Oui                  |
@@ -280,10 +280,6 @@ Plusieurs mecanismes combines pour detecter si l'utilisateur est en vie / sorti 
 │  [v] Marc Dupont (default)      │
 │  [v] Sophie Martin (default)    │
 │  [ ] + Ajouter un contact       │
-│                                 │
-│  Site / Carriere :              │
-│  [Auto-detecte: Carriere Nord]  │
-│  ou [Changer]                   │
 │                                 │
 │  Note optionnelle :             │
 │  [Zone B, galerie 3            ]│
@@ -344,7 +340,7 @@ Plusieurs mecanismes combines pour detecter si l'utilisateur est en vie / sorti 
 │                                                          │
 │  Notification Engine :                                   │
 │  → Push notifications (Firebase / APNs)                  │
-│  → SMS via Twilio                                        │
+│  → SMS via Vonage                                        │
 │  → Notifications in-app pour les users Qvarry            │
 │                                                          │
 └──────────────────────────────────────────────────────────┘
@@ -356,7 +352,6 @@ Plusieurs mecanismes combines pour detecter si l'utilisateur est en vie / sorti 
 SosSession {
   id                : UUID
   userId            : UUID (ref User)
-  siteId            : UUID (ref Site) - nullable
   status            : ENUM [ACTIVE, EXPIRED, ESCALATING, RESOLVED, CANCELLED]
 
   // Timing
@@ -443,8 +438,8 @@ SosEvent {
 
 ### Monetisation
 
-- Pour le moment, les couts SMS Twilio sont payes par Matheo (fondateur)
-- Cout Twilio estime : ~0.05EUR/SMS
+- Pour le moment, les couts SMS Vonage sont payes par Matheo (fondateur)
+- Cout Vonage estime : ~0.05EUR/SMS
 - A revoir quand la base utilisateurs grandit (integration dans l'abonnement ?)
 
 ### Reglementation PTI/DATI
@@ -468,8 +463,8 @@ SosEvent {
 - [ ] Heartbeat automatique basique (+15min par heartbeat)
 - [ ] Bouton "Je suis sorti"
 - [ ] Stade 0 : Alarme locale + notification push
-- [ ] Stade 1 : Alarme locale + notification aux users Qvarry du site
-- [ ] Stade 2 : Alarme locale + SMS aux contacts via Twilio
+- [ ] Stade 1 : Alarme locale + notification a TOUS les users Qvarry
+- [ ] Stade 2 : Alarme locale + SMS aux contacts via Vonage
 
 ### v2
 
@@ -484,7 +479,7 @@ SosEvent {
 
 - [ ] Stats et rapports (temps moyen sous terre, fausses alertes, etc.)
 - [ ] Widget ecran de verrouillage iOS/Android
-- [ ] Appel vocal automatise Twilio (si besoin identifie)
+- [ ] Appel vocal automatise Vonage (si besoin identifie)
 
 ---
 
@@ -492,7 +487,7 @@ SosEvent {
 
 | #   | Question                       | Decision                                                                                                                                                                        |
 | --- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 1   | Provider SMS/Appel             | **Twilio** - On part dessus                                                                                                                                                     |
+| 1   | Provider SMS/Appel             | **Vonage** - On part dessus (changement de Twilio a Vonage pendant l'implementation)                                                                                            |
 | 2   | Prolongation par heartbeat     | **+15 minutes** par heartbeat recu                                                                                                                                              |
 | 3   | Stade 4 (appel secours)        | **Non** - Pas notre responsabilite. Les contacts decides par l'user sont responsables de prevenir les secours si besoin                                                         |
 | 4   | Mode SOS obligatoire / equipes | **Non** - Pas de notion d'equipe. Chaque user cree et gere son propre Mode SOS individuellement                                                                                 |
