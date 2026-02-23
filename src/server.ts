@@ -75,6 +75,7 @@ import maintenanceRoutes from "./routes/maintenanceRoutes";
 import mobileAuthRoutes from "./routes/mobileAuthRoutes";
 import mobileSyncRoutes from "./routes/mobileSyncRoutes";
 import mobileTwoFactorRoutes from "./routes/mobileTwoFactorRoutes";
+import mobileSosRoutes from "./routes/mobileSosRoutes";
 import { maintenanceMiddleware } from "./middlewares/maintenanceMiddleware";
 import cookieParser from "cookie-parser";
 import {
@@ -82,6 +83,11 @@ import {
   startNotificationCleanupJob,
   startRefreshTokenCleanupJob,
 } from "./services/cronJobs";
+import {
+  startSosEscalationJob,
+  startSosCleanupJob,
+} from "./services/sosCronJobs";
+import { vonageService } from "./services/vonageService";
 import { webSocketService } from "./services/webSocketService";
 
 // Initialiser Express
@@ -411,6 +417,7 @@ app.use("/api/conversations", socialLimiter);
 app.use("/api/mobile/auth", mobileAuthLimiter);
 app.use("/api/mobile/2fa", twoFactorLimiter); // 2FA mobile = même protection que web
 app.use("/api/mobile/sync", highTrafficLimiter); // Sync peut être fréquent
+app.use("/api/mobile/sos", mobileAuthLimiter); // SOS mode - protection mobile
 
 // Routes admin (RISQUE MOYEN - déjà protégées par authMiddleware + adminMiddleware)
 app.use("/api/admin", adminLimiter);
@@ -448,6 +455,11 @@ app.use("/api", generalLimiter);
     startDataShareCleanupJob();
     startNotificationCleanupJob();
     startRefreshTokenCleanupJob();
+
+    // Démarrer les services SOS Mode
+    vonageService.initialize();
+    startSosEscalationJob();
+    startSosCleanupJob();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // HIGH-1 FIX: Route /metrics protégée par authMiddleware + adminMiddleware
@@ -506,6 +518,9 @@ app.use("/api", generalLimiter);
 
     // Routes de synchronisation mobile (offline-first)
     app.use("/api/mobile/sync", mobileSyncRoutes);
+
+    // Routes SOS Mode mobile (alertes d'urgence)
+    app.use("/api/mobile/sos", mobileSosRoutes);
 
     // Routes admin (doivent être AVANT le middleware de maintenance)
     // pour permettre aux admins de gérer la maintenance
