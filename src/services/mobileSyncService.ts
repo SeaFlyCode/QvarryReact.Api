@@ -66,6 +66,7 @@ export interface DecryptedFiche {
   ville: string;
   type: string;
   etat: string;
+  accessibilite?: string;
   difficulte_acces?: string;
   risque_oxygene?: string;
   acces_souterrain?: string;
@@ -79,6 +80,10 @@ export interface DecryptedFiche {
   surface?: string[];
   type_galeries?: string[];
   interets?: string;
+  center_cavite?: {
+    type: string;
+    coordinates: number[];
+  };
 }
 
 export interface DecryptedList {
@@ -210,6 +215,9 @@ class MobileSyncService {
       const ville = decryptWithKey(fiche.ville, userKey);
       const type = decryptWithKey(fiche.type, userKey);
       const etat = decryptWithKey(fiche.etat, userKey);
+      const accessibilite = fiche.accessibilite
+        ? decryptWithKey(fiche.accessibilite, userKey)
+        : undefined;
 
       const difficulte_acces = fiche.difficulte_acces
         ? decryptWithKey(fiche.difficulte_acces, userKey)
@@ -239,6 +247,7 @@ class MobileSyncService {
         ville,
         type,
         etat,
+        accessibilite,
         difficulte_acces,
         risque_oxygene,
         acces_souterrain,
@@ -254,6 +263,7 @@ class MobileSyncService {
         surface: fiche.surface,
         type_galeries: fiche.type_galeries,
         interets,
+        center_cavite: fiche.center_cavite || undefined,
       };
     } catch (error) {
       console.error(
@@ -763,6 +773,9 @@ class MobileSyncService {
           ville: encryptWithKey(data.ville, userKey),
           type: encryptWithKey(data.type, userKey),
           etat: encryptWithKey(data.etat, userKey),
+          accessibilite: data.accessibilite
+            ? encryptWithKey(data.accessibilite, userKey)
+            : "",
           difficulte_acces: data.difficulte_acces
             ? encryptWithKey(data.difficulte_acces, userKey)
             : "",
@@ -789,6 +802,7 @@ class MobileSyncService {
           equipement_conseille: data.equipement_conseille || [],
           surface: data.surface || [],
           type_galeries: data.type_galeries || [],
+          center_cavite: data.center_cavite || undefined,
         };
 
         const newFiche = await FicheModel.create(encryptedData);
@@ -813,31 +827,40 @@ class MobileSyncService {
         }
 
         const updateData: any = { date_modification: new Date() };
-        if (data.name) updateData.name = encryptWithKey(data.name, userKey);
-        if (data.ville) updateData.ville = encryptWithKey(data.ville, userKey);
-        if (data.type) updateData.type = encryptWithKey(data.type, userKey);
-        if (data.etat) updateData.etat = encryptWithKey(data.etat, userKey);
-        if (data.difficulte_acces)
+        if (data.name !== undefined)
+          updateData.name = encryptWithKey(data.name, userKey);
+        if (data.ville !== undefined)
+          updateData.ville = encryptWithKey(data.ville, userKey);
+        if (data.type !== undefined)
+          updateData.type = encryptWithKey(data.type, userKey);
+        if (data.etat !== undefined)
+          updateData.etat = encryptWithKey(data.etat, userKey);
+        if (data.accessibilite !== undefined)
+          updateData.accessibilite = encryptWithKey(
+            data.accessibilite,
+            userKey,
+          );
+        if (data.difficulte_acces !== undefined)
           updateData.difficulte_acces = encryptWithKey(
             data.difficulte_acces,
             userKey,
           );
-        if (data.risque_oxygene)
+        if (data.risque_oxygene !== undefined)
           updateData.risque_oxygene = encryptWithKey(
             data.risque_oxygene,
             userKey,
           );
-        if (data.acces_souterrain)
+        if (data.acces_souterrain !== undefined)
           updateData.acces_souterrain = encryptWithKey(
             data.acces_souterrain,
             userKey,
           );
-        if (data.praticite_souterrain)
+        if (data.praticite_souterrain !== undefined)
           updateData.praticite_souterrain = encryptWithKey(
             data.praticite_souterrain,
             userKey,
           );
-        if (data.etat_general)
+        if (data.etat_general !== undefined)
           updateData.etat_general = encryptWithKey(data.etat_general, userKey);
         if (data.commentaire !== undefined)
           updateData.commentaire = encryptWithKey(data.commentaire, userKey);
@@ -847,10 +870,13 @@ class MobileSyncService {
           updateData.points_ids = data.points_ids.map(
             (id: string) => new mongoose.Types.ObjectId(id),
           );
-        if (data.equipement_conseille)
+        if (data.equipement_conseille !== undefined)
           updateData.equipement_conseille = data.equipement_conseille;
-        if (data.surface) updateData.surface = data.surface;
-        if (data.type_galeries) updateData.type_galeries = data.type_galeries;
+        if (data.surface !== undefined) updateData.surface = data.surface;
+        if (data.type_galeries !== undefined)
+          updateData.type_galeries = data.type_galeries;
+        if (data.center_cavite !== undefined)
+          updateData.center_cavite = data.center_cavite;
 
         await FicheModel.updateOne(
           { _id: change.id, userId: new mongoose.Types.ObjectId(userId) },

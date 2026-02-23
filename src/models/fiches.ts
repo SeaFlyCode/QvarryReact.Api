@@ -6,6 +6,7 @@ export interface IFiche extends Document {
   ville: string;
   type: string;
   etat: string;
+  accessibilite?: string;
   userId: mongoose.Types.ObjectId;
   difficulte_acces: string;
   risque_oxygene: string;
@@ -20,6 +21,10 @@ export interface IFiche extends Document {
   surface?: string[];
   type_galeries?: string[];
   interets?: string;
+  center_cavite?: {
+    type: string;
+    coordinates: number[];
+  };
   deletedAt?: Date | null; // Soft-delete : date de suppression
 }
 
@@ -44,6 +49,10 @@ const ficheSchema = new Schema<IFiche>(
     etat: {
       type: String,
       required: [true, "L'état est obligatoire"],
+    },
+    accessibilite: {
+      type: String,
+      default: "",
     },
     userId: {
       type: Schema.Types.ObjectId,
@@ -105,6 +114,15 @@ const ficheSchema = new Schema<IFiche>(
       type: String,
       default: "",
     },
+    center_cavite: {
+      type: {
+        type: String,
+        enum: ["Point"],
+      },
+      coordinates: {
+        type: [Number],
+      },
+    },
     deletedAt: {
       type: Date,
       default: null,
@@ -120,6 +138,7 @@ const ficheSchema = new Schema<IFiche>(
 
 // Index pour accélérer les requêtes de soft-delete
 ficheSchema.index({ deletedAt: 1 });
+ficheSchema.index({ center_cavite: "2dsphere" });
 
 const FicheModel = mongoose.model<IFiche>("Fiche", ficheSchema);
 
