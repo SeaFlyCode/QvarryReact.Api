@@ -141,6 +141,7 @@ export const mobileAuthMiddleware = async (
       const isValidJti = await redisSessionService.validateSessionJti(
         decoded.id,
         decoded.jti,
+        "mobile",
       );
       if (!isValidJti) {
         console.warn(

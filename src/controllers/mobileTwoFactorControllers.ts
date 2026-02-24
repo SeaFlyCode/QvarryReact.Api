@@ -58,7 +58,7 @@ function generateRecoveryCodes(): string[] {
 async function hashRecoveryCodes(codes: string[]): Promise<string[]> {
   const hashedCodes: string[] = [];
   for (const code of codes) {
-    const hash = await bcrypt.hash(code.replace(/-/g, ""), 10);
+    const hash = await bcrypt.hash(code.replace(/-/g, ""), 12);
     hashedCodes.push(hash);
   }
   return hashedCodes;

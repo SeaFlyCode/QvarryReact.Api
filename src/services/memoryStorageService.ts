@@ -22,7 +22,11 @@ interface UserSession {
   contacts: Map<string, IContact>; // ID → Contact
   encryptionKey: string;
   lastAccessed: Date;
+  lastRefreshedAt: Date; // Dernier refresh depuis la DB (pour sync incrémental mobile → PC)
   isDirty: boolean; // Indique si les données ont été modifiées depuis le dernier sync
+  dirtyPointIds: Set<string>; // IDs des points modifiés depuis le dernier sync
+  dirtyFicheIds: Set<string>; // IDs des fiches modifiées depuis le dernier sync
+  dirtyListIds: Set<string>; // IDs des listes modifiées depuis le dernier sync
 }
 
 export class MemoryStorageService {
@@ -80,7 +84,11 @@ export class MemoryStorageService {
         contacts: new Map(),
         encryptionKey,
         lastAccessed: new Date(),
+        lastRefreshedAt: new Date(),
         isDirty: false,
+        dirtyPointIds: new Set(),
+        dirtyFicheIds: new Set(),
+        dirtyListIds: new Set(),
       });
 
       return true;
@@ -145,6 +153,7 @@ export class MemoryStorageService {
       this.enforceLimit(session.points, MAX_ITEMS_PER_SESSION.points);
       session.points.set(point._id.toString(), point);
       session.isDirty = true;
+      session.dirtyPointIds.add(point._id.toString());
       this.touchSession(userId);
       return true;
     } catch (error) {
@@ -169,6 +178,7 @@ export class MemoryStorageService {
       this.enforceLimit(session.fiches, MAX_ITEMS_PER_SESSION.fiches);
       session.fiches.set(fiche._id.toString(), fiche);
       session.isDirty = true;
+      session.dirtyFicheIds.add(fiche._id.toString());
       this.touchSession(userId);
       return true;
     } catch (error) {
@@ -193,6 +203,7 @@ export class MemoryStorageService {
       this.enforceLimit(session.lists, MAX_ITEMS_PER_SESSION.lists);
       session.lists.set(list._id.toString(), list);
       session.isDirty = true;
+      session.dirtyListIds.add(list._id.toString());
       this.touchSession(userId);
       return true;
     } catch (error) {
@@ -454,6 +465,7 @@ export class MemoryStorageService {
             fiche.points_ids = fiche.points_ids.filter(
               (id) => id.toString() !== pointId,
             );
+            session.dirtyFicheIds.add(ficheId);
           }
         } catch (refError) {
           console.error(
@@ -471,6 +483,7 @@ export class MemoryStorageService {
             list.points.some((id) => id.toString() === pointId)
           ) {
             list.points = list.points.filter((id) => id.toString() !== pointId);
+            session.dirtyListIds.add(listId);
           }
         }
       } catch (listError) {
@@ -521,6 +534,7 @@ export class MemoryStorageService {
               (point as any).ficheId.toString() === ficheId
             ) {
               (point as any).ficheId = undefined;
+              session.dirtyPointIds.add(pointId);
             }
           } catch (pointRefError) {
             console.error(
@@ -587,7 +601,40 @@ export class MemoryStorageService {
     this.logAccess("markAsSynced", userId);
     const session = this.getSession(userId);
     session.isDirty = false;
+    session.dirtyPointIds.clear();
+    session.dirtyFicheIds.clear();
+    session.dirtyListIds.clear();
     this.touchSession(userId);
+  }
+
+  // Récupérer les IDs des points modifiés depuis le dernier sync
+  getDirtyPointIds(userId: string): Set<string> {
+    const session = this.getSession(userId);
+    return new Set(session.dirtyPointIds);
+  }
+
+  // Récupérer les IDs des fiches modifiées depuis le dernier sync
+  getDirtyFicheIds(userId: string): Set<string> {
+    const session = this.getSession(userId);
+    return new Set(session.dirtyFicheIds);
+  }
+
+  // Récupérer les IDs des listes modifiées depuis le dernier sync
+  getDirtyListIds(userId: string): Set<string> {
+    const session = this.getSession(userId);
+    return new Set(session.dirtyListIds);
+  }
+
+  // Récupérer la date du dernier refresh depuis la DB
+  getLastRefreshedAt(userId: string): Date {
+    const session = this.getSession(userId);
+    return session.lastRefreshedAt;
+  }
+
+  // Mettre à jour la date du dernier refresh
+  setLastRefreshedAt(userId: string, date: Date): void {
+    const session = this.getSession(userId);
+    session.lastRefreshedAt = date;
   }
 
   // Terminer une session
@@ -738,6 +785,8 @@ export class MemoryStorageService {
         }
 
         session.isDirty = true;
+        session.dirtyFicheIds.add(ficheId);
+        session.dirtyPointIds.add(pointId);
         this.touchSession(userId);
         return true;
       }
@@ -797,6 +846,10 @@ export class MemoryStorageService {
       // 3. Marquer comme modifié seulement si quelque chose a changé
       if (fiche.points_ids.length !== initialLength) {
         session.isDirty = true;
+        session.dirtyFicheIds.add(ficheId);
+        if (point) {
+          session.dirtyPointIds.add(pointId);
+        }
         this.touchSession(userId);
         return true;
       }
@@ -832,6 +885,7 @@ export class MemoryStorageService {
       if (!list.points.some((id) => id.toString() === pointId)) {
         list.points.push(pointId as any);
         session.isDirty = true;
+        session.dirtyListIds.add(listId);
         this.touchSession(userId);
         return true;
       }
@@ -869,6 +923,7 @@ export class MemoryStorageService {
       // Vérifier si le point a été retiré
       if (list.points.length !== initialLength) {
         session.isDirty = true;
+        session.dirtyListIds.add(listId);
         this.touchSession(userId);
         return true;
       }
@@ -959,6 +1014,7 @@ export class MemoryStorageService {
       // Mettre à jour la liste avec le nouvel ordre
       list.points = validPointIds.map((id) => id as any);
       session.isDirty = true;
+      session.dirtyListIds.add(listId);
       this.touchSession(userId);
       return true;
     } catch (error) {
@@ -1026,6 +1082,7 @@ export class MemoryStorageService {
       list.updatedAt = new Date();
 
       session.isDirty = true;
+      session.dirtyListIds.add(listId);
       this.touchSession(userId);
       return true;
     } catch (error) {

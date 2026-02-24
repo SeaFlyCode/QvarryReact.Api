@@ -14,6 +14,7 @@ export interface IPoint extends Document {
   updatedAt: Date;
   accessType?: string; // Ajout du champ pour le type d'accès
   deletedAt?: Date | null; // Soft-delete : date de suppression
+  version?: number;
 }
 
 const pointSchema = new Schema(
@@ -59,6 +60,10 @@ const pointSchema = new Schema(
     deletedAt: {
       type: Date,
       default: null,
+    },
+    version: {
+      type: Number,
+      default: 1,
     },
   },
   { timestamps: true },

@@ -7,6 +7,9 @@
 import { Request, Response } from "express";
 import { mobileSyncService, LocalChange } from "../services/mobileSyncService";
 import { getErrorMessage } from "../utils/errorUtils";
+import { webSocketService } from "../services/webSocketService";
+import { refreshFromDB } from "./auth";
+import { memoryStorage } from "../services/memoryStorageService";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/mobile/sync - Synchronisation incrémentale
@@ -173,6 +176,54 @@ export async function handleMobileSyncPush(req: Request, res: Response) {
 
     // Appliquer les changements
     const result = await mobileSyncService.applyLocalChanges(userId, changes);
+
+    // Rafraîchir le memoryStorage du PC immédiatement pour que les prochaines
+    // requêtes GET (fiches, points, lists) retournent les données à jour
+    // même sans que le front appelle /auth/sync/refresh
+    if (result.synced.length > 0) {
+      try {
+        // Sauvegarder le curseur de refresh AVANT de rafraîchir le memoryStorage
+        // pour que le PC puisse encore détecter les changements via /auth/sync/refresh
+        const previousRefreshedAt = memoryStorage.getLastRefreshedAt(userId);
+
+        await refreshFromDB(userId);
+
+        // Restaurer le curseur : le memoryStorage est à jour, mais le PC
+        // doit pouvoir détecter ces mêmes changements lors de son prochain refresh
+        memoryStorage.setLastRefreshedAt(userId, previousRefreshedAt);
+      } catch (refreshError) {
+        // Non bloquant : le PC pourra toujours refresh manuellement
+        console.warn(
+          "⚠️ [MOBILE-SYNC] Erreur refreshFromDB après sync (non bloquant):",
+          getErrorMessage(refreshError),
+        );
+      }
+    }
+
+    // Notifier le PC via WebSocket que le mobile a poussé des changements
+    if (result.synced.length > 0) {
+      try {
+        const syncedPoints = result.synced.filter(
+          (c) => c.type === "point",
+        ).length;
+        const syncedFiches = result.synced.filter(
+          (c) => c.type === "fiche",
+        ).length;
+        const syncedLists = result.synced.filter(
+          (c) => c.type === "list",
+        ).length;
+        webSocketService.notifySyncUpdate(userId, {
+          points: syncedPoints,
+          fiches: syncedFiches,
+          lists: syncedLists,
+        });
+      } catch (wsError) {
+        console.warn(
+          "⚠️ [MOBILE-SYNC] Erreur notification WebSocket (non bloquant):",
+          getErrorMessage(wsError),
+        );
+      }
+    }
 
     // Créer le mapping des IDs locaux vers serveur
     const idMapping: Record<string, string> = {};

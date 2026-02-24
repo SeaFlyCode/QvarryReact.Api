@@ -130,6 +130,7 @@ export const authMiddleware = async (
           ? await redisSessionService.validateSessionJti(
               decoded.id,
               decoded.jti,
+              "mobile",
             )
           : false;
 
@@ -218,6 +219,7 @@ export const authMiddleware = async (
       const isValidJti = await redisSessionService.validateSessionJti(
         decoded.id,
         decoded.jti,
+        "web",
       );
       if (!isValidJti) {
         console.warn(
@@ -332,6 +334,7 @@ export const authMiddleware = async (
       isAdmin: verifiedIsAdmin, // AUTH-008: Valeur vérifiée depuis la DB
       tokenIssuedAt: decoded.iat,
       tokenId: decoded.jti,
+      clientType: decoded.platform === "mobile" ? "mobile" : "web",
     };
 
     // 11. CONTEXTE MOBILE (si applicable)

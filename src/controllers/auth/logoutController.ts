@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import { memoryStorage } from "../../services/memoryStorageService";
 import { refreshTokenService } from "../../services/refreshTokenService";
+import { redisSessionService } from "../../services/redisSessionService";
 import { syncService } from "../../services/syncService";
 import { clearCookieOptions } from "../../config/cookieConfig";
 import { blacklistToken } from "./authHelpers";
@@ -51,10 +52,12 @@ export async function handleLogoutUser(req: Request, res: Response) {
         id: string;
         jti?: string;
         exp?: number;
+        platform?: "web" | "mobile";
       };
 
       userId = decoded.id;
       tokenId = decoded.jti;
+      const clientType = decoded.platform || "web"; // Extraire le clientType depuis le token
       const expiresAt = decoded.exp
         ? new Date(decoded.exp * 1000)
         : new Date(Date.now() + 24 * 60 * 60 * 1000);
@@ -73,6 +76,18 @@ export async function handleLogoutUser(req: Request, res: Response) {
         await refreshTokenService.revokeToken(tokenId, "logout");
         console.log(`🚫 [AUTH] Refresh token révoqué (tokenId: ${tokenId})`);
       }
+
+      // Nettoyer la session Redis
+      await redisSessionService.deleteSession(userId, tokenId);
+      console.log(
+        `🗑️ [AUTH] Session Redis nettoyée pour userId: ${userId}${tokenId ? `:${tokenId}` : ""}`,
+      );
+
+      // Supprimer le JTI du bon client
+      await redisSessionService.deleteSessionJti(userId, clientType);
+      console.log(
+        `🗑️ [AUTH] JTI supprimé pour userId: ${userId} (clientType: ${clientType})`,
+      );
 
       // SEC-040: Invalider le token de reset de mot de passe au logout
       // Empêche un attaquant de réutiliser un code de reset après déconnexion

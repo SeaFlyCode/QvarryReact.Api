@@ -11,8 +11,20 @@ export interface IKeys extends Document {
 // Schéma Mongoose
 const keysSchema: Schema<IKeys> = new Schema({
   userId: { type: Schema.Types.ObjectId, ref: "User", required: false },
-  key: { type: String, required: true },
-  type: { type: String, required: false }, // Ajouté pour catégoriser la clé
+  key: { type: String, required: true, maxlength: 10000 },
+  type: {
+    type: String,
+    required: false,
+    enum: [
+      "master",
+      "communication",
+      "rsa-public",
+      "rsa-private",
+      "user",
+      "db",
+      "system",
+    ],
+  },
   date: { type: Date, default: Date.now },
 });
 

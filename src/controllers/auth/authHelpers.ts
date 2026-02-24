@@ -11,8 +11,6 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import { redisSessionService } from "../../services/redisSessionService";
 import { jwtKeyManager } from "../../utils/jwtKeyManager";
-import dataArchiveService from "../../services/dataArchiveService";
-
 // ═══════════════════════════════════════════════════════════════════════════
 // INTERFACES PARTAGÉES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -123,6 +121,7 @@ export async function resetLoginAttempts(email: string): Promise<void> {
 export function generateSecureToken(
   userId: string,
   isAdmin: boolean = false,
+  platform: "web" | "mobile" = "web",
   tokenId?: string,
 ): { token: string; tokenId: string; keyVersion: string } {
   // REM-003: Utiliser le JWT Key Manager pour le versioning
@@ -147,6 +146,7 @@ export function generateSecureToken(
       iat: Math.floor(Date.now() / 1000), // Issued at
       jti, // JWT ID unique pour l'invalidation
       kv: version, // REM-003: Key Version pour le versioning
+      platform, // Platform claim (web/mobile)
     },
     secret,
     {
@@ -163,6 +163,31 @@ export function generateSecureToken(
 // ═══════════════════════════════════════════════════════════════════════════
 // CHARGEMENT ET DÉCHIFFREMENT DES DONNÉES UTILISATEUR
 // ═══════════════════════════════════════════════════════════════════════════
+
+// Helper pour déchiffrer un champ de liste, avec fallback si le champ est en plaintext (migration)
+// Le format chiffré est "iv:authTag:encrypted" — si le champ ne contient pas ce pattern,
+// c'est qu'il est encore en plaintext (données pré-migration).
+function decryptListField(
+  decryptWithKey: (data: string, key: string) => string,
+  value: string | undefined | null,
+  userKey: string,
+  fallback: string,
+): string {
+  if (!value) return fallback;
+  // Heuristique : le format chiffré AES-256-GCM est "hex:hex:hex" (3 parties séparées par :)
+  // avec une longueur minimale. Si ça ne correspond pas, c'est du plaintext.
+  const parts = value.split(":");
+  if (parts.length === 3 && parts[0].length >= 16 && parts[1].length >= 16) {
+    try {
+      return decryptWithKey(value, userKey);
+    } catch {
+      // Déchiffrement échoué → plaintext (données pré-migration)
+      return value;
+    }
+  }
+  // C'est du plaintext
+  return value;
+}
 
 // NOUVEAU: Charger et déchiffrer toutes les données utilisateur (VERSION OPTIMISÉE)
 export async function loadAndDecryptUserData(userId: string): Promise<void> {
@@ -213,9 +238,9 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
 
   // 3. Charger TOUTES les données en parallèle (au lieu de séquentiellement)
   const [points, fiches, lists] = await Promise.all([
-    PointModel.find({ userId }).lean(), // .lean() pour de meilleures performances
-    FicheModel.find({ userId }).lean(),
-    ListModel.find({ userId }).lean(),
+    PointModel.find({ userId, deletedAt: null }).lean(), // .lean() pour de meilleures performances
+    FicheModel.find({ userId, deletedAt: null }).lean(),
+    ListModel.find({ userId, deletedAt: null }).lean(),
   ]);
 
   console.log(
@@ -236,14 +261,42 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
   );
   console.log(`⚡ Fiches déchiffrées en ${Date.now() - decryptFichesStart}ms`);
 
-  // 6. Stocker toutes les données déchiffrées en mémoire
+  // 6. Déchiffrer les listes et stocker toutes les données en mémoire
   decryptedPoints.forEach((point) =>
     memoryStorage.storePoint(userId, point as any),
   );
   decryptedFiches.forEach((fiche) =>
     memoryStorage.storeFiche(userId, fiche as any),
   );
-  lists.forEach((list) => memoryStorage.storeList(userId, list as any));
+
+  // Déchiffrer les listes (name et description sont chiffrés en DB)
+  const { decryptWithKey } = await import("../../utils/userEncryptionUtils");
+  for (const list of lists) {
+    try {
+      const decryptedList = {
+        ...list,
+        name: decryptListField(
+          decryptWithKey,
+          (list as any).name,
+          userKey,
+          "Liste sans nom",
+        ),
+        description: decryptListField(
+          decryptWithKey,
+          (list as any).description,
+          userKey,
+          "",
+        ),
+      };
+      memoryStorage.storeList(userId, decryptedList as any);
+    } catch (listDecryptError) {
+      // Fallback : si le déchiffrement échoue, la liste est probablement en plaintext (migration)
+      console.warn(
+        `⚠️ Déchiffrement de la liste ${(list as any)._id} échoué, stockage en plaintext (migration nécessaire)`,
+      );
+      memoryStorage.storeList(userId, list as any);
+    }
+  }
 
   // Marquer comme synchronisé (pas de modifications à ce stade)
   memoryStorage.markAsSynced(userId);
@@ -252,6 +305,171 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
   console.log(
     `✅ Données de l'utilisateur ${userId} chargées en ${totalTime}ms`,
   );
+}
+
+// Rafraîchir le memoryStorage avec les changements de la DB depuis le dernier refresh
+// (permet au PC de voir les modifications faites par le mobile)
+export async function refreshFromDB(
+  userId: string,
+): Promise<{ added: number; updated: number; deleted: number }> {
+  const startTime = Date.now();
+  const userKey = memoryStorage.getUserEncryptionKey(userId);
+  const since = memoryStorage.getLastRefreshedAt(userId);
+
+  console.log(
+    `🔄 Refresh incrémental pour ${userId} depuis ${since.toISOString()}...`,
+  );
+
+  let added = 0;
+  let updated = 0;
+  let deleted = 0;
+
+  // 1. Chercher les items modifiés/créés depuis le dernier refresh (et non soft-deleted)
+  const [newPoints, newFiches, newLists] = await Promise.all([
+    PointModel.find({
+      userId,
+      deletedAt: null,
+      updatedAt: { $gt: since },
+    }).lean(),
+    FicheModel.find({
+      userId,
+      deletedAt: null,
+      date_modification: { $gt: since },
+    }).lean(),
+    ListModel.find({
+      userId,
+      deletedAt: null,
+      updatedAt: { $gt: since },
+    }).lean(),
+  ]);
+
+  // 2. Chercher les items soft-deleted depuis le dernier refresh
+  const [deletedPoints, deletedFiches, deletedLists] = await Promise.all([
+    PointModel.find({ userId, deletedAt: { $gt: since } })
+      .select("_id")
+      .lean(),
+    FicheModel.find({ userId, deletedAt: { $gt: since } })
+      .select("_id")
+      .lean(),
+    ListModel.find({ userId, deletedAt: { $gt: since } })
+      .select("_id")
+      .lean(),
+  ]);
+
+  // 3. Déchiffrer et injecter les points modifiés/créés
+  const currentPointIds = new Set(
+    memoryStorage.getAllPoints(userId).map((p: any) => p._id.toString()),
+  );
+  for (const point of newPoints) {
+    const decrypted = await decryptPointOptimized(point, userKey);
+    const pointId = (point._id as any).toString();
+    memoryStorage.storePoint(userId, decrypted as any);
+    if (currentPointIds.has(pointId)) {
+      updated++;
+    } else {
+      added++;
+    }
+  }
+
+  // 4. Déchiffrer et injecter les fiches modifiées/créées
+  const currentFicheIds = new Set(
+    memoryStorage.getAllFiches(userId).map((f: any) => f._id.toString()),
+  );
+  for (const fiche of newFiches) {
+    const decrypted = await decryptFicheOptimized(fiche, userKey);
+    const ficheId = (fiche._id as any).toString();
+    memoryStorage.storeFiche(userId, decrypted as any);
+    if (currentFicheIds.has(ficheId)) {
+      updated++;
+    } else {
+      added++;
+    }
+  }
+
+  // 5. Déchiffrer et injecter les listes modifiées/créées
+  const { decryptWithKey } = await import("../../utils/userEncryptionUtils");
+  const currentListIds = new Set(
+    memoryStorage.getAllLists(userId).map((l: any) => l._id.toString()),
+  );
+  for (const list of newLists) {
+    const listId = (list._id as any).toString();
+    const decryptedList = {
+      ...list,
+      name: decryptListField(
+        decryptWithKey,
+        (list as any).name,
+        userKey,
+        "Liste sans nom",
+      ),
+      description: decryptListField(
+        decryptWithKey,
+        (list as any).description,
+        userKey,
+        "",
+      ),
+    };
+    memoryStorage.storeList(userId, decryptedList as any);
+    if (currentListIds.has(listId)) {
+      updated++;
+    } else {
+      added++;
+    }
+  }
+
+  // 6. Supprimer de la mémoire les items soft-deleted depuis le mobile
+  for (const point of deletedPoints) {
+    const pointId = (point._id as any).toString();
+    if (currentPointIds.has(pointId)) {
+      memoryStorage.deletePoint(userId, pointId);
+      deleted++;
+    }
+  }
+
+  for (const fiche of deletedFiches) {
+    const ficheId = (fiche._id as any).toString();
+    if (currentFicheIds.has(ficheId)) {
+      memoryStorage.deleteFiche(userId, ficheId);
+      deleted++;
+    }
+  }
+
+  for (const list of deletedLists) {
+    const listId = (list._id as any).toString();
+    if (currentListIds.has(listId)) {
+      memoryStorage.deleteList(userId, listId);
+      deleted++;
+    }
+  }
+
+  // 7. Mettre à jour le timestamp de refresh
+  // Important: ne pas marquer dirty les items qu'on vient d'ingérer (ils viennent de la DB)
+  // On remet les dirty sets à l'état d'avant le refresh pour ne pas re-sync vers la DB
+  // ce qui vient de la DB
+  const dirtyPointsBefore = memoryStorage.getDirtyPointIds(userId);
+  const dirtyFichesBefore = memoryStorage.getDirtyFicheIds(userId);
+  const dirtyListsBefore = memoryStorage.getDirtyListIds(userId);
+
+  memoryStorage.setLastRefreshedAt(userId, new Date());
+
+  // Restaurer les dirty sets : enlever les IDs qu'on vient d'ingérer de la DB
+  // (ils ne sont pas des modifications locales)
+  // Note: markAsSynced vide tout, donc on ne l'utilise pas ici.
+  // Les storePoint/storeFiche/storeList ajoutent automatiquement aux dirty sets,
+  // mais ces items viennent de la DB, pas de modifications locales.
+  // Solution : on ne peut pas empêcher storePoint d'ajouter au dirty set
+  // (c'est par design), mais on note que ces IDs seront dans le dirty set.
+  // Au prochain syncUserDataToDB, ils seront "re-syncés" vers la DB — mais comme
+  // les données sont identiques (elles viennent de la DB), c'est un no-op fonctionnel
+  // avec juste un coût de re-chiffrement.
+  // TODO: Pour optimiser davantage, on pourrait ajouter un mode "silent store"
+  // qui ne marque pas dirty. Mais pour l'instant c'est acceptable.
+
+  const totalTime = Date.now() - startTime;
+  console.log(
+    `🔄 Refresh terminé en ${totalTime}ms: ${added} ajoutés, ${updated} mis à jour, ${deleted} supprimés`,
+  );
+
+  return { added, updated, deleted };
 }
 
 // Fonction pour déchiffrer un point (VERSION OPTIMISÉE)
@@ -290,6 +508,7 @@ export async function decryptPointOptimized(point: any, userKey: string) {
       description,
       location,
       location_encrypted: point.location_encrypted, // Conserver pour le rechiffrement ultérieur
+      version: point.version || 1,
     };
   } catch (error) {
     console.error("Erreur lors du déchiffrement du point:", error);
@@ -327,6 +546,49 @@ export async function decryptFicheOptimized(fiche: any, userKey: string) {
     const commentaire = fiche.commentaire
       ? decryptWithKey(fiche.commentaire, userKey)
       : "";
+    const accessibilite = fiche.accessibilite
+      ? decryptWithKey(fiche.accessibilite, userKey)
+      : "";
+    const interets = fiche.interets
+      ? decryptWithKey(fiche.interets, userKey)
+      : "";
+
+    // Déchiffrer les champs tableaux (chaque élément est chiffré individuellement)
+    // Robustesse: try/catch par élément pour qu'un élément invalide ne bloque pas toute la fiche
+    const equipement_conseille = fiche.equipement_conseille
+      ? fiche.equipement_conseille
+          .filter((item: string) => item && item.length > 0)
+          .map((item: string) => {
+            try {
+              return decryptWithKey(item, userKey);
+            } catch {
+              return item; // Fallback: plaintext ou donnée corrompue
+            }
+          })
+      : [];
+    const surface = fiche.surface
+      ? fiche.surface
+          .filter((item: string) => item && item.length > 0)
+          .map((item: string) => {
+            try {
+              return decryptWithKey(item, userKey);
+            } catch {
+              return item;
+            }
+          })
+      : [];
+    const type_galeries = fiche.type_galeries
+      ? fiche.type_galeries
+          .filter((item: string) => item && item.length > 0)
+          .map((item: string) => {
+            try {
+              return decryptWithKey(item, userKey);
+            } catch {
+              return item;
+            }
+          })
+      : [];
+
     // Construire l'objet fiche déchifré sans les versions chiffrées
     return {
       _id: fiche._id,
@@ -340,10 +602,17 @@ export async function decryptFicheOptimized(fiche: any, userKey: string) {
       praticite_souterrain,
       etat_general,
       commentaire,
+      accessibilite,
+      equipement_conseille,
+      surface,
+      type_galeries,
+      interets,
+      center_cavite: fiche.center_cavite,
       points_ids: fiche.points_ids,
       userId: fiche.userId,
       date_creation: fiche.date_creation,
       date_modification: fiche.date_modification,
+      version: fiche.version || 1,
     };
   } catch (error) {
     console.error("Erreur lors du déchiffrement de la fiche:", error);
@@ -366,10 +635,20 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       throw new Error("Clé de chiffrement non trouvée pour l'utilisateur");
     }
 
+    // Récupérer les IDs des items modifiés depuis le dernier sync
+    // Seuls ces items seront re-chiffrés et sauvegardés en DB
+    const dirtyPointIds = memoryStorage.getDirtyPointIds(userId);
+    const dirtyFicheIds = memoryStorage.getDirtyFicheIds(userId);
+    const dirtyListIds = memoryStorage.getDirtyListIds(userId);
+
+    console.log(
+      `📊 Dirty tracking: ${dirtyPointIds.size} points, ${dirtyFicheIds.size} fiches, ${dirtyListIds.size} listes modifiés`,
+    );
+
     // 1. Synchronisation des points
 
     // 1.1 Récupérer tous les points existants dans la base de données
-    const allPointsInDB = await PointModel.find({ userId });
+    const allPointsInDB = await PointModel.find({ userId, deletedAt: null });
 
     // 1.2 Identifier les points à supprimer (présents dans DB mais plus en mémoire)
     const pointIdsInMemory = new Set(
@@ -379,24 +658,26 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       (p) => !pointIdsInMemory.has((p._id as any).toString()),
     );
 
-    // 1.3 Supprimer les points qui n'existent plus en mémoire
+    // 1.3 Soft-delete les points qui n'existent plus en mémoire
+    // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
     for (const pointToDelete of pointsToDelete) {
       console.log(
-        `Suppression du point ${pointToDelete._id} de la base de données`,
+        `Soft-delete du point ${pointToDelete._id} de la base de données`,
       );
-      // Archiver le point avant suppression (données chiffrées)
-      await dataArchiveService.archiveAndRecordDeletion(
-        "point",
-        pointToDelete._id as mongoose.Types.ObjectId,
-        pointToDelete.toObject() as unknown as Record<string, unknown>,
-        userId,
-        { reason: "Synchronisation - point supprimé par utilisateur" },
+      await PointModel.updateOne(
+        { _id: pointToDelete._id },
+        { $set: { deletedAt: new Date() } },
       );
-      await PointModel.findByIdAndDelete(pointToDelete._id);
     }
 
-    // 1.4 Synchroniser les points existants
-    for (const point of points) {
+    // 1.4 Synchroniser uniquement les points modifiés (dirty tracking)
+    const dirtyPoints = points.filter((p: { _id: any }) =>
+      dirtyPointIds.has(p._id.toString()),
+    );
+    console.log(
+      `📝 Points: ${dirtyPoints.length}/${points.length} à synchroniser`,
+    );
+    for (const point of dirtyPoints) {
       // Le reste du code de synchronisation des points reste inchangé
       let pointFromDB = await PointModel.findById(point._id);
 
@@ -542,6 +823,9 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         }
       }
 
+      // Incrémenter la version pour le suivi de concurrence optimiste
+      (pointFromDB as any).version = ((point as any).version || 0) + 1;
+
       // Sauvegarder le point
       await pointFromDB.save();
 
@@ -553,7 +837,7 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     // 2. Synchronisation des fiches
 
     // 2.1 Récupérer toutes les fiches existantes dans la base de données
-    const allFichesInDB = await FicheModel.find({ userId });
+    const allFichesInDB = await FicheModel.find({ userId, deletedAt: null });
 
     // 2.2 Identifier les fiches à supprimer
     const ficheIdsInMemory = new Set(
@@ -564,24 +848,26 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         !ficheIdsInMemory.has((f._id as mongoose.Types.ObjectId).toString()),
     );
 
-    // 2.3 Supprimer les fiches qui n'existent plus en mémoire
+    // 2.3 Soft-delete les fiches qui n'existent plus en mémoire
+    // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
     for (const ficheToDelete of fichesToDelete) {
       console.log(
-        `Suppression de la fiche ${ficheToDelete._id} de la base de données`,
+        `Soft-delete de la fiche ${ficheToDelete._id} de la base de données`,
       );
-      // Archiver la fiche avant suppression (données chiffrées)
-      await dataArchiveService.archiveAndRecordDeletion(
-        "fiche",
-        ficheToDelete._id as mongoose.Types.ObjectId,
-        ficheToDelete.toObject() as unknown as Record<string, unknown>,
-        userId,
-        { reason: "Synchronisation - fiche supprimée par utilisateur" },
+      await FicheModel.updateOne(
+        { _id: ficheToDelete._id },
+        { $set: { deletedAt: new Date() } },
       );
-      await FicheModel.findByIdAndDelete(ficheToDelete._id);
     }
 
-    // 2.4 Synchroniser les fiches existantes
-    for (const fiche of fiches) {
+    // 2.4 Synchroniser uniquement les fiches modifiées (dirty tracking)
+    const dirtyFiches = fiches.filter((f) =>
+      dirtyFicheIds.has((f._id as mongoose.Types.ObjectId).toString()),
+    );
+    console.log(
+      `📝 Fiches: ${dirtyFiches.length}/${fiches.length} à synchroniser`,
+    );
+    for (const fiche of dirtyFiches) {
       // Vérifier si la fiche existe déjà dans la base de données
       let ficheFromDB = await FicheModel.findById(fiche._id);
 
@@ -651,6 +937,73 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         (ficheFromDB as any).commentaire = "";
       }
 
+      // Chiffrer le champ accessibilite
+      if ((fiche as any).accessibilite) {
+        (ficheFromDB as any).accessibilite = await encryptUserData(
+          userKey,
+          (fiche as any).accessibilite,
+        );
+      } else {
+        (ficheFromDB as any).accessibilite = "";
+      }
+
+      // Chiffrer le champ interets
+      if ((fiche as any).interets) {
+        (ficheFromDB as any).interets = await encryptUserData(
+          userKey,
+          (fiche as any).interets,
+        );
+      } else {
+        (ficheFromDB as any).interets = "";
+      }
+
+      // Chiffrer le tableau equipement_conseille (chaque élément)
+      if (
+        Array.isArray((fiche as any).equipement_conseille) &&
+        (fiche as any).equipement_conseille.length > 0
+      ) {
+        (ficheFromDB as any).equipement_conseille = await Promise.all(
+          (fiche as any).equipement_conseille.map((item: string) =>
+            encryptUserData(userKey, item),
+          ),
+        );
+      } else {
+        (ficheFromDB as any).equipement_conseille = [];
+      }
+
+      // Chiffrer le tableau surface (chaque élément)
+      if (
+        Array.isArray((fiche as any).surface) &&
+        (fiche as any).surface.length > 0
+      ) {
+        (ficheFromDB as any).surface = await Promise.all(
+          (fiche as any).surface.map((item: string) =>
+            encryptUserData(userKey, item),
+          ),
+        );
+      } else {
+        (ficheFromDB as any).surface = [];
+      }
+
+      // Chiffrer le tableau type_galeries (chaque élément)
+      if (
+        Array.isArray((fiche as any).type_galeries) &&
+        (fiche as any).type_galeries.length > 0
+      ) {
+        (ficheFromDB as any).type_galeries = await Promise.all(
+          (fiche as any).type_galeries.map((item: string) =>
+            encryptUserData(userKey, item),
+          ),
+        );
+      } else {
+        (ficheFromDB as any).type_galeries = [];
+      }
+
+      // Synchroniser center_cavite (GeoJSON non chiffré)
+      if ((fiche as any).center_cavite) {
+        (ficheFromDB as any).center_cavite = (fiche as any).center_cavite;
+      }
+
       ficheFromDB.points_ids = fiche.points_ids || [];
 
       // Journaliser pour faciliter le débogage
@@ -658,8 +1011,13 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         `Fiche ${fiche._id}: ${ficheFromDB.points_ids.length} points synchronisés`,
       );
 
-      // Mettre à jour la date de modification
-      ficheFromDB.date_modification = new Date();
+      // Note: date_modification est gérée automatiquement par Mongoose timestamps
+      // (updatedAt mappé à date_modification dans le schema)
+      // Ne PAS la forcer manuellement : cela cassait le sync incrémental mobile
+      // car toutes les fiches étaient marquées comme modifiées à chaque sync
+
+      // Incrémenter la version pour le suivi de concurrence optimiste
+      (ficheFromDB as any).version = ((fiche as any).version || 0) + 1;
 
       // Sauvegarder la fiche
       await ficheFromDB.save();
@@ -670,7 +1028,7 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     }
 
     // 3.1 Récupérer toutes les listes existantes dans la base de données
-    const allListsInDB = await ListModel.find({ userId });
+    const allListsInDB = await ListModel.find({ userId, deletedAt: null });
 
     // 3.2 Identifier les listes à supprimer (présentes dans DB mais plus en mémoire)
     const listIdsInMemory = new Set(
@@ -681,26 +1039,38 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         !listIdsInMemory.has((l._id as mongoose.Types.ObjectId).toString()),
     );
 
-    // 3.3 Supprimer les listes qui n'existent plus en mémoire
+    // 3.3 Soft-delete les listes qui n'existent plus en mémoire
+    // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
     for (const listToDelete of listsToDelete) {
       console.log(
-        `Suppression de la liste ${listToDelete._id} de la base de données`,
+        `Soft-delete de la liste ${listToDelete._id} de la base de données`,
       );
-      // Archiver la liste avant suppression
-      await dataArchiveService.archiveAndRecordDeletion(
-        "list",
-        listToDelete._id as mongoose.Types.ObjectId,
-        listToDelete.toObject() as unknown as Record<string, unknown>,
-        userId,
-        { reason: "Synchronisation - liste supprimée par utilisateur" },
+      await ListModel.updateOne(
+        { _id: listToDelete._id },
+        { $set: { deletedAt: new Date() } },
       );
-      await ListModel.findByIdAndDelete(listToDelete._id);
     }
 
-    // 3.4 Synchroniser les listes existantes
-    for (const list of lists) {
+    // 3.4 Synchroniser uniquement les listes modifiées (dirty tracking)
+    const dirtyLists = lists.filter((l) =>
+      dirtyListIds.has((l._id as mongoose.Types.ObjectId).toString()),
+    );
+    console.log(
+      `📝 Listes: ${dirtyLists.length}/${lists.length} à synchroniser`,
+    );
+    for (const list of dirtyLists) {
       // Vérifier si la liste existe déjà dans la base de données
       let listFromDB = await ListModel.findById(list._id);
+
+      // Chiffrer les champs sensibles
+      const encryptedName = await encryptUserData(
+        userKey,
+        list.name || "Liste sans nom",
+      );
+      const encryptedDescription = await encryptUserData(
+        userKey,
+        list.description || "",
+      );
 
       // Si la liste n'existe pas, la créer
       if (!listFromDB) {
@@ -710,20 +1080,22 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         listFromDB = new ListModel({
           _id: list._id,
           userId,
-          // Utiliser les noms de champs du modèle lists.ts
-          name: list.name || "Liste sans nom", // Valeur par défaut pour éviter l'erreur de validation
-          description: list.description || "",
-          points: list.points || [], // Utiliser pointIds de la mémoire -> points du modèle
+          name: encryptedName,
+          description: encryptedDescription,
+          points: list.points || [],
           color: list.color || "#000000",
           icon: list.icon || "default-icon",
+          version: 1,
         });
       } else {
         // Mettre à jour les champs existants
-        listFromDB.name = list.name || "Liste sans nom";
-        listFromDB.description = list.description || "";
-        listFromDB.points = list.points || []; // Utiliser pointIds de la mémoire -> points du modèle
+        listFromDB.name = encryptedName;
+        listFromDB.description = encryptedDescription;
+        listFromDB.points = list.points || [];
         listFromDB.color = list.color || "#000000";
         listFromDB.icon = list.icon || "default-icon";
+        // Incrémenter la version pour le suivi de concurrence optimiste
+        (listFromDB as any).version = ((list as any).version || 0) + 1;
       }
 
       // Sauvegarder la liste

@@ -113,6 +113,7 @@ if (REDIS_ENABLED) {
 
 interface SessionMetadata {
   userId: string;
+  tokenId?: string; // Added for per-device keying
   ipAddress?: string;
   userAgent?: string;
   createdAt: Date;
@@ -259,6 +260,7 @@ export class RedisSessionService {
   ): Promise<void> {
     const sessionData: SessionMetadata = {
       userId,
+      tokenId: metadata.tokenId,
       ipAddress: metadata.ipAddress,
       userAgent: metadata.userAgent,
       createdAt: new Date(),
@@ -267,29 +269,44 @@ export class RedisSessionService {
 
     if (redis) {
       try {
-        const key = `${this.SESSION_PREFIX}${userId}`;
+        const key = metadata.tokenId
+          ? `${this.SESSION_PREFIX}${userId}:${metadata.tokenId}`
+          : `${this.SESSION_PREFIX}${userId}`;
         await redis.setex(key, this.SESSION_TTL, JSON.stringify(sessionData));
-        console.log(`✅ [REDIS SESSION] Session créée pour userId: ${userId}`);
+        console.log(
+          `✅ [REDIS SESSION] Session créée pour userId: ${userId}${metadata.tokenId ? `:${metadata.tokenId}` : ""}`,
+        );
       } catch (error: unknown) {
         console.error(
           `❌ [REDIS SESSION] Erreur création session:`,
           getErrorMessage(error),
         );
         // Fallback en mémoire
-        memorySessionStore.set(userId, sessionData);
-        memorySessionTimestamps.set(userId, Date.now()); // HIGH-11: TTL tracking
+        const memoryKey = metadata.tokenId
+          ? `${userId}:${metadata.tokenId}`
+          : userId;
+        memorySessionStore.set(memoryKey, sessionData);
+        memorySessionTimestamps.set(memoryKey, Date.now()); // HIGH-11: TTL tracking
       }
     } else {
       // Stockage en mémoire
-      memorySessionStore.set(userId, sessionData);
-      memorySessionTimestamps.set(userId, Date.now()); // HIGH-11: TTL tracking
+      const memoryKey = metadata.tokenId
+        ? `${userId}:${metadata.tokenId}`
+        : userId;
+      memorySessionStore.set(memoryKey, sessionData);
+      memorySessionTimestamps.set(memoryKey, Date.now()); // HIGH-11: TTL tracking
     }
   }
 
-  async getSession(userId: string): Promise<SessionMetadata | null> {
+  async getSession(
+    userId: string,
+    tokenId?: string,
+  ): Promise<SessionMetadata | null> {
     if (redis) {
       try {
-        const key = `${this.SESSION_PREFIX}${userId}`;
+        const key = tokenId
+          ? `${this.SESSION_PREFIX}${userId}:${tokenId}`
+          : `${this.SESSION_PREFIX}${userId}`;
         const data = await redis.get(key);
         if (!data) return null;
 
@@ -304,17 +321,21 @@ export class RedisSessionService {
           getErrorMessage(error),
         );
         // Fallback en mémoire
-        return memorySessionStore.get(userId) || null;
+        const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
+        return memorySessionStore.get(memoryKey) || null;
       }
     } else {
-      return memorySessionStore.get(userId) || null;
+      const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
+      return memorySessionStore.get(memoryKey) || null;
     }
   }
 
-  async hasSession(userId: string): Promise<boolean> {
+  async hasSession(userId: string, tokenId?: string): Promise<boolean> {
     if (redis) {
       try {
-        const key = `${this.SESSION_PREFIX}${userId}`;
+        const key = tokenId
+          ? `${this.SESSION_PREFIX}${userId}:${tokenId}`
+          : `${this.SESSION_PREFIX}${userId}`;
         const exists = await redis.exists(key);
         return exists === 1;
       } catch (error: unknown) {
@@ -322,39 +343,47 @@ export class RedisSessionService {
           `❌ [REDIS SESSION] Erreur vérification session:`,
           getErrorMessage(error),
         );
-        return memorySessionStore.has(userId);
+        const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
+        return memorySessionStore.has(memoryKey);
       }
     } else {
-      return memorySessionStore.has(userId);
+      const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
+      return memorySessionStore.has(memoryKey);
     }
   }
 
-  async deleteSession(userId: string): Promise<void> {
+  async deleteSession(userId: string, tokenId?: string): Promise<void> {
     if (redis) {
       try {
-        const key = `${this.SESSION_PREFIX}${userId}`;
+        const key = tokenId
+          ? `${this.SESSION_PREFIX}${userId}:${tokenId}`
+          : `${this.SESSION_PREFIX}${userId}`;
         await redis.del(key);
         console.log(
-          `🗑️ [REDIS SESSION] Session supprimée pour userId: ${userId}`,
+          `🗑️ [REDIS SESSION] Session supprimée pour userId: ${userId}${tokenId ? `:${tokenId}` : ""}`,
         );
       } catch (error: unknown) {
         console.error(
           `❌ [REDIS SESSION] Erreur suppression session:`,
           getErrorMessage(error),
         );
-        memorySessionStore.delete(userId);
-        memorySessionTimestamps.delete(userId); // HIGH-11: Clean up timestamp
+        const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
+        memorySessionStore.delete(memoryKey);
+        memorySessionTimestamps.delete(memoryKey); // HIGH-11: Clean up timestamp
       }
     } else {
-      memorySessionStore.delete(userId);
-      memorySessionTimestamps.delete(userId); // HIGH-11: Clean up timestamp
+      const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
+      memorySessionStore.delete(memoryKey);
+      memorySessionTimestamps.delete(memoryKey); // HIGH-11: Clean up timestamp
     }
   }
 
-  async touchSession(userId: string): Promise<void> {
+  async touchSession(userId: string, tokenId?: string): Promise<void> {
     if (redis) {
       try {
-        const key = `${this.SESSION_PREFIX}${userId}`;
+        const key = tokenId
+          ? `${this.SESSION_PREFIX}${userId}:${tokenId}`
+          : `${this.SESSION_PREFIX}${userId}`;
         const exists = await redis.exists(key);
 
         if (exists) {
@@ -372,17 +401,19 @@ export class RedisSessionService {
           getErrorMessage(error),
         );
         // Fallback en mémoire
-        const session = memorySessionStore.get(userId);
+        const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
+        const session = memorySessionStore.get(memoryKey);
         if (session) {
           session.lastActivity = new Date();
-          memorySessionTimestamps.set(userId, Date.now()); // HIGH-11: Update TTL
+          memorySessionTimestamps.set(memoryKey, Date.now()); // HIGH-11: Update TTL
         }
       }
     } else {
-      const session = memorySessionStore.get(userId);
+      const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
+      const session = memorySessionStore.get(memoryKey);
       if (session) {
         session.lastActivity = new Date();
-        memorySessionTimestamps.set(userId, Date.now()); // HIGH-11: Update TTL
+        memorySessionTimestamps.set(memoryKey, Date.now()); // HIGH-11: Update TTL
       }
     }
   }
@@ -697,45 +728,84 @@ export class RedisSessionService {
     userId: string,
     jti: string,
     expiresInSeconds: number,
+    clientType: "web" | "mobile" = "web",
   ): Promise<void> {
     if (redis) {
       try {
-        const key = `${this.JTI_PREFIX}${userId}`;
+        const key = `${this.JTI_PREFIX}${userId}:${clientType}`;
         await redis.setex(key, expiresInSeconds, jti);
       } catch (error: unknown) {
         console.error(
           `❌ [REDIS JTI] Erreur stockage JTI:`,
           getErrorMessage(error),
         );
-        memoryJtiStore.set(userId, jti);
-        memoryJtiTimestamps.set(userId, Date.now()); // HIGH-11: TTL tracking
+        const memoryKey = `${userId}:${clientType}`;
+        memoryJtiStore.set(memoryKey, jti);
+        memoryJtiTimestamps.set(memoryKey, Date.now()); // HIGH-11: TTL tracking
       }
     } else {
-      memoryJtiStore.set(userId, jti);
-      memoryJtiTimestamps.set(userId, Date.now()); // HIGH-11: TTL tracking
+      const memoryKey = `${userId}:${clientType}`;
+      memoryJtiStore.set(memoryKey, jti);
+      memoryJtiTimestamps.set(memoryKey, Date.now()); // HIGH-11: TTL tracking
     }
   }
 
-  async getSessionJti(userId: string): Promise<string | null> {
+  async getSessionJti(
+    userId: string,
+    clientType: "web" | "mobile" = "web",
+  ): Promise<string | null> {
     if (redis) {
       try {
-        const key = `${this.JTI_PREFIX}${userId}`;
+        const key = `${this.JTI_PREFIX}${userId}:${clientType}`;
         return await redis.get(key);
       } catch (error: unknown) {
         console.error(
           `❌ [REDIS JTI] Erreur récupération JTI:`,
           getErrorMessage(error),
         );
-        return memoryJtiStore.get(userId) || null;
+        const memoryKey = `${userId}:${clientType}`;
+        return memoryJtiStore.get(memoryKey) || null;
       }
     } else {
-      return memoryJtiStore.get(userId) || null;
+      const memoryKey = `${userId}:${clientType}`;
+      return memoryJtiStore.get(memoryKey) || null;
     }
   }
 
-  async validateSessionJti(userId: string, jti: string): Promise<boolean> {
-    const storedJti = await this.getSessionJti(userId);
+  async validateSessionJti(
+    userId: string,
+    jti: string,
+    clientType: "web" | "mobile" = "web",
+  ): Promise<boolean> {
+    const storedJti = await this.getSessionJti(userId, clientType);
     return storedJti === jti;
+  }
+
+  async deleteSessionJti(
+    userId: string,
+    clientType: "web" | "mobile" = "web",
+  ): Promise<void> {
+    if (redis) {
+      try {
+        const key = `${this.JTI_PREFIX}${userId}:${clientType}`;
+        await redis.del(key);
+        console.log(
+          `🗑️ [REDIS JTI] JTI supprimé pour userId: ${userId}:${clientType}`,
+        );
+      } catch (error: unknown) {
+        console.error(
+          `❌ [REDIS JTI] Erreur suppression JTI:`,
+          getErrorMessage(error),
+        );
+        const memoryKey = `${userId}:${clientType}`;
+        memoryJtiStore.delete(memoryKey);
+        memoryJtiTimestamps.delete(memoryKey);
+      }
+    } else {
+      const memoryKey = `${userId}:${clientType}`;
+      memoryJtiStore.delete(memoryKey);
+      memoryJtiTimestamps.delete(memoryKey);
+    }
   }
 
   // ═══════════════════════════════════════════════════════════════════════

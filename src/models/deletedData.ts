@@ -86,6 +86,20 @@ const deletedDataSchema = new Schema<IDeletedData>({
   data: {
     type: Schema.Types.Mixed,
     required: true,
+    set: (v: any) => {
+      if (!v) return v;
+      try {
+        const json = JSON.stringify(v);
+        if (json.length > 500000)
+          return { error: "Data too large", truncated: true };
+        return JSON.parse(json, (key, value) => {
+          if (typeof key === "string" && key.startsWith("$")) return undefined;
+          return value;
+        });
+      } catch {
+        return v;
+      }
+    },
   },
   deletedBy: {
     type: Schema.Types.ObjectId,

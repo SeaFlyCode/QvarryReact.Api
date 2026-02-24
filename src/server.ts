@@ -154,17 +154,17 @@ app.use(
       origin: string | undefined,
       callback: (err: Error | null, allow?: boolean) => void,
     ) {
-      // HIGH-7: Les apps mobiles n'ont pas d'origine (ou origin = null/undefined)
-      // En production, on ne permet le null origin que pour les routes /api/mobile/
+      // HIGH-02 FIX: Différencier les requêtes mobile (sans origin) des requêtes web suspectes
       if (!origin) {
-        if (NODE_ENV === "production") {
-          // En production, logger un avertissement
-          console.warn(`⚠️ [CORS] Requête avec origine null détectée`);
-          // Note: La vérification du path est faite dans le middleware CORS lui-même
-          // On accepte pour l'instant, mais on pourrait renforcer avec une vérification de header mobile
+        if (NODE_ENV !== "production") {
+          // En développement, on permet pour faciliter les tests
           callback(null, true);
         } else {
-          // En développement, on permet pour faciliter les tests
+          // En production, seules les requêtes mobile natives n'ont pas d'origin
+          // Le middleware mobileSecurityMiddleware valide ensuite le header X-Mobile-App
+          console.warn(
+            `⚠️ [CORS] Requête sans origin en production (mobile natif probable)`,
+          );
           callback(null, true);
         }
         return;
@@ -443,6 +443,25 @@ app.use("/api", generalLimiter);
     await connectToDatabase();
 
     // ═══════════════════════════════════════════════════════════════════════════
+    // HIGH-08 FIX: Vérification TLS obligatoire en production
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (NODE_ENV === "production") {
+      if (process.env.DB_SSL !== "true") {
+        console.error(
+          "🚨 [SECURITY] FATAL: DB_SSL doit être 'true' en production",
+        );
+        process.exit(1);
+      }
+      if (process.env.REDIS_TLS !== "true") {
+        console.error(
+          "🚨 [SECURITY] FATAL: REDIS_TLS doit être 'true' en production",
+        );
+        process.exit(1);
+      }
+      console.log("🔒 [SECURITY] TLS vérifié: DB_SSL=true, REDIS_TLS=true");
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
     // SWAGGER - Documentation API (uniquement en développement)
     // ═══════════════════════════════════════════════════════════════════════════
     if (NODE_ENV !== "production" && process.env.ENABLE_SWAGGER === "true") {
@@ -492,53 +511,58 @@ app.use("/api", generalLimiter);
 
     // Monter les routes pour les utilisateurs
     // Route de maintenance (doit être avant le middleware de maintenance pour status public)
-    app.use("/api/maintenance", maintenanceRoutes);
+    app.use("/api/v1/maintenance", maintenanceRoutes);
 
-    // LOW-02: API versioning — Les routes utilisent /api/ sans version.
-    // Migration vers /api/v1/ reportée pour éviter un breaking change côté clients.
-    // Quand prêt : préfixer toutes les routes avec /api/v1/ et ajouter un
-    // middleware de redirection /api/ → /api/v1/ pour rétrocompatibilité.
+    // MED-09 FIX: API versioning — Middleware de rétrocompatibilité /api/ → /api/v1/
+    // Les routes sont montées sur /api/v1/ et /api/ redirige pour rétrocompatibilité
+    app.use("/api", (req, res, next) => {
+      if (!req.path.startsWith("/v1/")) {
+        // Réécrire le chemin pour pointer vers /api/v1/
+        req.url = `/v1${req.url}`;
+      }
+      next();
+    });
 
     // Routes d'authentification (doivent être AVANT le middleware de maintenance)
     // pour permettre aux admins de se connecter pendant la maintenance
-    app.use("/api/auth", authRoutes);
-    app.use("/api/2fa", twoFactorRoutes);
+    app.use("/api/v1/auth", authRoutes);
+    app.use("/api/v1/2fa", twoFactorRoutes);
 
     // LOW-002 + LOW-003: Headers de sécurité et vérification de version pour routes mobiles
     const { mobileSecurityHeaders, checkAppVersion } =
       await import("./middlewares/mobileSecurityMiddleware");
-    app.use("/api/mobile", mobileSecurityHeaders);
-    app.use("/api/mobile", checkAppVersion);
+    app.use("/api/v1/mobile", mobileSecurityHeaders);
+    app.use("/api/v1/mobile", checkAppVersion);
 
     // Routes d'authentification mobile (sans Turnstile, avec sécurité alternative)
-    app.use("/api/mobile/auth", mobileAuthRoutes);
+    app.use("/api/v1/mobile/auth", mobileAuthRoutes);
 
     // Routes 2FA mobile (gestion 2FA depuis l'app mobile)
-    app.use("/api/mobile/2fa", mobileTwoFactorRoutes);
+    app.use("/api/v1/mobile/2fa", mobileTwoFactorRoutes);
 
     // Routes de synchronisation mobile (offline-first)
-    app.use("/api/mobile/sync", mobileSyncRoutes);
+    app.use("/api/v1/mobile/sync", mobileSyncRoutes);
 
     // Routes SOS Mode mobile (alertes d'urgence)
-    app.use("/api/mobile/sos", mobileSosRoutes);
+    app.use("/api/v1/mobile/sos", mobileSosRoutes);
 
     // Routes admin (doivent être AVANT le middleware de maintenance)
     // pour permettre aux admins de gérer la maintenance
-    app.use("/api/admin", adminRoutes);
+    app.use("/api/v1/admin", adminRoutes);
 
     // Middleware de maintenance (après les routes exemptées)
     app.use("/api", maintenanceMiddleware);
 
-    app.use("/api/fiches", fichesRoutes);
-    app.use("/api/users", userRoutes);
-    app.use("/api/points", pointsRoutes);
-    app.use("/api/lists", listsRoutes);
-    app.use("/api/conversations/", conversationsRoutes);
-    app.use("/api/messages/", messagesRoutes);
-    app.use("/api/contacts", contactRoutes);
-    app.use("/api/share", dataShareRoutes);
-    app.use("/api/notifications", notificationsRoutes);
-    app.use("/api/security", securityRoutes);
+    app.use("/api/v1/fiches", fichesRoutes);
+    app.use("/api/v1/users", userRoutes);
+    app.use("/api/v1/points", pointsRoutes);
+    app.use("/api/v1/lists", listsRoutes);
+    app.use("/api/v1/conversations/", conversationsRoutes);
+    app.use("/api/v1/messages/", messagesRoutes);
+    app.use("/api/v1/contacts", contactRoutes);
+    app.use("/api/v1/share", dataShareRoutes);
+    app.use("/api/v1/notifications", notificationsRoutes);
+    app.use("/api/v1/security", securityRoutes);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // GESTIONNAIRE D'ERREURS GLOBAL

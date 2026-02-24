@@ -10,6 +10,7 @@ export interface IList extends Document {
   createdAt: Date;
   updatedAt: Date;
   deletedAt?: Date | null; // Soft-delete : date de suppression
+  version?: number;
 }
 
 const listSchema = new Schema(
@@ -23,10 +24,13 @@ const listSchema = new Schema(
     name: {
       type: String,
       required: [true, "Le nom de la liste est obligatoire"],
+      maxlength: 200,
+      trim: true,
     },
     description: {
       type: String,
       default: "",
+      maxlength: 2000,
     },
     points: [
       {
@@ -38,14 +42,20 @@ const listSchema = new Schema(
     color: {
       type: String,
       default: "#000000", // Couleur par défaut
+      maxlength: 20,
     },
     icon: {
       type: String,
       default: "default-icon", // Icône par défaut
+      maxlength: 100,
     },
     deletedAt: {
       type: Date,
       default: null,
+    },
+    version: {
+      type: Number,
+      default: 1,
     },
   },
   { timestamps: true },

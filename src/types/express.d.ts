@@ -2,16 +2,17 @@
 // Extension globale des types Express pour l'authentification
 
 declare global {
-    namespace Express {
-        interface Request {
-            user?: {
-                id: string;
-                isAdmin: boolean;
-                tokenIssuedAt?: number;
-                tokenId?: string;
-            };
-        }
+  namespace Express {
+    interface Request {
+      user?: {
+        id: string;
+        isAdmin: boolean;
+        tokenIssuedAt?: number;
+        tokenId?: string;
+        clientType?: "web" | "mobile";
+      };
     }
+  }
 }
 
 export {};

@@ -26,6 +26,7 @@ export interface IFiche extends Document {
     coordinates: number[];
   };
   deletedAt?: Date | null; // Soft-delete : date de suppression
+  version?: number;
 }
 
 // Schéma principal pour les fiches
@@ -126,6 +127,10 @@ const ficheSchema = new Schema<IFiche>(
     deletedAt: {
       type: Date,
       default: null,
+    },
+    version: {
+      type: Number,
+      default: 1,
     },
   },
   {

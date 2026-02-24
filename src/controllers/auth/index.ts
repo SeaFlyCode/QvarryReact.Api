@@ -28,6 +28,7 @@ export {
   blacklistToken,
   loadAndDecryptUserData,
   syncUserDataToDB,
+  refreshFromDB,
   encryptUserData,
   decryptPointOptimized,
   decryptFicheOptimized,

@@ -7,15 +7,16 @@
 
 import express from "express";
 import {
-    handleMobileLogin,
-    handleMobileRegister,
-    handleMobileForgotPassword,
-    handleMobileRefreshToken
+  handleMobileLogin,
+  handleMobileRegister,
+  handleMobileForgotPassword,
+  handleMobileRefreshToken,
 } from "../controllers/mobileAuthControllers";
+import { handleLogoutUser } from "../controllers/auth/logoutController";
 import {
-    mobileSecurityMiddleware,
-    verifyMobilePlatform,
-    mobileRateLimitMiddleware
+  mobileSecurityMiddleware,
+  verifyMobilePlatform,
+  mobileRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
 
 const router = express.Router();
@@ -63,7 +64,11 @@ router.post("/register", mobileSecurityMiddleware, handleMobileRegister);
  * Body:
  *   - email: string
  */
-router.post("/forgot-password", mobileSecurityMiddleware, handleMobileForgotPassword);
+router.post(
+  "/forgot-password",
+  mobileSecurityMiddleware,
+  handleMobileForgotPassword,
+);
 
 /**
  * POST /api/mobile/auth/refresh
@@ -77,7 +82,24 @@ router.post("/forgot-password", mobileSecurityMiddleware, handleMobileForgotPass
  * Body:
  *   - refreshToken: string
  */
-router.post("/refresh", verifyMobilePlatform, mobileRateLimitMiddleware, handleMobileRefreshToken);
+router.post(
+  "/refresh",
+  verifyMobilePlatform,
+  mobileRateLimitMiddleware,
+  handleMobileRefreshToken,
+);
+
+/**
+ * POST /api/mobile/auth/logout
+ * Déconnexion depuis l'app mobile
+ * Pas de middleware d'authentification pour éviter les blocages si le token est invalide
+ * Le token est extrait du header Authorization et décodé manuellement dans le handler
+ *
+ * Headers requis:
+ *   - Authorization: Bearer <token>
+ *
+ * Note: Utilise le même handler que la route web (/api/auth/logout)
+ */
+router.post("/logout", handleLogoutUser);
 
 export default router;
-

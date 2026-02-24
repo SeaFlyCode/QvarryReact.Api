@@ -177,7 +177,7 @@ export async function handleResetPassword(req: Request, res: Response) {
     }
 
     // Hasher le nouveau mot de passe
-    const hashedPassword = await bcrypt.hash(newPassword, 10);
+    const hashedPassword = await bcrypt.hash(newPassword, 12);
 
     // REM-006: Mettre à jour l'historique des mots de passe
     const newPasswordHistory = addToPasswordHistory(

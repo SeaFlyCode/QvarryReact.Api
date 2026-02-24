@@ -100,16 +100,16 @@ export function startRefreshTokenCleanupJob(): void {
     isRefreshTokenCleanupRunning = true;
     try {
       console.log(
-        "🧹 [CRON] Lancement du nettoyage des refresh tokens expirés...",
+        "🧹 [CRON] Lancement du nettoyage des refresh tokens expirés et inactifs...",
       );
       const deletedCount = await refreshTokenService.cleanupExpiredTokens();
 
       if (deletedCount > 0) {
         console.log(
-          `✅ [CRON] ${deletedCount} refresh tokens expirés/révoqués nettoyés`,
+          `✅ [CRON] ${deletedCount} refresh tokens expirés/révoqués/inactifs nettoyés`,
         );
       } else {
-        console.log("✅ [CRON] Aucun refresh token expiré à nettoyer");
+        console.log("✅ [CRON] Aucun refresh token expiré/inactif à nettoyer");
       }
     } catch (error) {
       console.error(

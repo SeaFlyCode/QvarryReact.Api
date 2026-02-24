@@ -30,10 +30,24 @@ class AuditService {
    * Hasher une adresse IP de manière irréversible avec HMAC-SHA256
    * Utilise IP_HASH_SECRET comme clé secrète
    */
+  private static ipHashSecretValidated = false;
+
   private hashIpAddress(value: string | undefined): string | undefined {
     if (!value) return undefined;
     try {
-      const secret = process.env.IP_HASH_SECRET || "default-ip-hash-secret";
+      const secret = process.env.IP_HASH_SECRET;
+      if (!secret || secret.length < 32) {
+        if (!AuditService.ipHashSecretValidated) {
+          console.error(
+            "🚨 [SECURITY] FATAL: IP_HASH_SECRET manquant ou trop court (min 32 chars). Les IPs ne seront pas hashées.",
+          );
+          if (process.env.NODE_ENV === "production") {
+            process.exit(1);
+          }
+        }
+        return "[IP_HASH_UNAVAILABLE]";
+      }
+      AuditService.ipHashSecretValidated = true;
       return crypto
         .createHmac("sha256", secret)
         .update(value)

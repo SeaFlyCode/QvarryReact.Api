@@ -52,13 +52,13 @@ export interface IUserBase {
 export interface IUser extends IUserBase, Document {}
 
 const UserSchema: Schema<IUser> = new Schema({
-  name: { type: String, required: true },
-  surname: { type: String, required: true },
-  pseudo: { type: String, required: false },
+  name: { type: String, required: true, maxlength: 200, trim: true },
+  surname: { type: String, required: true, maxlength: 200, trim: true },
+  pseudo: { type: String, required: false, maxlength: 50, trim: true },
   showPseudo: { type: Boolean, default: false },
-  password: { type: String, required: true },
+  password: { type: String, required: true, maxlength: 200 },
   password_history: { type: [String], default: [] }, // REM-006: Historique des 5 derniers mots de passe
-  email: { type: String, required: true },
+  email: { type: String, required: true, maxlength: 500 },
   emailHash: { type: String, index: true },
   ip_creation: { type: String, required: true },
   ip_last_connection: { type: String, required: true },
@@ -67,7 +67,7 @@ const UserSchema: Schema<IUser> = new Schema({
   is_admin: { type: Boolean, default: false },
   is_blocked: { type: Boolean, default: false },
   blocked_at: { type: Date },
-  blocked_reason: { type: String, default: "" },
+  blocked_reason: { type: String, default: "", maxlength: 500 },
   contact_code: { type: Number, default: 0 },
   reset_password_token: { type: String, default: "" },
   reset_password_expires: { type: Date },
@@ -82,7 +82,7 @@ const UserSchema: Schema<IUser> = new Schema({
   admin_validated_at: { type: Date },
   admin_validated_by: { type: String, default: "" },
   admin_validation_rejected: { type: Boolean, default: false },
-  admin_rejection_reason: { type: String, default: "" },
+  admin_rejection_reason: { type: String, default: "", maxlength: 500 },
   // RGPD-002: Champs de consentement explicite (Art. 7)
   gdpr_consent: { type: Boolean, default: false, required: true },
   gdpr_consent_date: { type: Date },

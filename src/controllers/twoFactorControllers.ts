@@ -3,6 +3,7 @@ import { TOTP, Secret } from "otpauth";
 import QRCode from "qrcode";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
+import jwt from "jsonwebtoken";
 import UserModel from "../models/users";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
 import { auditService } from "../services/auditService";
@@ -42,7 +43,7 @@ function generateRecoveryCodes(): string[] {
 async function hashRecoveryCodes(codes: string[]): Promise<string[]> {
   const hashedCodes: string[] = [];
   for (const code of codes) {
-    const hash = await bcrypt.hash(code.replace(/-/g, ""), 10);
+    const hash = await bcrypt.hash(code.replace(/-/g, ""), 12);
     hashedCodes.push(hash);
   }
   return hashedCodes;
@@ -117,7 +118,7 @@ export async function setupTwoFactor(
     return res.status(200).json({
       success: true,
       qrCode: qrCodeDataUrl,
-      secret: base32Secret, // Afficher le secret pour saisie manuelle
+      // MED-02 FIX: Secret TOTP supprimé de la réponse — le QR code contient déjà le secret
       message: "Scannez le QR code avec votre application d'authentification",
     });
   } catch (error) {
@@ -344,10 +345,27 @@ export async function verifyTwoFactorLogin(
   res: Response,
 ): Promise<Response> {
   try {
-    const { userId, code, isRecoveryCode } = req.body;
+    const { tempToken, code, isRecoveryCode } = req.body;
 
-    if (!userId || !code) {
-      return res.status(400).json({ error: "userId et code requis" });
+    if (!tempToken || !code) {
+      return res.status(400).json({ error: "tempToken et code requis" });
+    }
+
+    // HIGH-01 FIX: Valider le tempToken signé au lieu d'accepter un userId brut
+    let userId: string;
+    try {
+      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET!) as {
+        userId: string;
+        type: string;
+      };
+      if (decoded.type !== "temp-2fa-web") {
+        return res.status(401).json({ error: "Token temporaire invalide" });
+      }
+      userId = decoded.userId;
+    } catch {
+      return res
+        .status(401)
+        .json({ error: "Token temporaire invalide ou expiré" });
     }
 
     const user = await UserModel.findById(userId);

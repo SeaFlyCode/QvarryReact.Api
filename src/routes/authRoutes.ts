@@ -9,11 +9,12 @@ import {
   handleResetPassword,
   completeLoginAfter2FA,
 } from "../controllers/auth";
-import { handleManualSync } from "../controllers/syncControllers";
-import { getUserSessions } from "../controllers/securityControllers";
-import { revokeAllOtherSessions } from "../controllers/sessionControllers";
+import {
+  handleManualSync,
+  handleSyncRefresh,
+} from "../controllers/syncControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
-import { verifyTurnstileOptional } from "../middlewares/turnstileMiddleware";
+import { verifyTurnstile } from "../middlewares/turnstileMiddleware";
 
 const router = express.Router();
 
@@ -69,7 +70,7 @@ const router = express.Router();
  *       429:
  *         description: Trop de tentatives de connexion
  */
-router.post("/login", verifyTurnstileOptional, handleLoginUser);
+router.post("/login", verifyTurnstile, handleLoginUser);
 
 /**
  * @swagger
@@ -92,16 +93,12 @@ router.post("/refresh", handleRefreshToken);
  *   post:
  *     summary: Déconnexion utilisateur
  *     tags: [Auth]
- *     security:
- *       - bearerAuth: []
- *       - cookieAuth: []
+ *     description: Nettoie les cookies d'authentification même si le token est invalide (évite les boucles après reload serveur)
  *     responses:
  *       200:
  *         description: Déconnexion réussie
- *       401:
- *         description: Non authentifié
  */
-router.post("/logout", authMiddleware, handleLogoutUser);
+router.post("/logout", handleLogoutUser);
 
 /**
  * @swagger
@@ -119,6 +116,24 @@ router.post("/logout", authMiddleware, handleLogoutUser);
  *         description: Non authentifié
  */
 router.post("/sync", authMiddleware, handleManualSync);
+
+/**
+ * @swagger
+ * /auth/sync/refresh:
+ *   get:
+ *     summary: Refresh incrémental - récupère les changements depuis le mobile
+ *     tags: [Sync]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Résultat du refresh
+ *       401:
+ *         description: Non authentifié
+ *       409:
+ *         description: Session mémoire non initialisée
+ */
+router.get("/sync/refresh", authMiddleware, handleSyncRefresh);
 
 /**
  * @swagger
@@ -254,55 +269,5 @@ router.post("/reset-password", handleResetPassword);
  *         description: Trop de tentatives
  */
 router.post("/complete-2fa-login", completeLoginAfter2FA);
-
-/**
- * @swagger
- * /auth/sessions:
- *   get:
- *     summary: Liste des sessions actives
- *     tags: [Auth]
- *     security:
- *       - bearerAuth: []
- *       - cookieAuth: []
- *     responses:
- *       200:
- *         description: Liste des sessions
- *         content:
- *           application/json:
- *             schema:
- *               type: array
- *               items:
- *                 type: object
- *                 properties:
- *                   sessionId:
- *                     type: string
- *                   deviceInfo:
- *                     type: string
- *                   lastActive:
- *                     type: string
- *                     format: date-time
- *                   isCurrent:
- *                     type: boolean
- *       401:
- *         description: Non authentifié
- */
-router.get("/sessions", authMiddleware, getUserSessions);
-
-/**
- * @swagger
- * /auth/sessions/revoke-all:
- *   post:
- *     summary: Révoquer toutes les autres sessions
- *     tags: [Auth]
- *     security:
- *       - bearerAuth: []
- *       - cookieAuth: []
- *     responses:
- *       200:
- *         description: Sessions révoquées
- *       401:
- *         description: Non authentifié
- */
-router.post("/sessions/revoke-all", authMiddleware, revokeAllOtherSessions);
 
 export default router;

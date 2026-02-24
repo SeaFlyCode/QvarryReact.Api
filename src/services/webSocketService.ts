@@ -1100,6 +1100,47 @@ class WebSocketService {
   }
 
   /**
+   * Notifier un utilisateur que le mobile a poussé des changements
+   * Permet au PC de rafraîchir ses données en temps réel
+   */
+  notifySyncUpdate(
+    userId: string,
+    changes: { points: number; fiches: number; lists: number },
+  ): void {
+    const userClients = this.clients.get(userId);
+
+    if (!userClients || userClients.size === 0) {
+      console.log(
+        `⚠️ [WS] sync_update: utilisateur ${userId} non connecté (sera rafraîchi au prochain focus)`,
+      );
+      return;
+    }
+
+    const message = JSON.stringify({
+      type: "sync_update",
+      data: {
+        source: "mobile",
+        changes: {
+          points: changes.points,
+          fiches: changes.fiches,
+          lists: changes.lists,
+        },
+        timestamp: new Date().toISOString(),
+      },
+    });
+
+    userClients.forEach((client) => {
+      if (client.readyState === WebSocket.OPEN) {
+        client.send(message);
+      }
+    });
+
+    console.log(
+      `📡 [WS] sync_update envoyé à ${userId} (${changes.points}P, ${changes.fiches}F, ${changes.lists}L)`,
+    );
+  }
+
+  /**
    * Notifier qu'une notification a été lue
    */
   notifyNotificationRead(userId: string, notificationId: string): void {

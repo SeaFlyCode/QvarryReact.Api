@@ -17,6 +17,7 @@ interface CreateRefreshTokenOptions {
 class RefreshTokenService {
   private readonly REFRESH_TOKEN_EXPIRY =
     parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN || "48") * 60 * 60 * 1000; // 48h par défaut
+  private readonly MAX_SESSIONS_PER_USER = 10;
 
   /**
    * Chiffrer une valeur si elle est définie
@@ -62,12 +63,65 @@ class RefreshTokenService {
   }
 
   /**
+   * Limite le nombre de sessions actives par utilisateur
+   * Révoque automatiquement les sessions les plus anciennes si la limite est atteinte
+   */
+  private async enforceSessionLimit(userId: string): Promise<void> {
+    const activeSessions = await RefreshTokenModel.find({
+      userId: new mongoose.Types.ObjectId(userId),
+      revoked: false,
+      expiresAt: { $gt: new Date() },
+    })
+      .sort({ lastUsedAt: 1 }) // Trier par lastUsedAt ASC (les plus anciennes en premier)
+      .lean();
+
+    const activeCount = activeSessions.length;
+
+    if (activeCount >= this.MAX_SESSIONS_PER_USER) {
+      // Calculer combien de sessions doivent être révoquées pour faire de la place
+      const sessionsToRevoke = activeCount - this.MAX_SESSIONS_PER_USER + 1;
+      const oldestSessions = activeSessions.slice(0, sessionsToRevoke);
+
+      const tokenIdsToRevoke = oldestSessions.map(
+        (session: any) => session.tokenId,
+      );
+
+      await RefreshTokenModel.updateMany(
+        { tokenId: { $in: tokenIdsToRevoke } },
+        {
+          revoked: true,
+          revokedAt: new Date(),
+          revokedReason: "session_limit_exceeded",
+        },
+      );
+
+      await auditService.log({
+        userId,
+        action: "SESSIONS_AUTO_REVOKED",
+        level: "info",
+        details: {
+          count: sessionsToRevoke,
+          reason: "session_limit_exceeded",
+          maxSessions: this.MAX_SESSIONS_PER_USER,
+        },
+      });
+
+      console.log(
+        `🔒 [SESSIONS] ${sessionsToRevoke} sessions les plus anciennes révoquées pour userId: ${userId}`,
+      );
+    }
+  }
+
+  /**
    * Créer un nouveau refresh token en base
    * Les données sensibles (IP, User-Agent, fingerprint) sont chiffrées
    */
   async createRefreshToken(
     options: CreateRefreshTokenOptions,
   ): Promise<string> {
+    // Limiter le nombre de sessions actives
+    await this.enforceSessionLimit(options.userId);
+
     const refreshToken = this.generateRefreshToken();
     const hashedToken = this.hashToken(refreshToken);
 
@@ -287,9 +341,34 @@ class RefreshTokenService {
   }
 
   /**
+   * Révoquer les sessions inactives (non utilisées depuis 24h)
+   */
+  async revokeInactiveSessions(): Promise<number> {
+    const inactivityThreshold = new Date(Date.now() - 24 * 60 * 60 * 1000); // 24h
+
+    const result = await RefreshTokenModel.updateMany(
+      {
+        revoked: false,
+        lastUsedAt: { $lt: inactivityThreshold },
+      },
+      {
+        revoked: true,
+        revokedAt: new Date(),
+        revokedReason: "inactive_cleanup",
+      },
+    );
+
+    return result.modifiedCount || 0;
+  }
+
+  /**
    * Nettoyer les tokens expirés (optionnel, TTL index le fait déjà)
    */
   async cleanupExpiredTokens(): Promise<number> {
+    // D'abord, révoquer les sessions inactives
+    const inactiveCount = await this.revokeInactiveSessions();
+
+    // Ensuite, supprimer les tokens expirés et révoqués
     const result = await RefreshTokenModel.deleteMany({
       $or: [
         { expiresAt: { $lt: new Date() } },
@@ -300,7 +379,7 @@ class RefreshTokenService {
       ],
     });
 
-    return result.deletedCount || 0;
+    return (result.deletedCount || 0) + inactiveCount;
   }
 }
 

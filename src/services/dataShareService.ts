@@ -17,6 +17,9 @@ import { decrypt as decryptMaster } from "../utils/masterEncryptionUtils";
 import { memoryStorage } from "./memoryStorageService";
 import { createNotification } from "./notificationService";
 
+// Durée de validité des signatures de partage (alignée sur la durée de vie des partages)
+const SHARE_SIGNATURE_VALIDITY_MS = 20 * 24 * 60 * 60 * 1000; // 20 jours
+
 /**
  * Récupère le nom d'affichage d'un utilisateur (pseudo si activé, sinon nom complet)
  */
@@ -113,7 +116,11 @@ async function getFicheWithPoints(
   ficheId: mongoose.Types.ObjectId,
   userId: mongoose.Types.ObjectId,
 ) {
-  const fiche = await FicheModel.findOne({ _id: ficheId, userId: userId });
+  const fiche = await FicheModel.findOne({
+    _id: ficheId,
+    userId: userId,
+    deletedAt: null,
+  });
   if (!fiche) {
     throw new Error("Fiche non trouvée ou accès non autorisé");
   }
@@ -145,6 +152,7 @@ async function getFicheWithPoints(
   const points = await PointModel.find({
     _id: { $in: fiche.points_ids },
     userId: userId,
+    deletedAt: null,
   });
 
   // Déchiffrer les locations des points ET leurs autres champs
@@ -173,15 +181,18 @@ async function getFicheWithPoints(
     ville: await safeDecrypt(ficheObj.ville),
     type: await safeDecrypt(ficheObj.type),
     etat: await safeDecrypt(ficheObj.etat),
+    accessibilite: await safeDecrypt(ficheObj.accessibilite),
     difficulte_acces: await safeDecrypt(ficheObj.difficulte_acces),
     risque_oxygene: await safeDecrypt(ficheObj.risque_oxygene),
     acces_souterrain: await safeDecrypt(ficheObj.acces_souterrain),
     praticite_souterrain: await safeDecrypt(ficheObj.praticite_souterrain),
     etat_general: await safeDecrypt(ficheObj.etat_general),
+    commentaire: await safeDecrypt(ficheObj.commentaire),
     equipement_conseille: await safeDecrypt(ficheObj.equipement_conseille),
     surface: await safeDecrypt(ficheObj.surface),
     type_galeries: await safeDecrypt(ficheObj.type_galeries),
     interets: await safeDecrypt(ficheObj.interets),
+    center_cavite: ficheObj.center_cavite,
   };
 
   return {
@@ -232,7 +243,11 @@ async function getListWithPoints(
 
   // Si pas trouvé en mémoire, chercher en DB
   if (!listData) {
-    const list = await ListModel.findOne({ _id: listId, userId: userId });
+    const list = await ListModel.findOne({
+      _id: listId,
+      userId: userId,
+      deletedAt: null,
+    });
     if (!list) {
       throw new Error("Liste non trouvée ou accès non autorisé");
     }
@@ -241,6 +256,7 @@ async function getListWithPoints(
     const points = await PointModel.find({
       _id: { $in: list.points },
       userId: userId,
+      deletedAt: null,
     });
 
     // Déchiffrer les locations des points ET leurs autres champs
@@ -291,6 +307,7 @@ async function getListWithPoints(
     const missingPointsFromDB = await PointModel.find({
       _id: { $in: missingPointIds },
       userId: userId,
+      deletedAt: null,
     });
 
     // Déchiffrer les points manquants
@@ -370,7 +387,11 @@ async function getPoint(
   }
 
   // 2. Si pas en mémoire, chercher en base de données
-  const point = await PointModel.findOne({ _id: pointId, userId: userId });
+  const point = await PointModel.findOne({
+    _id: pointId,
+    userId: userId,
+    deletedAt: null,
+  });
 
   if (!point) {
     throw new Error("Point non trouvé ou accès non autorisé");
@@ -630,6 +651,7 @@ export async function getSharedData(
     decryptedDataJSON,
     dataShare.signature,
     senderPublicKey,
+    SHARE_SIGNATURE_VALIDITY_MS,
   );
 
   if (!isSignatureValid) {
@@ -745,6 +767,7 @@ async function getSharedDataForCopy(
     decryptedDataJSON,
     dataShare.signature,
     senderPublicKey,
+    SHARE_SIGNATURE_VALIDITY_MS,
   );
 
   if (!isSignatureValid) {
@@ -828,6 +851,7 @@ export async function updateShareStatus(
         decryptedDataJSON,
         dataShare.signature,
         senderPublicKey,
+        SHARE_SIGNATURE_VALIDITY_MS,
       );
 
       if (!isSignatureValid) {
@@ -1018,12 +1042,22 @@ async function copySharedDataToReceiver(
         ? await encryptUserKeys(receiverId, pointData.accessType)
         : "";
 
+      // Créer le GeoJSON pour les requêtes géospatiales
+      const parsedLoc = parseLocation(locationDecrypted);
+      const geoJsonLocation = parsedLoc
+        ? {
+            type: "Point" as const,
+            coordinates: [parsedLoc.lng, parsedLoc.lat] as [number, number],
+          }
+        : undefined;
+
       const newPoint = new PointModel({
         userId: receiverId,
         name: nameEncrypted,
         description: descriptionEncrypted,
         location_encrypted: locationEncrypted,
         accessType: accessTypeEncrypted,
+        location: geoJsonLocation,
       });
 
       await newPoint.save();
@@ -1085,12 +1119,22 @@ async function copySharedDataToReceiver(
             ? await encryptUserKeys(receiverId, pointData.accessType)
             : "";
 
+          // Créer le GeoJSON pour les requêtes géospatiales
+          const parsedLoc = parseLocation(locationDecrypted);
+          const geoJsonLocation = parsedLoc
+            ? {
+                type: "Point" as const,
+                coordinates: [parsedLoc.lng, parsedLoc.lat] as [number, number],
+              }
+            : undefined;
+
           const newPoint = new PointModel({
             userId: receiverId,
             name: nameEncrypted,
             description: descriptionEncrypted,
             location_encrypted: locationEncrypted,
             accessType: accessTypeEncrypted,
+            location: geoJsonLocation,
           });
 
           await newPoint.save();
@@ -1199,6 +1243,18 @@ async function copySharedDataToReceiver(
             toEncryptableString(ficheData.interets),
           )
         : undefined;
+      const ficheAccessibiliteEncrypted = ficheData.accessibilite
+        ? await encryptUserKeys(
+            receiverId,
+            toEncryptableString(ficheData.accessibilite),
+          )
+        : undefined;
+      const ficheCommentaireEncrypted = ficheData.commentaire
+        ? await encryptUserKeys(
+            receiverId,
+            toEncryptableString(ficheData.commentaire),
+          )
+        : undefined;
 
       // Créer la fiche avec données chiffrées
       const newFiche = new FicheModel({
@@ -1207,16 +1263,19 @@ async function copySharedDataToReceiver(
         ville: ficheVilleEncrypted,
         type: ficheTypeEncrypted,
         etat: ficheEtatEncrypted,
+        accessibilite: ficheAccessibiliteEncrypted,
         difficulte_acces: ficheDifficulteEncrypted,
         risque_oxygene: ficheRisqueEncrypted,
         acces_souterrain: ficheAccesEncrypted,
         praticite_souterrain: fichePraticiteEncrypted,
         etat_general: ficheEtatGeneralEncrypted,
+        commentaire: ficheCommentaireEncrypted,
         points_ids: newPointIds,
         equipement_conseille: ficheEquipementEncrypted,
         surface: ficheSurfaceEncrypted,
         type_galeries: ficheTypeGaleriesEncrypted,
         interets: ficheInteretsEncrypted,
+        center_cavite: ficheData.center_cavite,
       });
 
       await newFiche.save();
@@ -1242,16 +1301,19 @@ async function copySharedDataToReceiver(
           ville: ficheData.ville,
           type: ficheData.type,
           etat: ficheData.etat,
+          accessibilite: ficheData.accessibilite,
           difficulte_acces: ficheData.difficulte_acces,
           risque_oxygene: ficheData.risque_oxygene,
           acces_souterrain: ficheData.acces_souterrain,
           praticite_souterrain: ficheData.praticite_souterrain,
           etat_general: ficheData.etat_general,
+          commentaire: ficheData.commentaire,
           points_ids: newPointIds,
           equipement_conseille: ficheData.equipement_conseille,
           surface: ficheData.surface,
           type_galeries: ficheData.type_galeries,
           interets: ficheData.interets,
+          center_cavite: ficheData.center_cavite,
           date_creation: newFiche.date_creation,
           date_modification: newFiche.date_modification,
         };
@@ -1303,12 +1365,22 @@ async function copySharedDataToReceiver(
             ? await encryptUserKeys(receiverId, pointData.accessType)
             : "";
 
+          // Créer le GeoJSON pour les requêtes géospatiales
+          const parsedLoc = parseLocation(locationDecrypted);
+          const geoJsonLocation = parsedLoc
+            ? {
+                type: "Point" as const,
+                coordinates: [parsedLoc.lng, parsedLoc.lat] as [number, number],
+              }
+            : undefined;
+
           const newPoint = new PointModel({
             userId: receiverId,
             name: nameEncrypted,
             description: descriptionEncrypted,
             location_encrypted: locationEncrypted,
             accessType: accessTypeEncrypted,
+            location: geoJsonLocation,
           });
 
           await newPoint.save();

@@ -136,7 +136,7 @@ export async function handleCreateUser(req: Request, res: Response) {
       `📧 [CREATE USER] Code de vérification envoyé (longueur: ${emailVerificationCode.length})`,
     );
 
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 12);
     const newUser: IUserBase = {
       name: encrypt(name),
       surname: encrypt(surname),
@@ -416,7 +416,7 @@ export async function handleUpdateUser(req: Request, res: Response) {
         passwordHistory,
       );
 
-      updatedUser.password = await bcrypt.hash(password, 10);
+      updatedUser.password = await bcrypt.hash(password, 12);
       (updatedUser as any).password_history = newPasswordHistory;
 
       // REM-007: Révoquer TOUS les tokens de l'utilisateur pour forcer la reconnexion

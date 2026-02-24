@@ -180,6 +180,7 @@ export async function handleMobileLogin(req: Request, res: Response) {
     const { token, tokenId } = generateSecureToken(
       userId,
       user.is_admin || false,
+      "mobile",
     );
 
     const ipAddress = req.ip || req.connection.remoteAddress;
@@ -203,6 +204,7 @@ export async function handleMobileLogin(req: Request, res: Response) {
       userId,
       tokenId,
       jwtExpiresInSeconds,
+      "mobile",
     );
 
     // 9. ASSOCIER L'APPAREIL À L'UTILISATEUR
@@ -321,7 +323,7 @@ export async function handleMobileRegister(req: Request, res: Response) {
 
     // 5. CRÉATION UTILISATEUR
     const ip_creation = req.ip || req.connection.remoteAddress || "unknown";
-    const passwordHash = await bcrypt.hash(password, 10);
+    const passwordHash = await bcrypt.hash(password, 12);
 
     const newUser: IUserBase = {
       name: encrypt(name),
@@ -541,6 +543,7 @@ export async function handleMobileRefreshToken(req: Request, res: Response) {
     const { token: newAccessToken, tokenId: newTokenId } = generateSecureToken(
       userId,
       false,
+      "mobile",
     );
 
     // Rotation du refresh token
@@ -559,6 +562,7 @@ export async function handleMobileRefreshToken(req: Request, res: Response) {
       userId,
       newTokenId,
       jwtExpiresInSeconds,
+      "mobile",
     );
 
     console.log(`🔄 [MOBILE-AUTH] Token rafraîchi pour userId: ${userId}`);

@@ -27,7 +27,7 @@ export interface IMessage extends Document {
 const MessageReplySchema = new Schema<IMessageReply>(
   {
     userId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-    content: { type: String, required: true },
+    content: { type: String, required: true, maxlength: 10000 },
     createdAt: { type: Date, default: Date.now },
   },
   { _id: false },
@@ -49,7 +49,7 @@ const MessageSchema = new Schema<IMessage>({
     required: true,
   },
   senderId: { type: Schema.Types.ObjectId, ref: "User", required: true },
-  content: { type: String, required: true },
+  content: { type: String, required: true, maxlength: 10000 },
   type: { type: String, enum: ["text", "system"], default: "text" },
   readBy: [{ type: Schema.Types.ObjectId, ref: "User" }],
   replies: [MessageReplySchema],

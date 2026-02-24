@@ -58,6 +58,7 @@ export interface DecryptedPoint {
   accessType?: string;
   createdAt: string;
   updatedAt: string;
+  version?: number;
 }
 
 export interface DecryptedFiche {
@@ -84,6 +85,7 @@ export interface DecryptedFiche {
     type: string;
     coordinates: number[];
   };
+  version?: number;
 }
 
 export interface DecryptedList {
@@ -95,6 +97,7 @@ export interface DecryptedList {
   icon: string;
   createdAt: string;
   updatedAt: string;
+  version?: number;
 }
 
 export interface SyncedSosContact {
@@ -196,6 +199,7 @@ class MobileSyncService {
         accessType: point.accessType,
         createdAt: point.createdAt?.toISOString() || new Date().toISOString(),
         updatedAt: point.updatedAt?.toISOString() || new Date().toISOString(),
+        version: point.version || 1,
       };
     } catch (error) {
       console.error(
@@ -259,11 +263,36 @@ class MobileSyncService {
           fiche.date_creation?.toISOString() || new Date().toISOString(),
         date_modification:
           fiche.date_modification?.toISOString() || new Date().toISOString(),
-        equipement_conseille: fiche.equipement_conseille,
-        surface: fiche.surface,
-        type_galeries: fiche.type_galeries,
+        equipement_conseille: fiche.equipement_conseille
+          ? fiche.equipement_conseille.map((item: string) => {
+              try {
+                return decryptWithKey(item, userKey);
+              } catch {
+                return item; // Fallback: plaintext or corrupt data
+              }
+            })
+          : [],
+        surface: fiche.surface
+          ? fiche.surface.map((item: string) => {
+              try {
+                return decryptWithKey(item, userKey);
+              } catch {
+                return item;
+              }
+            })
+          : [],
+        type_galeries: fiche.type_galeries
+          ? fiche.type_galeries.map((item: string) => {
+              try {
+                return decryptWithKey(item, userKey);
+              } catch {
+                return item;
+              }
+            })
+          : [],
         interets,
         center_cavite: fiche.center_cavite || undefined,
+        version: fiche.version || 1,
       };
     } catch (error) {
       console.error(
@@ -277,16 +306,51 @@ class MobileSyncService {
   /**
    * Transforme une liste en format DecryptedList
    */
-  transformList(list: any): DecryptedList {
+  transformList(list: any, userKey: string): DecryptedList {
+    let name = list.name || "";
+    let description = list.description || "";
+
+    // Déchiffrer si le champ est au format chiffré (iv:authTag:encrypted)
+    if (name) {
+      const parts = name.split(":");
+      if (
+        parts.length === 3 &&
+        parts[0].length >= 16 &&
+        parts[1].length >= 16
+      ) {
+        try {
+          name = decryptWithKey(name, userKey);
+        } catch {
+          // Plaintext (données pré-migration) — garder tel quel
+        }
+      }
+    }
+
+    if (description) {
+      const parts = description.split(":");
+      if (
+        parts.length === 3 &&
+        parts[0].length >= 16 &&
+        parts[1].length >= 16
+      ) {
+        try {
+          description = decryptWithKey(description, userKey);
+        } catch {
+          // Plaintext (données pré-migration) — garder tel quel
+        }
+      }
+    }
+
     return {
       _id: list._id.toString(),
-      name: list.name,
-      description: list.description || "",
+      name,
+      description,
       points: list.points?.map((id: any) => id.toString()) || [],
       color: list.color || "#000000",
       icon: list.icon || "default-icon",
       createdAt: list.createdAt?.toISOString() || new Date().toISOString(),
       updatedAt: list.updatedAt?.toISOString() || new Date().toISOString(),
+      version: list.version || 1,
     };
   }
 
@@ -371,7 +435,7 @@ class MobileSyncService {
         }
       })
       .filter((f): f is NonNullable<typeof f> => f !== null);
-    const transformedLists = lists.map((l) => this.transformList(l));
+    const transformedLists = lists.map((l) => this.transformList(l, userKey));
     const transformedSosContacts = sosContacts.map((c) =>
       this.transformSosContact(c),
     );
@@ -501,10 +565,10 @@ class MobileSyncService {
 
     const createdLists = updatedLists
       .filter((l) => l.createdAt && new Date(l.createdAt) > since)
-      .map((l) => this.transformList(l));
+      .map((l) => this.transformList(l, userKey));
     const modifiedLists = updatedLists
       .filter((l) => l.createdAt && new Date(l.createdAt) <= since)
-      .map((l) => this.transformList(l));
+      .map((l) => this.transformList(l, userKey));
 
     const createdSosContacts = updatedSosContacts
       .filter((c) => c.createdAt && new Date(c.createdAt) > since)
@@ -638,7 +702,13 @@ class MobileSyncService {
             );
             break;
           case "list":
-            await this.applyListChange(userId, change, synced, conflicts);
+            await this.applyListChange(
+              userId,
+              userKey,
+              change,
+              synced,
+              conflicts,
+            );
             break;
           case "sosContact":
             await this.applySosContactChange(userId, change, synced, conflicts);
@@ -694,6 +764,7 @@ class MobileSyncService {
             ? new mongoose.Types.ObjectId(data.ficheId)
             : null,
           accessType: data.accessType || "",
+          version: 1,
         });
 
         synced.push({
@@ -716,6 +787,22 @@ class MobileSyncService {
           throw new Error(`Point ${change.id} non trouvé`);
         }
 
+        // Vérification de version (optimistic concurrency)
+        const clientVersion = data.version || 0;
+        const serverVersion = (existingPoint as any).version || 1;
+
+        if (clientVersion > 0 && clientVersion < serverVersion) {
+          // Conflit: le client a une version obsolète
+          conflicts.push({
+            type: "point",
+            id: change.id!,
+            localVersion: data,
+            serverVersion: this.decryptPoint(existingPoint, userKey),
+            resolution: "server_wins",
+          });
+          break;
+        }
+
         // Chiffrer et mettre à jour
         const updateData: any = {};
         if (data.name) updateData.name = encryptWithKey(data.name, userKey);
@@ -728,6 +815,7 @@ class MobileSyncService {
           );
         if (data.accessType !== undefined)
           updateData.accessType = data.accessType;
+        updateData.version = serverVersion + 1;
 
         await PointModel.updateOne(
           { _id: change.id, userId: new mongoose.Types.ObjectId(userId) },
@@ -803,6 +891,7 @@ class MobileSyncService {
           surface: data.surface || [],
           type_galeries: data.type_galeries || [],
           center_cavite: data.center_cavite || undefined,
+          version: 1,
         };
 
         const newFiche = await FicheModel.create(encryptedData);
@@ -826,7 +915,26 @@ class MobileSyncService {
           throw new Error(`Fiche ${change.id} non trouvée`);
         }
 
-        const updateData: any = { date_modification: new Date() };
+        // Vérification de version (optimistic concurrency)
+        const clientVersion = data.version || 0;
+        const serverVersion = (existingFiche as any).version || 1;
+
+        if (clientVersion > 0 && clientVersion < serverVersion) {
+          // Conflit: le client a une version obsolète
+          conflicts.push({
+            type: "fiche",
+            id: change.id!,
+            localVersion: data,
+            serverVersion: this.decryptFiche(existingFiche, userKey),
+            resolution: "server_wins",
+          });
+          break;
+        }
+
+        const updateData: any = {
+          date_modification: new Date(),
+          version: serverVersion + 1,
+        };
         if (data.name !== undefined)
           updateData.name = encryptWithKey(data.name, userKey);
         if (data.ville !== undefined)
@@ -907,6 +1015,7 @@ class MobileSyncService {
    */
   private async applyListChange(
     userId: string,
+    userKey: string,
     change: LocalChange,
     synced: LocalChange[],
     conflicts: SyncConflict[],
@@ -917,13 +1026,16 @@ class MobileSyncService {
       case "create": {
         const newList = await ListModel.create({
           userId: new mongoose.Types.ObjectId(userId),
-          name: data.name,
-          description: data.description || "",
+          name: data.name ? encryptWithKey(data.name, userKey) : "",
+          description: data.description
+            ? encryptWithKey(data.description, userKey)
+            : "",
           points:
             data.points?.map((id: string) => new mongoose.Types.ObjectId(id)) ||
             [],
           color: data.color || "#000000",
           icon: data.icon || "default-icon",
+          version: 1,
         });
 
         synced.push({
@@ -936,9 +1048,46 @@ class MobileSyncService {
       case "update": {
         if (!change.id) throw new Error("ID manquant pour update");
 
+        const existingList = await ListModel.findOne({
+          _id: change.id,
+          userId: new mongoose.Types.ObjectId(userId),
+        });
+
+        if (!existingList) {
+          throw new Error(`Liste ${change.id} non trouvée`);
+        }
+
+        // Vérification de version (optimistic concurrency)
+        const clientVersion = data.version || 0;
+        const serverVersion = (existingList as any).version || 1;
+
+        if (clientVersion > 0 && clientVersion < serverVersion) {
+          conflicts.push({
+            type: "list",
+            id: change.id!,
+            localVersion: data,
+            serverVersion: this.transformList(existingList, userKey),
+            resolution: "server_wins",
+          });
+          break;
+        }
+
+        // Chiffrer les champs texte avant mise à jour
+        const encryptedData: any = { ...data };
+        if (data.name) {
+          encryptedData.name = encryptWithKey(data.name, userKey);
+        }
+        if (data.description !== undefined) {
+          encryptedData.description = encryptWithKey(
+            data.description || "",
+            userKey,
+          );
+        }
+        encryptedData.version = serverVersion + 1;
+
         await ListModel.updateOne(
           { _id: change.id, userId: new mongoose.Types.ObjectId(userId) },
-          { $set: data },
+          { $set: encryptedData },
         );
 
         synced.push(change);

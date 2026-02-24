@@ -5,6 +5,7 @@ import { memoryStorage } from "../services/memoryStorageService";
 import { validateFicheData } from "../services/validationService";
 import { syncService } from "../services/syncService";
 import FicheModel, { IFiche } from "../models/fiches";
+import { loadAndDecryptUserData } from "./auth/authHelpers";
 
 /**
  * Gère la création d'une nouvelle fiche
@@ -16,6 +17,7 @@ export async function handleCreateFiche(req: Request, res: Response) {
       ville,
       type,
       etat,
+      accessibilite,
       difficulte_acces,
       risque_oxygene,
       acces_souterrain,
@@ -27,6 +29,7 @@ export async function handleCreateFiche(req: Request, res: Response) {
       type_galeries,
       interets,
       commentaire,
+      center_cavite,
     } = req.body;
 
     // Validation des données
@@ -58,6 +61,7 @@ export async function handleCreateFiche(req: Request, res: Response) {
       ville,
       type,
       etat,
+      accessibilite: accessibilite || "",
       difficulte_acces,
       risque_oxygene,
       acces_souterrain,
@@ -74,6 +78,7 @@ export async function handleCreateFiche(req: Request, res: Response) {
       surface: Array.isArray(surface) ? surface : [],
       type_galeries: Array.isArray(type_galeries) ? type_galeries : [],
       interets: interets || "",
+      center_cavite: center_cavite || undefined,
     };
 
     // Stocker la fiche en mémoire
@@ -653,11 +658,10 @@ export async function handleSearchFiches(req: Request, res: Response) {
     // Récupérer tous les fiches de l'utilisateur
     let fiches = memoryStorage.getAllFiches(userId);
 
-    // Si aucune fiche en mémoire, charger depuis MongoDB
+    // Si aucune fiche en mémoire (session expirée), recharger et déchiffrer depuis MongoDB
     if (!fiches || fiches.length === 0) {
-      fiches = (await FicheModel.find({
-        userId,
-      }).lean()) as unknown as IFiche[];
+      await loadAndDecryptUserData(userId);
+      fiches = memoryStorage.getAllFiches(userId);
     }
 
     // Filtres textuels

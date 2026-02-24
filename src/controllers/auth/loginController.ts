@@ -3,6 +3,7 @@ import { maskEmail } from "../../utils/logUtils";
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { getUserByEmail } from "../../services/userService";
 import { memoryStorage } from "../../services/memoryStorageService";
 import mongoose from "mongoose";
@@ -175,9 +176,16 @@ export async function handleLoginUser(req: Request, res: Response) {
       // Réinitialiser les tentatives car le mot de passe est correct
       await resetLoginAttempts(email);
 
+      // HIGH-01 FIX: Générer un tempToken signé au lieu d'envoyer le userId en clair
+      const tempToken = jwt.sign(
+        { userId, type: "temp-2fa-web", jti: crypto.randomUUID() },
+        process.env.JWT_SECRET!,
+        { expiresIn: "5m" },
+      );
+
       return res.status(200).json({
         requiresTwoFactor: true,
-        userId: userId,
+        tempToken: tempToken,
         message:
           "Veuillez entrer votre code d'authentification à deux facteurs",
       });
@@ -190,6 +198,7 @@ export async function handleLoginUser(req: Request, res: Response) {
     const { token, tokenId } = generateSecureToken(
       userId,
       user.is_admin || false,
+      "web",
     );
 
     // Métadonnées de sécurité
@@ -225,7 +234,11 @@ export async function handleLoginUser(req: Request, res: Response) {
     // 8. CRÉATION DE LA SESSION AVEC MÉTADONNÉES
     // ─────────────────────────────────────────────────────────────────────
     // CRIT-09: Session créée via redisSessionService (source de vérité unique)
-    await redisSessionService.createSession(userId, { ipAddress, userAgent });
+    await redisSessionService.createSession(userId, {
+      ipAddress,
+      userAgent,
+      tokenId,
+    });
 
     // AUTH-007: Stocker le JTI pour validation ultérieure
     const jwtExpiresInSeconds =
@@ -234,6 +247,7 @@ export async function handleLoginUser(req: Request, res: Response) {
       userId,
       tokenId,
       jwtExpiresInSeconds,
+      "web",
     );
 
     // ─────────────────────────────────────────────────────────────────────
@@ -473,6 +487,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
     const { token: newJwt, tokenId: newTokenId } = generateSecureToken(
       userId,
       user?.is_admin || false,
+      "web",
     );
 
     // ─────────────────────────────────────────────────────────────────────
@@ -496,7 +511,11 @@ export async function handleRefreshToken(req: Request, res: Response) {
       );
       await loadAndDecryptUserData(userId);
       // CRIT-09: Session créée via redisSessionService
-      await redisSessionService.createSession(userId, { ipAddress, userAgent });
+      await redisSessionService.createSession(userId, {
+        ipAddress,
+        userAgent,
+        tokenId: newTokenId,
+      });
     } else {
       // Mettre à jour le timestamp de dernière activité
       memoryStorage.touchSession?.(userId);
@@ -509,6 +528,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
       userId,
       newTokenId,
       jwtExpiresInSeconds,
+      "web",
     );
 
     // ─────────────────────────────────────────────────────────────────────
@@ -593,6 +613,7 @@ export const checkAuth = async (req: Request, res: Response) => {
       isAdmin?: boolean;
       iat?: number;
       exp?: number;
+      jti?: string;
     };
 
     // Vérifier l'expiration explicite
@@ -604,6 +625,32 @@ export const checkAuth = async (req: Request, res: Response) => {
         authenticated: false,
         reason: "token_expired",
       });
+    }
+
+    // ─────────────────────────────────────────────────────────────────────
+    // 3b. VÉRIFICATION DU JTI (COHÉRENCE AVEC authMiddleware)
+    // ─────────────────────────────────────────────────────────────────────
+    // Si le JTI n'est plus valide dans Redis (ex: après un reload serveur),
+    // le token est considéré comme invalide pour éviter les boucles
+    // d'authentification où checkAuth dit "ok" mais les routes protégées
+    // retournent 401.
+    if (decoded.jti) {
+      const isValidJti = await redisSessionService.validateSessionJti(
+        decoded.id,
+        decoded.jti,
+        "web",
+      );
+      if (!isValidJti) {
+        console.warn(
+          `⚠️ [AUTH] JTI invalide dans checkAuth pour userId: ${decoded.id} - session probablement expirée`,
+        );
+        res.clearCookie("token", clearCookieOptions);
+        res.clearCookie("refreshToken", clearCookieOptions);
+        return res.status(401).json({
+          authenticated: false,
+          reason: "session_expired",
+        });
+      }
     }
 
     // ─────────────────────────────────────────────────────────────────────
@@ -667,10 +714,27 @@ export const checkAuth = async (req: Request, res: Response) => {
 // ═══════════════════════════════════════════════════════════════════════════
 export async function completeLoginAfter2FA(req: Request, res: Response) {
   try {
-    const { userId } = req.body;
+    const { tempToken } = req.body;
 
-    if (!userId) {
-      return res.status(400).json({ error: "userId requis" });
+    if (!tempToken) {
+      return res.status(400).json({ error: "tempToken requis" });
+    }
+
+    // HIGH-01 FIX: Valider le tempToken signé au lieu d'accepter un userId brut
+    let userId: string;
+    try {
+      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET!) as {
+        userId: string;
+        type: string;
+      };
+      if (decoded.type !== "temp-2fa-web") {
+        return res.status(401).json({ error: "Token temporaire invalide" });
+      }
+      userId = decoded.userId;
+    } catch {
+      return res
+        .status(401)
+        .json({ error: "Token temporaire invalide ou expiré" });
     }
 
     const user = await UserModel.findById(userId);
@@ -682,6 +746,7 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
     const { token, tokenId } = generateSecureToken(
       userId,
       user.is_admin || false,
+      "web",
     );
 
     // Métadonnées de sécurité
@@ -710,7 +775,11 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
     await loadAndDecryptUserData(userId);
 
     // Créer la session - CRIT-09: via redisSessionService
-    await redisSessionService.createSession(userId, { ipAddress, userAgent });
+    await redisSessionService.createSession(userId, {
+      ipAddress,
+      userAgent,
+      tokenId,
+    });
 
     // Stocker le JTI
     const jwtExpiresInSeconds =
@@ -719,6 +788,7 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
       userId,
       tokenId,
       jwtExpiresInSeconds,
+      "web",
     );
 
     await auditService.log({
