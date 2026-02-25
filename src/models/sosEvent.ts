@@ -18,7 +18,9 @@ export type SosEventType =
   | "NOTIFICATION_SENT" // Notification push envoyée
   | "RESOLVED" // Session résolue
   | "CANCELLED" // Session annulée
-  | "CONTACT_CONFIRMED"; // Un contact a confirmé la sécurité
+  | "CONTACT_CONFIRMED" // Un contact a confirmé la sécurité
+  | "SURFACE_DETECTED" // Déplacement GPS significatif détecté
+  | "RECONNECTION_DETECTED"; // Reconnexion prolongée détectée
 
 // Interface pour les événements SOS
 export interface ISosEvent extends Document {
@@ -56,6 +58,8 @@ const sosEventSchema: Schema<ISosEvent> = new Schema(
         "RESOLVED",
         "CANCELLED",
         "CONTACT_CONFIRMED",
+        "SURFACE_DETECTED",
+        "RECONNECTION_DETECTED",
       ],
       required: true,
     },

@@ -3,33 +3,41 @@ import { Router } from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import { adminMiddleware } from "../middlewares/adminMiddleware";
 import {
-    getGlobalStats,
-    getRegistrationStats,
-    getActivityStats,
-    listUsers,
-    getUserDetails,
-    blockUser,
-    unblockUser,
-    promoteToAdmin,
-    demoteFromAdmin,
-    forceLogoutUser,
-    resetUserPassword,
-    getAuditLogs,
-    getAuditStats,
-    // Nouvelles fonctions de sécurité
-    getSecurityDashboard,
-    listBlockedIps,
-    blockIp,
-    unblockIp,
-    getIpThreatScore,
-    exportAuditLogs,
-    sendTestAlert,
-    // Validation des comptes
-    listPendingUsers,
-    approveUser,
-    rejectUser,
-    getPendingUsersCount
+  getGlobalStats,
+  getRegistrationStats,
+  getActivityStats,
+  listUsers,
+  getUserDetails,
+  blockUser,
+  unblockUser,
+  promoteToAdmin,
+  demoteFromAdmin,
+  forceLogoutUser,
+  resetUserPassword,
+  getAuditLogs,
+  getAuditStats,
+  // Nouvelles fonctions de sécurité
+  getSecurityDashboard,
+  listBlockedIps,
+  blockIp,
+  unblockIp,
+  getIpThreatScore,
+  exportAuditLogs,
+  sendTestAlert,
+  // Validation des comptes
+  listPendingUsers,
+  approveUser,
+  rejectUser,
+  getPendingUsersCount,
 } from "../controllers/adminControllers";
+import {
+  handleAdminSosDashboard,
+  handleAdminSosActiveSessions,
+  handleAdminSosSessionDetails,
+  handleAdminSosCancelSession,
+  handleAdminSosHistory,
+  handleAdminSosStats,
+} from "../controllers/adminSosControllers";
 
 const router = Router();
 
@@ -75,5 +83,15 @@ router.post("/security/block-ip", blockIp);
 router.delete("/security/unblock-ip/:ipAddress", unblockIp);
 router.get("/security/threat-score/:ipAddress", getIpThreatScore);
 router.post("/security/test-alert", sendTestAlert);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SOS MODE - ADMINISTRATION
+// ═══════════════════════════════════════════════════════════════════════════
+router.get("/sos/dashboard", handleAdminSosDashboard);
+router.get("/sos/active", handleAdminSosActiveSessions);
+router.get("/sos/sessions/:sessionId", handleAdminSosSessionDetails);
+router.post("/sos/sessions/:sessionId/cancel", handleAdminSosCancelSession);
+router.get("/sos/history", handleAdminSosHistory);
+router.get("/sos/stats", handleAdminSosStats);
 
 export default router;

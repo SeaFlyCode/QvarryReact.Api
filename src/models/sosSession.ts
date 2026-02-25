@@ -47,8 +47,28 @@ export interface ISosSession extends Document {
   lastKnownLng?: number;
   lastKnownAccuracy?: number;
 
+  // GPS initial (position à l'activation, pour comparer les déplacements)
+  entryLat?: number;
+  entryLng?: number;
+
+  // Tracking de reconnexion
+  consecutiveHeartbeats: number; // Nombre de heartbeats consécutifs
+  firstReconnectionAt?: Date; // Quand le premier heartbeat après déconnexion est arrivé
+  surfaceDetectionSent: boolean; // true si on a déjà envoyé la suggestion de désactiver
+  reconnectionDetectionSent: boolean; // true si on a déjà envoyé la suggestion de reconnexion
+
+  // Contacts de session (override v2)
+  sessionContactIds?: mongoose.Types.ObjectId[]; // IDs des contacts sélectionnés pour cette session
+  useDefaultContacts: boolean; // true = utilise tous les contacts permanents
+
   // Métadonnées
-  note?: string; // Note optionnelle de l'utilisateur
+  note?: string; // Note optionnelle de l'utilisateur (max 500 chars)
+
+  // Zone / Localisation détaillée (v2)
+  siteName?: string; // Nom du site / carrière (ex: "Carrière de Pont-Réan")
+  zone?: string; // Zone dans le site (ex: "Galerie Nord", "Secteur B")
+  depth?: number; // Profondeur estimée en mètres (optionnel)
+
   heartbeatCount: number;
   extensionCount: number;
   resolvedBy?: SosResolvedBy;
@@ -119,9 +139,54 @@ const sosSessionSchema: Schema<ISosSession> = new Schema(
     lastKnownAccuracy: {
       type: Number,
     },
+    entryLat: {
+      type: Number,
+    },
+    entryLng: {
+      type: Number,
+    },
+    consecutiveHeartbeats: {
+      type: Number,
+      default: 0,
+    },
+    firstReconnectionAt: {
+      type: Date,
+    },
+    surfaceDetectionSent: {
+      type: Boolean,
+      default: false,
+    },
+    reconnectionDetectionSent: {
+      type: Boolean,
+      default: false,
+    },
+    sessionContactIds: {
+      type: [Schema.Types.ObjectId],
+      ref: "SosContact",
+      required: false,
+    },
+    useDefaultContacts: {
+      type: Boolean,
+      default: true,
+    },
     note: {
       type: String,
       maxlength: 500,
+    },
+    siteName: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+    },
+    zone: {
+      type: String,
+      trim: true,
+      maxlength: 200,
+    },
+    depth: {
+      type: Number,
+      min: 0,
+      max: 5000, // 5km max de profondeur
     },
     heartbeatCount: {
       type: Number,

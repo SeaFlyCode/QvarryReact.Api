@@ -12,7 +12,7 @@ import dataArchiveService from "./dataArchiveService";
  * @param type - Type de notification
  * @param title - Titre de la notification
  * @param message - Message de la notification
- * @param data - Données optionnelles (contactId, conversationId, messageId, shareId, senderId)
+ * @param data - Données optionnelles (contactId, conversationId, messageId, shareId, senderId, sosSessionId)
  */
 export async function createNotification(
   userId: mongoose.Types.ObjectId,
@@ -25,6 +25,7 @@ export async function createNotification(
     messageId?: mongoose.Types.ObjectId;
     shareId?: mongoose.Types.ObjectId;
     senderId?: mongoose.Types.ObjectId;
+    sosSessionId?: mongoose.Types.ObjectId;
   },
 ): Promise<INotification> {
   const notification = new NotificationModel({
@@ -37,12 +38,14 @@ export async function createNotification(
     messageId: data?.messageId,
     shareId: data?.shareId,
     senderId: data?.senderId,
+    sosSessionId: data?.sosSessionId,
     read: false,
     createdAt: new Date(),
     relatedEntityId:
       data?.shareId?.toString() ||
       data?.contactId?.toString() ||
-      data?.conversationId?.toString(),
+      data?.conversationId?.toString() ||
+      data?.sosSessionId?.toString(),
   });
 
   await notification.save();

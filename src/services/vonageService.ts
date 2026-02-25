@@ -5,11 +5,16 @@
 // Utilisé par le Mode SOS pour envoyer les alertes d'urgence (Stage 2)
 // ═══════════════════════════════════════════════════════════════════════════
 
+// Configuration du mécanisme de retry
+const SMS_MAX_RETRIES = 3;
+const SMS_RETRY_BASE_DELAY_MS = 2000;
+
 interface SmsSendResult {
   success: boolean;
   messageId?: string;
   error?: string;
   to: string;
+  attempts?: number;
 }
 
 interface VonageSmsResponse {
@@ -70,12 +75,62 @@ class VonageService {
   }
 
   /**
-   * Envoyer un SMS à un numéro de téléphone
+   * Envoyer un SMS à un numéro de téléphone (avec retry automatique)
    * @param to - Numéro de téléphone au format E.164 (ex: +33612345678)
    * @param text - Contenu du SMS
    * @returns Résultat de l'envoi
    */
   async sendSms(to: string, text: string): Promise<SmsSendResult> {
+    return this.sendSmsWithRetry(to, text, SMS_MAX_RETRIES);
+  }
+
+  /**
+   * Envoyer un SMS avec mécanisme de retry et backoff exponentiel
+   * @param to - Numéro de téléphone au format E.164
+   * @param text - Contenu du SMS
+   * @param maxRetries - Nombre maximum de tentatives (défaut: 3)
+   * @returns Résultat de l'envoi avec le nombre de tentatives
+   */
+  private async sendSmsWithRetry(
+    to: string,
+    text: string,
+    maxRetries: number = SMS_MAX_RETRIES,
+  ): Promise<SmsSendResult> {
+    let lastResult: SmsSendResult | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      // Tentative d'envoi
+      lastResult = await this.sendSmsOnce(to, text);
+
+      // Si succès ou service non configuré, on arrête immédiatement
+      if (
+        lastResult.success ||
+        lastResult.error === "Service Vonage non configuré"
+      ) {
+        return { ...lastResult, attempts: attempt };
+      }
+
+      // Si échec et qu'il reste des tentatives, on attend avant de retry
+      if (attempt < maxRetries) {
+        const delay = SMS_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+        console.warn(
+          `⏳ [VONAGE] Retry ${attempt}/${maxRetries} pour ${to.substring(0, 6)}*** après ${delay}ms`,
+        );
+        await this.sleep(delay);
+      }
+    }
+
+    // Toutes les tentatives ont échoué
+    return { ...lastResult!, attempts: maxRetries };
+  }
+
+  /**
+   * Envoyer un SMS (une seule tentative, sans retry)
+   * @param to - Numéro de téléphone au format E.164
+   * @param text - Contenu du SMS
+   * @returns Résultat de l'envoi
+   */
+  private async sendSmsOnce(to: string, text: string): Promise<SmsSendResult> {
     if (!this.isReady()) {
       console.warn("⚠️ [VONAGE] Service non configuré — SMS simulé vers:", to);
       return {
@@ -148,6 +203,14 @@ class VonageService {
         to,
       };
     }
+  }
+
+  /**
+   * Attendre un délai (helper pour le retry)
+   * @param ms - Délai en millisecondes
+   */
+  private sleep(ms: number): Promise<void> {
+    return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
   /**

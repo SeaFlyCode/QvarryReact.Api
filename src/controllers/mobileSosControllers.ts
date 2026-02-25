@@ -26,7 +26,17 @@ export async function handleSosActivate(req: Request, res: Response) {
       });
     }
 
-    const { expectedDuration, note, lat, lng, accuracy } = req.body;
+    const {
+      expectedDuration,
+      note,
+      lat,
+      lng,
+      accuracy,
+      siteName,
+      zone,
+      depth,
+      sessionContacts,
+    } = req.body;
 
     // Validation
     if (!expectedDuration || typeof expectedDuration !== "number") {
@@ -50,6 +60,10 @@ export async function handleSosActivate(req: Request, res: Response) {
       lat,
       lng,
       accuracy,
+      siteName,
+      zone,
+      depth,
+      sessionContacts,
     });
 
     const duration = Date.now() - startTime;
@@ -89,6 +103,18 @@ export async function handleSosActivate(req: Request, res: Response) {
         return res.status(400).json({
           error: "Durée invalide (15min - 8h).",
           code: "INVALID_DURATION",
+        });
+      }
+      if (error.message === "INVALID_CONTACT_IDS") {
+        return res.status(400).json({
+          error: "Un ou plusieurs IDs de contacts sont invalides.",
+          code: "INVALID_CONTACT_IDS",
+        });
+      }
+      if (error.message === "INVALID_PHONE_FORMAT") {
+        return res.status(400).json({
+          error: "Format de téléphone invalide pour un contact temporaire.",
+          code: "INVALID_PHONE_FORMAT",
         });
       }
     }
@@ -378,6 +404,9 @@ export async function handleSosStatus(req: Request, res: Response) {
             extensionCount: session.extensionCount,
             lastHeartbeatAt: session.lastHeartbeatAt,
             note: session.note,
+            siteName: session.siteName,
+            zone: session.zone,
+            depth: session.depth,
           }
         : null,
     });
@@ -405,12 +434,13 @@ export async function handleSosHistory(req: Request, res: Response) {
     }
 
     const limit = Math.min(parseInt(req.query.limit as string) || 20, 50);
-    const sessions = await sosService.getSessionHistory(userId, limit);
+    const result = await sosService.getSessionHistory(userId, limit);
 
     res.status(200).json({
       success: true,
-      sessions,
-      count: sessions.length,
+      sessions: result.sessions,
+      stats: result.stats,
+      count: result.sessions.length,
     });
   } catch (error) {
     console.error(`❌ [MOBILE-SOS] Erreur historique:`, getErrorMessage(error));

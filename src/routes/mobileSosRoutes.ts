@@ -56,16 +56,29 @@ const mobileSosMiddleware = [
  *   {
  *     "expectedDuration": 120,          // Durée en minutes (15-480)
  *     "note": "Galerie nord",           // Optionnel - note libre
+ *     "siteName": "Carrière de Pont-Réan", // Optionnel - nom du site/carrière
+ *     "zone": "Galerie Nord",           // Optionnel - zone dans le site
+ *     "depth": 150,                     // Optionnel - profondeur en mètres
  *     "lat": 48.8566,                   // Optionnel - latitude
  *     "lng": 2.3522,                    // Optionnel - longitude
- *     "accuracy": 10                    // Optionnel - précision GPS en mètres
+ *     "accuracy": 10,                   // Optionnel - précision GPS en mètres
+ *     "sessionContacts": {              // Optionnel - override des contacts pour cette session
+ *       "permanentContactIds": ["id1", "id2"], // IDs des contacts permanents à utiliser
+ *       "additionalContacts": [         // Contacts temporaires supplémentaires
+ *         {
+ *           "name": "Jean Dupont",
+ *           "phone": "+33612345678",
+ *           "relationship": "Collègue"
+ *         }
+ *       ]
+ *     }
  *   }
  *
  * Response 201:
  *   { success: true, session: { id, status, activatedAt, expiresAt, ... } }
  *
  * Codes d'erreur:
- *   - 400: MISSING_DURATION, INVALID_DURATION, NO_EMERGENCY_CONTACTS
+ *   - 400: MISSING_DURATION, INVALID_DURATION, NO_EMERGENCY_CONTACTS, INVALID_CONTACT_IDS, INVALID_PHONE_FORMAT
  *   - 401: UNAUTHORIZED
  *   - 409: SESSION_ALREADY_ACTIVE
  *   - 500: INTERNAL_ERROR
@@ -145,13 +158,27 @@ router.get("/status", ...mobileSosMiddleware, handleSosStatus);
 
 /**
  * GET /api/mobile/sos/history
- * Historique des sessions SOS passées
+ * Historique des sessions SOS passées avec statistiques enrichies
  *
  * Query params:
  *   - limit: number (max 50, défaut 20)
  *
  * Response 200:
- *   { success: true, sessions: [...], count: number }
+ *   {
+ *     success: true,
+ *     sessions: [...],  // Sessions enrichies avec actualDuration et durationOverrun
+ *     stats: {
+ *       totalSessions: number,
+ *       totalDuration: number,        // Minutes totales sous terre
+ *       averageDuration: number,      // Durée moyenne en minutes
+ *       longestSession: number,       // Plus longue session en minutes
+ *       totalHeartbeats: number,      // Total de heartbeats
+ *       escalationRate: number,       // % de sessions qui ont atteint l'escalade
+ *       mostVisitedSites: [{ siteName: string, count: number }],
+ *       lastSessionDate: Date | null
+ *     },
+ *     count: number
+ *   }
  */
 router.get("/history", ...mobileSosMiddleware, handleSosHistory);
 

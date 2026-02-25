@@ -10,6 +10,7 @@ import mongoose, { Document, Schema, Model } from "mongoose";
 // Interface pour les contacts d'urgence SOS
 export interface ISosContact extends Document {
   userId: mongoose.Types.ObjectId; // Propriétaire du contact
+  sessionId?: mongoose.Types.ObjectId; // Si présent, contact spécifique à une session (override)
   name: string; // Nom du contact
   phone: string; // Numéro de téléphone (format E.164: +33...)
   relationship?: string; // Relation (ex: "Conjoint", "Parent", "Collègue")
@@ -27,6 +28,12 @@ const sosContactSchema: Schema<ISosContact> = new Schema(
       type: Schema.Types.ObjectId,
       ref: "User",
       required: true,
+      index: true,
+    },
+    sessionId: {
+      type: Schema.Types.ObjectId,
+      ref: "SosSession",
+      required: false,
       index: true,
     },
     name: {
@@ -68,7 +75,8 @@ const sosContactSchema: Schema<ISosContact> = new Schema(
 
 // Index composites
 sosContactSchema.index({ userId: 1, isDefault: -1, createdAt: -1 });
-sosContactSchema.index({ userId: 1, phone: 1 }, { unique: true }); // Un même numéro par utilisateur
+// Un même numéro par utilisateur ET par session (permet le même numéro en permanent et en session)
+sosContactSchema.index({ userId: 1, phone: 1, sessionId: 1 }, { unique: true });
 
 const SosContactModel: Model<ISosContact> =
   mongoose.models.SosContact ||

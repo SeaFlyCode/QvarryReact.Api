@@ -12,7 +12,11 @@ export type NotificationType =
   | "share_declined" // Votre partage a été refusé
   | "share_read" // Votre partage a été lu
   | "share_expiring_soon" // Un partage va expirer dans 2 jours
-  | "share_expired"; // Un partage a expiré
+  | "share_expired" // Un partage a expiré
+  | "sos_alert" // Alerte SOS générique (stage 0)
+  | "sos_stage1_alert" // Alerte SOS stage 1 (notification à tous les users)
+  | "sos_stage2_sms" // Notification interne de suivi SMS envoyé (stage 2)
+  | "sos_resolved"; // Session SOS résolue
 
 // Interface pour les notifications
 export interface INotification extends Document {
@@ -25,6 +29,7 @@ export interface INotification extends Document {
   messageId?: mongoose.Types.ObjectId; // ID du message (pour messages)
   shareId?: mongoose.Types.ObjectId; // ID du partage concerné (si applicable)
   senderId?: mongoose.Types.ObjectId; // ID de l'émetteur (si applicable)
+  sosSessionId?: mongoose.Types.ObjectId; // ID de la session SOS (si applicable)
 
   // Contenu de la notification
   title: string;
@@ -63,6 +68,10 @@ const notificationSchema: Schema<INotification> = new Schema(
         "share_read",
         "share_expiring_soon",
         "share_expired",
+        "sos_alert",
+        "sos_stage1_alert",
+        "sos_stage2_sms",
+        "sos_resolved",
       ],
       required: true,
     },
@@ -85,6 +94,10 @@ const notificationSchema: Schema<INotification> = new Schema(
     senderId: {
       type: Schema.Types.ObjectId,
       ref: "User",
+    },
+    sosSessionId: {
+      type: Schema.Types.ObjectId,
+      ref: "SosSession",
     },
     title: {
       type: String,
