@@ -9,6 +9,7 @@ import {
   createTestNotification,
 } from "../controllers/notificationsControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
+import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 
 const router = Router();
 
@@ -31,12 +32,20 @@ router.get("/unread-count", getUnreadCount);
 router.patch("/read-all", markAllAsRead);
 
 // PATCH /api/notifications/:notificationId/read - Marquer une notification comme lue
-router.patch("/:notificationId/read", markAsRead);
+router.patch(
+  "/:notificationId/read",
+  validateObjectId("notificationId"),
+  markAsRead,
+);
 
 // DELETE /api/notifications/read - Supprimer toutes les notifications lues
 router.delete("/read", deleteAllRead);
 
 // DELETE /api/notifications/:notificationId - Supprimer une notification
-router.delete("/:notificationId", deleteNotification);
+router.delete(
+  "/:notificationId",
+  validateObjectId("notificationId"),
+  deleteNotification,
+);
 
 export default router;

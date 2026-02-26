@@ -28,6 +28,26 @@ const COOKIE_SAMESITE: SameSiteOption =
   (isProduction ? "strict" : "lax");
 
 // ═══════════════════════════════════════════════════════════════════════════
+// NOMS DES COOKIES (avec préfixe __Host- en production)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Nom du cookie JWT (Access Token)
+ * En production: __Host-token (impose Secure=true, Path=/, pas de Domain)
+ * En développement: token
+ */
+export const JWT_COOKIE_NAME = isProduction ? "__Host-token" : "token";
+
+/**
+ * Nom du cookie Refresh Token
+ * En production: __Host-refreshToken (impose Secure=true, Path=/, pas de Domain)
+ * En développement: refreshToken
+ */
+export const REFRESH_TOKEN_COOKIE_NAME = isProduction
+  ? "__Host-refreshToken"
+  : "refreshToken";
+
+// ═══════════════════════════════════════════════════════════════════════════
 // OPTIONS DE COOKIE PAR TYPE
 // ═══════════════════════════════════════════════════════════════════════════
 

@@ -7,6 +7,7 @@
 
 import express from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
+import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 import {
   verifyMobilePlatform,
   mobileRateLimitMiddleware,
@@ -216,6 +217,7 @@ router.get("/active", ...mobileSosMiddleware, handleSosActiveSessions);
 router.post(
   "/:sessionId/deactivate",
   ...mobileSosMiddleware,
+  validateObjectId("sessionId"),
   handleSosDeactivateByParam,
 );
 
@@ -235,6 +237,7 @@ router.post(
 router.post(
   "/:sessionId/confirm-safe",
   ...mobileSosMiddleware,
+  validateObjectId("sessionId"),
   handleSosConfirmSafe,
 );
 
@@ -290,7 +293,12 @@ router.get("/contacts", ...mobileSosMiddleware, handleSosGetContacts);
  *   - 404: CONTACT_NOT_FOUND
  *   - 500: INTERNAL_ERROR
  */
-router.put("/contacts/:id", ...mobileSosMiddleware, handleSosUpdateContact);
+router.put(
+  "/contacts/:id",
+  ...mobileSosMiddleware,
+  validateObjectId("id"),
+  handleSosUpdateContact,
+);
 
 /**
  * DELETE /api/mobile/sos/contacts/:id
@@ -304,6 +312,11 @@ router.put("/contacts/:id", ...mobileSosMiddleware, handleSosUpdateContact);
  *   - 404: CONTACT_NOT_FOUND
  *   - 500: INTERNAL_ERROR
  */
-router.delete("/contacts/:id", ...mobileSosMiddleware, handleSosDeleteContact);
+router.delete(
+  "/contacts/:id",
+  ...mobileSosMiddleware,
+  validateObjectId("id"),
+  handleSosDeleteContact,
+);
 
 export default router;

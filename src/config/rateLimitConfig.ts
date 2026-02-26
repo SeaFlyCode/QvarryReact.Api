@@ -59,6 +59,7 @@ const config = {
     authCheck: 60, // Vérification auth
     maintenance: 30, // Routes maintenance
     users: 100, // Routes utilisateurs (SEC-044)
+    notifications: 60, // Routes notifications (SEC-AUDIT)
   },
 };
 
@@ -319,6 +320,18 @@ export const usersLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: getLimit("users"),
   message: "Trop de requêtes utilisateurs, veuillez réessayer plus tard.",
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
+/**
+ * SEC-AUDIT: Rate limiter pour les routes notifications
+ * Protection spécifique pour les notifications (60 req/min en prod)
+ */
+export const notificationsLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 minute
+  max: getLimit("notifications"),
+  message: "Trop de requêtes de notifications, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
 });

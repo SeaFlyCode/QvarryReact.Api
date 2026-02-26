@@ -8,6 +8,7 @@ import {
   handleUpdatePoint,
 } from "../controllers/pointsControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
+import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 
 const router = express.Router();
 
@@ -167,7 +168,7 @@ router.get("/", authMiddleware, handleGetAllPointsByUserId);
  *       401:
  *         description: Non authentifié
  */
-router.get("/:id", authMiddleware, handleGetPointById);
+router.get("/:id", authMiddleware, validateObjectId("id"), handleGetPointById);
 
 /**
  * @swagger
@@ -193,7 +194,12 @@ router.get("/:id", authMiddleware, handleGetPointById);
  *       401:
  *         description: Non authentifié
  */
-router.delete("/:id", authMiddleware, handleDeletePoint);
+router.delete(
+  "/:id",
+  authMiddleware,
+  validateObjectId("id"),
+  handleDeletePoint,
+);
 
 /**
  * @swagger
@@ -240,6 +246,6 @@ router.delete("/:id", authMiddleware, handleDeletePoint);
  *       401:
  *         description: Non authentifié
  */
-router.put("/:id", authMiddleware, handleUpdatePoint);
+router.put("/:id", authMiddleware, validateObjectId("id"), handleUpdatePoint);
 
 export default router;

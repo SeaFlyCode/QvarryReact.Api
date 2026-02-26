@@ -4,6 +4,7 @@ import MaintenanceModel from "../models/maintenance";
 import jwt from "jsonwebtoken";
 import { jwtKeyManager } from "../utils/jwtKeyManager";
 import { logger } from "../services/loggerService";
+import { JWT_COOKIE_NAME } from "../config/cookieConfig";
 
 const maintenanceLogger = logger.child({ service: "maintenance" });
 
@@ -45,7 +46,8 @@ export const maintenanceMiddleware = async (
 
     // Vérifier si l'utilisateur est un admin connecté
     const token =
-      req.cookies?.token || req.headers.authorization?.split(" ")[1];
+      req.cookies?.[JWT_COOKIE_NAME] ||
+      req.headers.authorization?.split(" ")[1];
 
     if (token) {
       try {
@@ -58,20 +60,24 @@ export const maintenanceMiddleware = async (
         if (unverifiedPayload?.isAdmin) {
           // Vérifier que le token est valide
           const keyVersion = unverifiedPayload?.kv;
+          const envSecret = process.env.JWT_SECRET;
+          if (!envSecret) {
+            // Token non vérifiable sans secret, pas de bypass admin
+            return next();
+          }
+
           let jwtSecret: string;
 
           if (keyVersion && jwtKeyManager.hasVersion(keyVersion)) {
             const versionedSecret = jwtKeyManager.getKeyByVersion(keyVersion);
-            if (versionedSecret) {
-              jwtSecret = versionedSecret;
-            } else {
-              jwtSecret = process.env.JWT_SECRET || "";
-            }
+            jwtSecret = versionedSecret ?? envSecret;
           } else {
-            jwtSecret = process.env.JWT_SECRET || "";
+            jwtSecret = envSecret;
           }
 
-          const decoded = jwt.verify(token, jwtSecret) as { isAdmin?: boolean };
+          const decoded = jwt.verify(token, jwtSecret, {
+            algorithms: ["HS256"],
+          }) as { isAdmin?: boolean };
 
           // Si c'est un admin valide, autoriser l'accès
           if (decoded.isAdmin) {

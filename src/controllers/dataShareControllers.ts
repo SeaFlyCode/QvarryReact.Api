@@ -14,8 +14,68 @@ import { syncService } from "../services/syncService";
 import { sendShareNotificationEmail } from "../services/emailService";
 import User from "../models/users";
 import { logger } from "../services/loggerService";
+import FicheModel from "../models/fiches";
+import Point from "../models/points";
+import ListModel from "../models/lists";
 
 const dataShareLogger = logger.child({ service: "data-share" });
+
+/**
+ * Vérifie que l'utilisateur est propriétaire de la donnée avant de la partager
+ * SÉCURITÉ: Empêche le partage non autorisé de données d'autres utilisateurs
+ */
+async function verifyDataOwnership(
+  dataType: string,
+  dataId: mongoose.Types.ObjectId,
+  userId: mongoose.Types.ObjectId,
+): Promise<boolean> {
+  try {
+    let document = null;
+
+    // Vérifier que le document existe et appartient à l'utilisateur
+    // Exclure les documents soft-deleted
+    const ownershipQuery = {
+      _id: dataId,
+      userId: userId,
+      $or: [{ deletedAt: null }, { deletedAt: { $exists: false } }],
+    };
+
+    switch (dataType) {
+      case "fiche":
+        document = await FicheModel.findOne(ownershipQuery);
+        break;
+      case "point":
+        document = await Point.findOne(ownershipQuery);
+        break;
+      case "liste":
+        document = await ListModel.findOne(ownershipQuery);
+        break;
+      default:
+        dataShareLogger.error("Type de données invalide pour ownership", {
+          dataType,
+        });
+        return false;
+    }
+
+    if (!document) {
+      dataShareLogger.warn("Tentative de partage non autorisé", {
+        dataType,
+        dataId: dataId.toString(),
+        userId: userId.toString(),
+      });
+      return false;
+    }
+
+    return true;
+  } catch (error) {
+    dataShareLogger.error("Erreur vérification ownership", {
+      error: getErrorMessage(error),
+      dataType,
+      dataId: dataId.toString(),
+    });
+    return false;
+  }
+}
 
 /**
  * Déchiffre les informations d'un utilisateur en respectant le paramètre showPseudo
@@ -155,6 +215,29 @@ export const handleShareData = async (
       // On continue quand même, les données peuvent être récupérées depuis la mémoire
     }
 
+    // SEC-AUDIT: Vérification d'ownership avant partage
+    dataShareLogger.info("Vérification d'ownership", {
+      dataType,
+      dataId,
+      senderId,
+    });
+    const ownershipVerified = await verifyDataOwnership(
+      dataType,
+      dataObjectId,
+      senderObjectId,
+    );
+    if (!ownershipVerified) {
+      dataShareLogger.warn("Partage refusé : ownership non vérifié", {
+        dataType,
+        dataId,
+        senderId,
+      });
+      res.status(403).json({
+        error: "Vous n'êtes pas autorisé à partager cette donnée",
+      });
+      return;
+    }
+
     // Créer le partage
     const share = await shareData(
       senderObjectId,
@@ -236,7 +319,6 @@ export const handleShareData = async (
     });
     res.status(500).json({
       error: "Erreur lors du partage des données",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -296,13 +378,14 @@ export const handleGetSharedData = async (
     });
 
     if (getErrorMessage(error).includes("expiré")) {
-      res.status(410).json({ error: getErrorMessage(error) });
+      res.status(410).json({ error: "Une erreur interne est survenue" });
     } else if (getErrorMessage(error).includes("Signature invalide")) {
-      res.status(403).json({ error: getErrorMessage(error), tampered: true });
+      res
+        .status(403)
+        .json({ error: "Une erreur interne est survenue", tampered: true });
     } else {
       res.status(500).json({
         error: "Erreur lors de la récupération des données partagées",
-        details: getErrorMessage(error),
       });
     }
   }
@@ -371,7 +454,6 @@ export const handleUpdateShareStatus = async (
     });
     res.status(500).json({
       error: "Erreur lors de la mise à jour du statut",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -451,7 +533,6 @@ export const handleGetReceivedShares = async (
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des partages reçus",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -533,7 +614,6 @@ export const handleGetSentShares = async (
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des partages envoyés",
-      details: getErrorMessage(error),
     });
   }
 };

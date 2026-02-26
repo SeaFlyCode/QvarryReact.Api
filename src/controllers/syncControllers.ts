@@ -1,4 +1,3 @@
-import { getErrorMessage } from "../utils/errorUtils";
 import { Request, Response } from "express";
 import { syncService } from "../services/syncService";
 import { memoryStorage } from "../services/memoryStorageService";
@@ -31,7 +30,7 @@ export async function handleManualSync(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de la synchronisation",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -77,7 +76,7 @@ export async function handleSyncRefresh(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors du refresh",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }

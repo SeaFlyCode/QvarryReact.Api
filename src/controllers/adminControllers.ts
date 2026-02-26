@@ -39,7 +39,7 @@ function safeDecrypt(value: string | undefined): string {
     adminLogger.warn("[ADMIN] Erreur déchiffrement", {
       error: e instanceof Error ? e.message : String(e),
     });
-    return value; // Retourner la valeur originale si erreur
+    return "[Données indisponibles]"; // Ne jamais retourner la valeur chiffrée
   }
 }
 
@@ -110,6 +110,11 @@ const ALLOWED_AUDIT_ACTIONS = [
   "ADMIN_ACTION",
   "SECURITY_ALERT",
 ];
+
+/**
+ * Whitelist des niveaux de log valides
+ */
+const VALID_LOG_LEVELS = ["info", "warning", "error", "critical"];
 
 // ═══════════════════════════════════════════════════════════════════════════
 // STATISTIQUES GÉNÉRALES (DASHBOARD)
@@ -620,22 +625,22 @@ export async function blockUser(req: Request, res: Response) {
       userAgent: req.get("user-agent"),
       details: {
         blockedUserId: userId,
-        blockedUserEmail: user.email,
+        blockedUserEmail: maskEmail(safeDecrypt(user.email)),
         reason: reason || "Aucune raison spécifiée",
       },
     });
 
     adminLogger.info("[ADMIN] Utilisateur bloqué", {
-      email: maskEmail(user.email),
+      email: maskEmail(safeDecrypt(user.email)),
       adminId,
     });
 
     res.status(200).json({
       success: true,
-      message: `Utilisateur ${user.email} bloqué avec succès`,
+      message: `Utilisateur ${safeDecrypt(user.email)} bloqué avec succès`,
       user: {
         id: user._id,
-        email: user.email,
+        email: safeDecrypt(user.email),
         is_blocked: true,
         blocked_at: user.blocked_at,
         blocked_reason: user.blocked_reason,
@@ -688,21 +693,21 @@ export async function unblockUser(req: Request, res: Response) {
       userAgent: req.get("user-agent"),
       details: {
         unblockedUserId: userId,
-        unblockedUserEmail: user.email,
+        unblockedUserEmail: maskEmail(safeDecrypt(user.email)),
       },
     });
 
     adminLogger.info("[ADMIN] Utilisateur débloqué", {
-      email: maskEmail(user.email),
+      email: maskEmail(safeDecrypt(user.email)),
       adminId,
     });
 
     res.status(200).json({
       success: true,
-      message: `Utilisateur ${user.email} débloqué avec succès`,
+      message: `Utilisateur ${safeDecrypt(user.email)} débloqué avec succès`,
       user: {
         id: user._id,
-        email: user.email,
+        email: safeDecrypt(user.email),
         is_blocked: false,
       },
     });
@@ -759,21 +764,21 @@ export async function promoteToAdmin(req: Request, res: Response) {
       userAgent: req.get("user-agent"),
       details: {
         promotedUserId: userId,
-        promotedUserEmail: user.email,
+        promotedUserEmail: maskEmail(safeDecrypt(user.email)),
       },
     });
 
     adminLogger.info("[ADMIN] Utilisateur promu admin", {
-      email: maskEmail(user.email),
+      email: maskEmail(safeDecrypt(user.email)),
       adminId,
     });
 
     res.status(200).json({
       success: true,
-      message: `${user.email} est maintenant administrateur`,
+      message: `${safeDecrypt(user.email)} est maintenant administrateur`,
       user: {
         id: user._id,
-        email: user.email,
+        email: safeDecrypt(user.email),
         is_admin: true,
       },
     });
@@ -841,21 +846,21 @@ export async function demoteFromAdmin(req: Request, res: Response) {
       userAgent: req.get("user-agent"),
       details: {
         demotedUserId: userId,
-        demotedUserEmail: user.email,
+        demotedUserEmail: maskEmail(safeDecrypt(user.email)),
       },
     });
 
     adminLogger.info("[ADMIN] Admin rétrogradé", {
-      email: maskEmail(user.email),
+      email: maskEmail(safeDecrypt(user.email)),
       adminId,
     });
 
     res.status(200).json({
       success: true,
-      message: `${user.email} n'est plus administrateur`,
+      message: `${safeDecrypt(user.email)} n'est plus administrateur`,
       user: {
         id: user._id,
-        email: user.email,
+        email: safeDecrypt(user.email),
         is_admin: false,
       },
     });
@@ -902,20 +907,20 @@ export async function forceLogoutUser(req: Request, res: Response) {
       userAgent: req.get("user-agent"),
       details: {
         targetUserId: userId,
-        targetUserEmail: user.email,
+        targetUserEmail: maskEmail(safeDecrypt(user.email)),
         revokedSessions: revokedCount,
       },
     });
 
     adminLogger.info("[ADMIN] Sessions révoquées", {
-      targetUserEmail: maskEmail(user.email),
+      targetUserEmail: maskEmail(safeDecrypt(user.email)),
       adminId,
       revokedCount,
     });
 
     res.status(200).json({
       success: true,
-      message: `Toutes les sessions de ${user.email} ont été révoquées`,
+      message: `Toutes les sessions de ${safeDecrypt(user.email)} ont été révoquées`,
       revokedSessions: revokedCount,
     });
   } catch (error) {
@@ -1033,7 +1038,10 @@ export async function getAuditLogs(req: Request, res: Response) {
     const filter: any = {};
 
     if (req.query.userId) {
-      filter.userId = new mongoose.Types.ObjectId(req.query.userId as string);
+      const userIdStr = String(req.query.userId);
+      if (mongoose.Types.ObjectId.isValid(userIdStr)) {
+        filter.userId = new mongoose.Types.ObjectId(userIdStr);
+      }
     }
     if (req.query.action) {
       const requestedAction = (req.query.action as string).toUpperCase();
@@ -1044,7 +1052,11 @@ export async function getAuditLogs(req: Request, res: Response) {
       // Si l'action n'est pas dans la whitelist, on l'ignore pour la sécurité
     }
     if (req.query.level) {
-      filter.level = req.query.level;
+      const level = String(req.query.level);
+      if (VALID_LOG_LEVELS.includes(level)) {
+        filter.level = level;
+      }
+      // Si le level n'est pas dans la whitelist, on l'ignore silencieusement
     }
     if (req.query.startDate) {
       filter.timestamp = {
@@ -1369,7 +1381,13 @@ export async function exportAuditLogs(req: Request, res: Response) {
     const filter: any = {};
     if (startDate) filter.timestamp = { ...filter.timestamp, $gte: startDate };
     if (endDate) filter.timestamp = { ...filter.timestamp, $lte: endDate };
-    if (level) filter.level = level;
+    if (level) {
+      const levelStr = String(level);
+      if (VALID_LOG_LEVELS.includes(levelStr)) {
+        filter.level = levelStr;
+      }
+      // Si le level n'est pas dans la whitelist, on l'ignore silencieusement
+    }
     // HIGH-5: Utiliser la whitelist pour prévenir les injections regex
     if (action) {
       const requestedAction = action.toUpperCase();

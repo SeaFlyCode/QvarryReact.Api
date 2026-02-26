@@ -100,6 +100,11 @@ router.post(
  *
  * Note: Utilise le même handler que la route web (/api/auth/logout)
  */
-router.post("/logout", handleLogoutUser);
+router.post(
+  "/logout",
+  verifyMobilePlatform,
+  mobileRateLimitMiddleware,
+  handleLogoutUser,
+);
 
 export default router;

@@ -373,7 +373,9 @@ export async function verifyTwoFactorLogin(
           .status(500)
           .json({ error: "Configuration serveur manquante" });
       }
-      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET) as {
+      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as {
         userId: string;
         type: string;
       };

@@ -11,6 +11,7 @@ import {
 import { verifyTurnstile } from "../middlewares/turnstileMiddleware";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import { adminMiddleware } from "../middlewares/adminMiddleware";
+import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 
 const router = express.Router();
 
@@ -28,8 +29,8 @@ router.get("/", authMiddleware, adminMiddleware, handleGetAllUsers);
 
 // Routes avec paramètres dynamiques - APRÈS les routes spécifiques
 // PROTÉGÉES - Nécessitent authentification (SEC-033, SEC-034, SEC-035)
-router.get("/:id", authMiddleware, handleGetUserById);
-router.delete("/:id", authMiddleware, handleDeleteUser);
-router.put("/:id", authMiddleware, handleUpdateUser);
+router.get("/:id", authMiddleware, validateObjectId("id"), handleGetUserById);
+router.delete("/:id", authMiddleware, validateObjectId("id"), handleDeleteUser);
+router.put("/:id", authMiddleware, validateObjectId("id"), handleUpdateUser);
 
 export default router;

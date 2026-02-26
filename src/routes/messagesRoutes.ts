@@ -1,5 +1,6 @@
 import express from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
+import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 import {
   sendMessage,
   getMessages,
@@ -20,18 +21,22 @@ router.post("/", sendMessage);
 router.post("/read-batch", markMessagesAsRead);
 
 // Lister les messages d'une conversation
-router.get("/:conversationId", getMessages);
+router.get("/:conversationId", validateObjectId("conversationId"), getMessages);
 
 // Marquer un message comme lu
-router.patch("/:messageId/read", markMessageAsRead);
+router.patch(
+  "/:messageId/read",
+  validateObjectId("messageId"),
+  markMessageAsRead,
+);
 
 // Répondre à un message (thread)
-router.post("/:messageId/reply", replyToMessage);
+router.post("/:messageId/reply", validateObjectId("messageId"), replyToMessage);
 
 // Modifier un message
-router.patch("/:messageId", editMessage);
+router.patch("/:messageId", validateObjectId("messageId"), editMessage);
 
 // Supprimer un message
-router.delete("/:messageId", deleteMessage);
+router.delete("/:messageId", validateObjectId("messageId"), deleteMessage);
 
 export default router;

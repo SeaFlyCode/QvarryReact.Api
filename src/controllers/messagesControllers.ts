@@ -72,17 +72,28 @@ export async function sendMessage(req: Request, res: Response) {
     }
     // Chiffrer le contenu du message
     const encryptedContent = encryptCommunication(content);
-    // Chiffrer les mentions si présentes
+    // Sanitiser et chiffrer les metadata
+    const ALLOWED_METADATA_KEYS = ["mentions", "replyTo", "type", "format"];
     let encryptedMetadata = undefined;
-    if (metadata && metadata.mentions) {
-      encryptedMetadata = {
-        ...metadata,
-        mentions: metadata.mentions.map((id: string) =>
-          encryptCommunication(id),
-        ),
-      };
-    } else if (metadata) {
-      encryptedMetadata = metadata;
+    if (metadata) {
+      // Filtrer les clés autorisées uniquement (protection contre injection de champs arbitraires)
+      const sanitizedMetadata: Record<string, any> = {};
+      for (const key of ALLOWED_METADATA_KEYS) {
+        if (key in metadata) {
+          sanitizedMetadata[key] = metadata[key];
+        }
+      }
+      // Chiffrer les mentions si présentes
+      if (sanitizedMetadata.mentions) {
+        encryptedMetadata = {
+          ...sanitizedMetadata,
+          mentions: sanitizedMetadata.mentions.map((id: string) =>
+            encryptCommunication(id),
+          ),
+        };
+      } else {
+        encryptedMetadata = sanitizedMetadata;
+      }
     }
     const message = await Message.create({
       conversationId: new Types.ObjectId(conversationId),
@@ -208,9 +219,11 @@ export async function sendMessage(req: Request, res: Response) {
 
     res.status(201).json({ messageId: message._id });
   } catch (err) {
-    return res
-      .status(500)
-      .json({ error: "Erreur lors de l'envoi du message", details: err });
+    messagesLogger.error("Erreur envoi message", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return res.status(500).json({ error: "Erreur lors de l'envoi du message" });
   }
 }
 
@@ -307,9 +320,12 @@ export async function getMessages(req: Request, res: Response) {
       },
     });
   } catch (err) {
+    messagesLogger.error("Erreur récupération messages", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return res.status(500).json({
       error: "Erreur lors de la récupération des messages",
-      details: err,
     });
   }
 }
@@ -328,6 +344,17 @@ export async function markMessageAsRead(req: Request, res: Response) {
     const message = await Message.findById(messageId);
     if (!message) return res.status(404).json({ error: "Message non trouvé" });
 
+    // SEC-AUDIT: Vérification d'appartenance à la conversation
+    const conversation = await Conversation.findOne({
+      _id: message.conversationId,
+      "participants.userId": userId,
+    });
+    if (!conversation) {
+      return res
+        .status(403)
+        .json({ error: "Accès non autorisé à cette conversation" });
+    }
+
     // Vérifier si le message n'est pas déjà lu par cet utilisateur
     const alreadyRead = message.readBy
       .map((id: string | Types.ObjectId) => id.toString())
@@ -339,25 +366,24 @@ export async function markMessageAsRead(req: Request, res: Response) {
       await message.save();
 
       // Notifier les participants de la conversation que ce message a été lu
-      const conversation = await Conversation.findById(message.conversationId);
-      if (conversation) {
-        const participantIds = conversation.participants.map((p: any) =>
-          p.userId.toString(),
-        );
-        webSocketService.notifyMessagesRead(
-          message.conversationId.toString(),
-          userId,
-          [messageId],
-          participantIds,
-        );
-      }
+      const participantIds = conversation.participants.map((p: any) =>
+        p.userId.toString(),
+      );
+      webSocketService.notifyMessagesRead(
+        message.conversationId.toString(),
+        userId,
+        [messageId],
+        participantIds,
+      );
     }
 
     res.json({ success: true });
   } catch (err) {
-    return res
-      .status(500)
-      .json({ error: "Erreur lors du marquage comme lu", details: err });
+    messagesLogger.error("Erreur marquage message comme lu", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return res.status(500).json({ error: "Erreur lors du marquage comme lu" });
   }
 }
 
@@ -376,6 +402,18 @@ export async function replyToMessage(req: Request, res: Response) {
       return res.status(400).json({ error: "messageId et content requis" });
     const message = await Message.findById(messageId);
     if (!message) return res.status(404).json({ error: "Message non trouvé" });
+
+    // SEC-AUDIT: Vérification d'appartenance à la conversation
+    const conversation = await Conversation.findOne({
+      _id: message.conversationId,
+      "participants.userId": userId,
+    });
+    if (!conversation) {
+      return res
+        .status(403)
+        .json({ error: "Accès non autorisé à cette conversation" });
+    }
+
     // Chiffrer la réponse
     const encryptedContent = encryptCommunication(content);
     const reply: IMessageReply = {
@@ -388,9 +426,11 @@ export async function replyToMessage(req: Request, res: Response) {
     await message.save();
     res.status(201).json({ success: true });
   } catch (err) {
-    return res
-      .status(500)
-      .json({ error: "Erreur lors de la réponse", details: err });
+    messagesLogger.error("Erreur réponse message", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return res.status(500).json({ error: "Erreur lors de la réponse" });
   }
 }
 
@@ -418,9 +458,11 @@ export async function editMessage(req: Request, res: Response) {
     await message.save();
     res.json({ success: true });
   } catch (err) {
-    return res
-      .status(500)
-      .json({ error: "Erreur lors de la modification", details: err });
+    messagesLogger.error("Erreur modification message", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return res.status(500).json({ error: "Erreur lors de la modification" });
   }
 }
 
@@ -444,9 +486,11 @@ export async function deleteMessage(req: Request, res: Response) {
     await message.save();
     res.json({ success: true });
   } catch (err) {
-    return res
-      .status(500)
-      .json({ error: "Erreur lors de la suppression", details: err });
+    messagesLogger.error("Erreur suppression message", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    return res.status(500).json({ error: "Erreur lors de la suppression" });
   }
 }
 
@@ -466,6 +510,17 @@ export async function markMessagesAsRead(req: Request, res: Response) {
     }
     if (!conversationId) {
       return res.status(400).json({ error: "conversationId requis" });
+    }
+
+    // SEC-AUDIT: Vérification d'appartenance à la conversation AVANT l'opération d'écriture
+    const conversation = await Conversation.findOne({
+      _id: conversationId,
+      "participants.userId": userId,
+    });
+    if (!conversation) {
+      return res
+        .status(403)
+        .json({ error: "Accès non autorisé à cette conversation" });
     }
 
     const userObjectId = new Types.ObjectId(userId);
@@ -510,22 +565,19 @@ export async function markMessagesAsRead(req: Request, res: Response) {
 
     // Si des messages ont été marqués comme lus, notifier les participants
     if (result.modifiedCount > 0) {
-      const conversation = await Conversation.findById(conversationId);
-      if (conversation) {
-        const participantIds = conversation.participants.map((p: any) =>
-          p.userId.toString(),
-        );
-        webSocketService.notifyMessagesRead(
-          conversationId,
-          userId,
-          messageIds,
-          participantIds,
-        );
-        messagesLogger.info("Messages marked as read", {
-          count: result.modifiedCount,
-          userId,
-        });
-      }
+      const participantIds = conversation.participants.map((p: any) =>
+        p.userId.toString(),
+      );
+      webSocketService.notifyMessagesRead(
+        conversationId,
+        userId,
+        messageIds,
+        participantIds,
+      );
+      messagesLogger.info("Messages marked as read", {
+        count: result.modifiedCount,
+        userId,
+      });
     }
 
     res.json({ success: true, markedAsRead: result.modifiedCount });
@@ -534,8 +586,6 @@ export async function markMessagesAsRead(req: Request, res: Response) {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
     });
-    return res
-      .status(500)
-      .json({ error: "Erreur lors du marquage comme lu", details: err });
+    return res.status(500).json({ error: "Erreur lors du marquage comme lu" });
   }
 }

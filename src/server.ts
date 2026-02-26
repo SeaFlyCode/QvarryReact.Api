@@ -62,6 +62,7 @@ import {
   authCheckLimiter,
   maintenanceLimiter,
   usersLimiter,
+  notificationsLimiter,
 } from "./config/rateLimitConfig";
 import morgan from "morgan";
 import cors from "cors";
@@ -448,8 +449,8 @@ app.use("/api/security", securityLimiter);
 // Routes de maintenance
 app.use("/api/maintenance", maintenanceLimiter);
 
-// Routes de notifications
-app.use("/api/notifications", socialLimiter);
+// Routes de notifications (SEC-AUDIT: limiter dédié 60 req/min)
+app.use("/api/notifications", notificationsLimiter);
 
 // WebSocket
 app.use("/ws", wsConnectionLimiter);

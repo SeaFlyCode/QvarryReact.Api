@@ -5,7 +5,11 @@ import { memoryStorage } from "../../services/memoryStorageService";
 import { refreshTokenService } from "../../services/refreshTokenService";
 import { redisSessionService } from "../../services/redisSessionService";
 import { syncService } from "../../services/syncService";
-import { clearCookieOptions } from "../../config/cookieConfig";
+import {
+  clearCookieOptions,
+  JWT_COOKIE_NAME,
+  REFRESH_TOKEN_COOKIE_NAME,
+} from "../../config/cookieConfig";
 import { blacklistToken } from "./authHelpers";
 import UserModel from "../../models/users";
 import { logger } from "../../services/loggerService";
@@ -22,7 +26,8 @@ export async function handleLogoutUser(req: Request, res: Response) {
     // 1. RÉCUPÉRATION ET VALIDATION DU TOKEN
     // ─────────────────────────────────────────────────────────────────────
     const token =
-      req.cookies?.token || req.headers.authorization?.split(" ")[1];
+      req.cookies?.[JWT_COOKIE_NAME] ||
+      req.headers.authorization?.split(" ")[1];
 
     if (!token) {
       logoutLogger.warn("[AUTH] Tentative de logout sans token");
@@ -35,9 +40,9 @@ export async function handleLogoutUser(req: Request, res: Response) {
     // ─────────────────────────────────────────────────────────────────────
     // 2. SUPPRESSION DES COOKIES
     // ─────────────────────────────────────────────────────────────────────
-    res.clearCookie("token", clearCookieOptions);
+    res.clearCookie(JWT_COOKIE_NAME, clearCookieOptions);
 
-    res.clearCookie("refreshToken", clearCookieOptions);
+    res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, clearCookieOptions);
 
     // ─────────────────────────────────────────────────────────────────────
     // 3. AJOUT DU TOKEN À LA BLACKLIST ET RÉVOCATION DU REFRESH TOKEN
@@ -51,7 +56,9 @@ export async function handleLogoutUser(req: Request, res: Response) {
         throw new Error("Configuration de sécurité manquante");
       }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET) as {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as {
         id: string;
         jti?: string;
         exp?: number;

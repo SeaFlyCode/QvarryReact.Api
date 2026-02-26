@@ -15,6 +15,7 @@ import {
   handleSyncListData,
 } from "../controllers/listsControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
+import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 
 const router = express.Router();
 
@@ -24,24 +25,48 @@ router.use(authMiddleware);
 // CRUD de base pour les listes
 router.post("/", handleCreateList);
 router.get("/", handleGetAllLists);
-router.get("/:id", handleGetListById);
-router.delete("/:id", handleDeleteList);
-router.put("/:id", handleUpdateList);
+router.get("/:id", validateObjectId("id"), handleGetListById);
+router.delete("/:id", validateObjectId("id"), handleDeleteList);
+router.put("/:id", validateObjectId("id"), handleUpdateList);
 
 // Récupérer les listes d'un utilisateur
-router.get("/user/:userId", handleGetListByUserId);
+router.get("/user/:userId", validateObjectId("userId"), handleGetListByUserId);
 
 // ⚡ OPTIMISÉ: Opérations sur les points (sans sync immédiate)
-router.post("/:listId/points/:pointId", handleAddPointToList);
-router.delete("/:listId/points/:pointId", handleRemovePointFromList);
+router.post(
+  "/:listId/points/:pointId",
+  validateObjectId("listId", "pointId"),
+  handleAddPointToList,
+);
+router.delete(
+  "/:listId/points/:pointId",
+  validateObjectId("listId", "pointId"),
+  handleRemovePointFromList,
+);
 
 // ⚡ NOUVEAU: Opérations batch
-router.post("/:listId/points/bulk/add", handleBulkAddPointsToList);
-router.post("/:listId/points/bulk/remove", handleBulkRemovePointsFromList);
+router.post(
+  "/:listId/points/bulk/add",
+  validateObjectId("listId"),
+  handleBulkAddPointsToList,
+);
+router.post(
+  "/:listId/points/bulk/remove",
+  validateObjectId("listId"),
+  handleBulkRemovePointsFromList,
+);
 
 // Récupération de points et listes
-router.get("/:listId/points", handleGetPointsByListId);
-router.get("/points/:pointId/lists", handleGetListsByPointId);
+router.get(
+  "/:listId/points",
+  validateObjectId("listId"),
+  handleGetPointsByListId,
+);
+router.get(
+  "/points/:pointId/lists",
+  validateObjectId("pointId"),
+  handleGetListsByPointId,
+);
 
 // ⚡ NOUVEAU: Synchronisation manuelle
 router.post("/sync", handleSyncListData);

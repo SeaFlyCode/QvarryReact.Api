@@ -96,7 +96,7 @@ export async function handleForgotPassword(req: Request, res: Response) {
     });
     res.status(500).json({
       message: "Erreur lors de l'envoi de l'email de réinitialisation.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -252,7 +252,7 @@ export async function handleResetPassword(req: Request, res: Response) {
     });
     res.status(500).json({
       message: "Erreur lors de la réinitialisation du mot de passe.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }

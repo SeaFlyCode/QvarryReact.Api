@@ -611,6 +611,7 @@ function verifyTwoFactorTempToken(
     const { secret } = jwtKeyManager.getCurrentKey();
     const payload = jwt.verify(tempToken, secret, {
       issuer: "qvarry-api",
+      algorithms: ["HS256"],
     }) as any;
 
     if (payload.purpose !== "2fa_verification") {

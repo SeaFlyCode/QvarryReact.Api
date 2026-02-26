@@ -378,7 +378,9 @@ class WebSocketService {
         throw new Error("Configuration de sécurité manquante");
       }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET) as {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as {
         id: string;
         type?: string;
         jti?: string;
@@ -506,7 +508,9 @@ class WebSocketService {
         throw new Error("Configuration de sécurité manquante");
       }
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET) as {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as {
         id: string;
         type?: string;
         jti?: string;

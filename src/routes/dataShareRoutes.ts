@@ -7,6 +7,7 @@ import {
   handleGetSentShares,
 } from "../controllers/dataShareControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
+import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 
 const router = express.Router();
 
@@ -23,9 +24,13 @@ router.get("/received", handleGetReceivedShares);
 router.get("/sent", handleGetSentShares);
 
 // Récupérer un partage spécifique (déchiffrement)
-router.get("/:shareId", handleGetSharedData);
+router.get("/:shareId", validateObjectId("shareId"), handleGetSharedData);
 
 // Accepter ou refuser un partage
-router.patch("/:shareId/status", handleUpdateShareStatus);
+router.patch(
+  "/:shareId/status",
+  validateObjectId("shareId"),
+  handleUpdateShareStatus,
+);
 
 export default router;

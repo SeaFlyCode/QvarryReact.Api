@@ -288,7 +288,7 @@ export async function handleCreatePoint(req: Request, res: Response) {
     });
     return res.status(500).json({
       success: false,
-      message: getErrorMessage(error),
+      message: "Une erreur interne est survenue",
     });
   }
 }
@@ -358,7 +358,7 @@ export async function handleGetAllPointsByUserId(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la récupération des points",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -406,7 +406,7 @@ export async function handleSearchPoints(req: Request, res: Response) {
     return res.status(500).json({
       success: false,
       message: "Erreur lors de la recherche de points",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -427,8 +427,8 @@ export async function handleGetPointById(req: Request, res: Response) {
     }
 
     res.status(200).json(point);
-  } catch (error: unknown) {
-    return res.status(400).json({ message: getErrorMessage(error) });
+  } catch (_error: unknown) {
+    return res.status(400).json({ message: "Une erreur interne est survenue" });
   }
 }
 
@@ -498,7 +498,7 @@ export async function handleDeletePoint(req: Request, res: Response) {
     return res.status(500).json({
       success: false,
       message: "Erreur lors de la suppression du point",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -635,7 +635,7 @@ export async function handleUpdatePoint(req: Request, res: Response) {
     });
     return res.status(400).json({
       success: false,
-      message: getErrorMessage(error),
+      message: "Une erreur interne est survenue",
     });
   }
 }
@@ -689,7 +689,7 @@ export async function handleLinkPointToFiche(req: Request, res: Response) {
     });
     return res.status(500).json({
       success: false,
-      message: getErrorMessage(error),
+      message: "Une erreur interne est survenue",
     });
   }
 }
@@ -743,7 +743,7 @@ export async function handleUnlinkPointFromFiche(req: Request, res: Response) {
     });
     return res.status(500).json({
       success: false,
-      message: getErrorMessage(error),
+      message: "Une erreur interne est survenue",
     });
   }
 }

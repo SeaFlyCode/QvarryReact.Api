@@ -241,7 +241,6 @@ export const addContact = async (
     });
     res.status(500).json({
       error: "Erreur lors de l'ajout du contact",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -377,7 +376,6 @@ export const listContacts = async (
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des contacts",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -438,7 +436,6 @@ export const blockContact = async (
     });
     res.status(500).json({
       error: "Erreur lors du blocage/déblocage du contact",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -481,7 +478,6 @@ export const deleteContact = async (
     });
     res.status(500).json({
       error: "Erreur lors de la suppression du contact",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -579,7 +575,6 @@ export const getContactDetails = async (
     });
     res.status(500).json({
       error: "Erreur lors de la récupération du contact",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -669,7 +664,6 @@ export const acceptContact = async (
     });
     res.status(500).json({
       error: "Erreur lors de l'acceptation du contact",
-      details: getErrorMessage(error),
     });
   }
 };
@@ -719,7 +713,6 @@ export const refuseContact = async (
     });
     res.status(500).json({
       error: "Erreur lors du refus du contact",
-      details: getErrorMessage(error),
     });
   }
 };

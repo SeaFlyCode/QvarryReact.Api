@@ -2,6 +2,7 @@
 import { Router } from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import { adminMiddleware } from "../middlewares/adminMiddleware";
+import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 import {
   getGlobalStats,
   getRegistrationStats,
@@ -57,15 +58,31 @@ router.get("/stats/activity", getActivityStats);
 router.get("/users", listUsers);
 router.get("/users/pending", listPendingUsers);
 router.get("/users/pending/count", getPendingUsersCount);
-router.get("/users/:userId", getUserDetails);
-router.post("/users/:userId/block", blockUser);
-router.post("/users/:userId/unblock", unblockUser);
-router.post("/users/:userId/promote", promoteToAdmin);
-router.post("/users/:userId/demote", demoteFromAdmin);
-router.post("/users/:userId/force-logout", forceLogoutUser);
-router.post("/users/:userId/reset-password", resetUserPassword);
-router.post("/users/:userId/approve", approveUser);
-router.post("/users/:userId/reject", rejectUser);
+router.get("/users/:userId", validateObjectId("userId"), getUserDetails);
+router.post("/users/:userId/block", validateObjectId("userId"), blockUser);
+router.post("/users/:userId/unblock", validateObjectId("userId"), unblockUser);
+router.post(
+  "/users/:userId/promote",
+  validateObjectId("userId"),
+  promoteToAdmin,
+);
+router.post(
+  "/users/:userId/demote",
+  validateObjectId("userId"),
+  demoteFromAdmin,
+);
+router.post(
+  "/users/:userId/force-logout",
+  validateObjectId("userId"),
+  forceLogoutUser,
+);
+router.post(
+  "/users/:userId/reset-password",
+  validateObjectId("userId"),
+  resetUserPassword,
+);
+router.post("/users/:userId/approve", validateObjectId("userId"), approveUser);
+router.post("/users/:userId/reject", validateObjectId("userId"), rejectUser);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // LOGS D'AUDIT
@@ -89,8 +106,16 @@ router.post("/security/test-alert", sendTestAlert);
 // ═══════════════════════════════════════════════════════════════════════════
 router.get("/sos/dashboard", handleAdminSosDashboard);
 router.get("/sos/active", handleAdminSosActiveSessions);
-router.get("/sos/sessions/:sessionId", handleAdminSosSessionDetails);
-router.post("/sos/sessions/:sessionId/cancel", handleAdminSosCancelSession);
+router.get(
+  "/sos/sessions/:sessionId",
+  validateObjectId("sessionId"),
+  handleAdminSosSessionDetails,
+);
+router.post(
+  "/sos/sessions/:sessionId/cancel",
+  validateObjectId("sessionId"),
+  handleAdminSosCancelSession,
+);
 router.get("/sos/history", handleAdminSosHistory);
 router.get("/sos/stats", handleAdminSosStats);
 

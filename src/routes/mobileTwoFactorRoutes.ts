@@ -18,6 +18,7 @@ import { mobileAuthMiddleware } from "../middlewares/mobileAuthMiddleware";
 import {
   verifyMobilePlatform,
   mobileSecurityMiddleware,
+  mobileRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
 
 const router = express.Router();
@@ -46,6 +47,7 @@ const router = express.Router();
 router.get(
   "/status",
   verifyMobilePlatform,
+  mobileRateLimitMiddleware,
   mobileAuthMiddleware,
   mobileGetTwoFactorStatus,
 );
@@ -67,6 +69,7 @@ router.get(
 router.post(
   "/setup",
   verifyMobilePlatform,
+  mobileRateLimitMiddleware,
   mobileAuthMiddleware,
   mobileSetupTwoFactor,
 );
@@ -90,6 +93,7 @@ router.post(
 router.post(
   "/verify-setup",
   verifyMobilePlatform,
+  mobileRateLimitMiddleware,
   mobileAuthMiddleware,
   mobileVerifyAndEnableTwoFactor,
 );
@@ -113,6 +117,7 @@ router.post(
 router.post(
   "/disable",
   verifyMobilePlatform,
+  mobileRateLimitMiddleware,
   mobileAuthMiddleware,
   mobileDisableTwoFactor,
 );
@@ -136,6 +141,7 @@ router.post(
 router.post(
   "/regenerate-codes",
   verifyMobilePlatform,
+  mobileRateLimitMiddleware,
   mobileAuthMiddleware,
   mobileRegenerateRecoveryCodes,
 );

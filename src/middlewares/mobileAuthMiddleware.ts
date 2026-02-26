@@ -122,6 +122,7 @@ export const mobileAuthMiddleware = async (
     const decoded = jwt.verify(token, jwtSecret, {
       audience: "qvarry-mobile",
       issuer: "qvarry-api",
+      algorithms: ["HS256"],
     }) as MobileDecodedToken;
 
     // 4. MED-001: VÉRIFICATION DU BINDING DEVICE-TOKEN

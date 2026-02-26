@@ -9,6 +9,7 @@ import { isErrorWithName } from "../utils/errorUtils";
 import { loadAndDecryptUserData } from "../controllers/auth";
 import { anonymizeIp } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
+import { JWT_COOKIE_NAME } from "../config/cookieConfig";
 
 const authLogger = logger.child({ service: "auth" });
 
@@ -48,7 +49,8 @@ export const authMiddleware = async (
     // Pour WebSocket: utiliser handleGetWebSocketToken() pour token temporaire
     // ─────────────────────────────────────────────────────────────────────
     const token =
-      req.cookies?.token || req.headers.authorization?.split(" ")[1];
+      req.cookies?.[JWT_COOKIE_NAME] ||
+      req.headers.authorization?.split(" ")[1];
 
     // 2. VALIDATION DU TOKEN
     if (!token) {
@@ -108,7 +110,9 @@ export const authMiddleware = async (
       jwtSecret = mainSecret;
     }
 
-    const decoded = jwt.verify(token, jwtSecret) as DecodedToken;
+    const decoded = jwt.verify(token, jwtSecret, {
+      algorithms: ["HS256"],
+    }) as DecodedToken;
 
     // ─────────────────────────────────────────────────────────────────────
     // 5. DÉTECTION DU TYPE DE TOKEN (WEB VS MOBILE)

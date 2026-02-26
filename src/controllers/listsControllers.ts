@@ -45,7 +45,9 @@ export async function handleCreateList(req: Request, res: Response) {
     listsLogger.error("Erreur création liste", {
       error: getErrorMessage(error),
     });
-    res.status(500).json({ success: false, error: getErrorMessage(error) });
+    res
+      .status(500)
+      .json({ success: false, error: "Une erreur interne est survenue" });
   }
 }
 
@@ -94,7 +96,9 @@ export async function handleGetAllLists(req: Request, res: Response) {
     listsLogger.error("Erreur récupération listes", {
       error: getErrorMessage(error),
     });
-    res.status(500).json({ success: false, error: getErrorMessage(error) });
+    res
+      .status(500)
+      .json({ success: false, error: "Une erreur interne est survenue" });
   }
 }
 
@@ -121,7 +125,9 @@ export async function handleGetListById(req: Request, res: Response) {
     listsLogger.error("Erreur récupération liste", {
       error: getErrorMessage(error),
     });
-    res.status(500).json({ success: false, error: getErrorMessage(error) });
+    res
+      .status(500)
+      .json({ success: false, error: "Une erreur interne est survenue" });
   }
 }
 
@@ -157,7 +163,9 @@ export async function handleDeleteList(req: Request, res: Response) {
     listsLogger.error("Erreur suppression liste", {
       error: getErrorMessage(error),
     });
-    res.status(500).json({ success: false, error: getErrorMessage(error) });
+    res
+      .status(500)
+      .json({ success: false, error: "Une erreur interne est survenue" });
   }
 }
 
@@ -202,7 +210,9 @@ export async function handleUpdateList(req: Request, res: Response) {
     listsLogger.error("Erreur mise à jour liste", {
       error: getErrorMessage(error),
     });
-    res.status(500).json({ success: false, error: getErrorMessage(error) });
+    res
+      .status(500)
+      .json({ success: false, error: "Une erreur interne est survenue" });
   }
 }
 
@@ -266,7 +276,7 @@ export async function handleGetListByUserId(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de la récupération des listes",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -330,7 +340,7 @@ export async function handleAddPointToList(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de l'ajout du point à la liste",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -385,7 +395,7 @@ export async function handleRemovePointFromList(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors du retrait du point de la liste",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -447,7 +457,7 @@ export async function handleGetPointsByListId(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de la récupération des points de la liste",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -509,7 +519,7 @@ export async function handleGetListsByPointId(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de la récupération des listes contenant le point",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -585,7 +595,7 @@ export async function handleUpdateListPointsOrder(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de la mise à jour de l'ordre des points",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -659,7 +669,7 @@ export async function handleGetAllListsAdmin(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de la récupération des listes",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -733,7 +743,7 @@ export async function handleBulkAddPointsToList(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de l'ajout en batch de points",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -805,7 +815,7 @@ export async function handleBulkRemovePointsFromList(
     res.status(500).json({
       success: false,
       message: "Erreur lors du retrait en batch de points",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -846,7 +856,7 @@ export async function handleSyncListData(req: Request, res: Response) {
     res.status(500).json({
       success: false,
       message: "Erreur lors de la synchronisation",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }

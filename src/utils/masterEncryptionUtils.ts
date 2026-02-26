@@ -101,9 +101,26 @@ export function decrypt(text: string): string {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FONCTION DE HACHAGE D'EMAIL (HMAC-SHA256)
+// ═══════════════════════════════════════════════════════════════════════════
+// ⚠️ WARNING: Ce changement invalide tous les hash d'emails existants en BDD.
+// Si vous migrez depuis l'ancien système (SHA-256 simple), vous devrez
+// recalculer tous les hash existants avec la nouvelle méthode HMAC.
+//
+// Utilise HMAC-SHA256 avec une clé secrète pour protéger contre les attaques
+// par rainbow table et empêcher la réversibilité des hash d'emails.
+// ═══════════════════════════════════════════════════════════════════════════
+
 export function hashEmail(email: string): string {
+  const hmacKey = process.env.EMAIL_HMAC_KEY;
+  if (!hmacKey) {
+    throw new Error(
+      "❌ EMAIL_HMAC_KEY manquante dans les variables d'environnement",
+    );
+  }
   return crypto
-    .createHash("sha256")
+    .createHmac("sha256", hmacKey)
     .update(email.toLowerCase().trim())
     .digest("hex");
 }

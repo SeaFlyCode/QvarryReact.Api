@@ -21,6 +21,8 @@ import {
   getRefreshTokenCookieOptions,
   getCookieConfig,
   clearCookieOptions,
+  JWT_COOKIE_NAME,
+  REFRESH_TOKEN_COOKIE_NAME,
 } from "../../config/cookieConfig";
 import {
   checkLoginAttempts,
@@ -230,10 +232,14 @@ export async function handleLoginUser(req: Request, res: Response) {
     // 6. CONFIGURATION DES COOKIES SÉCURISÉS
     // ─────────────────────────────────────────────────────────────────────
     // Cookie pour le JWT (courte durée)
-    res.cookie("token", token, getJwtCookieOptions());
+    res.cookie(JWT_COOKIE_NAME, token, getJwtCookieOptions());
 
     // Cookie pour le refresh token (longue durée)
-    res.cookie("refreshToken", refreshToken, getRefreshTokenCookieOptions());
+    res.cookie(
+      REFRESH_TOKEN_COOKIE_NAME,
+      refreshToken,
+      getRefreshTokenCookieOptions(),
+    );
 
     // ─────────────────────────────────────────────────────────────────────
     // 7. CHARGEMENT ET DÉCHIFFREMENT DES DONNÉES UTILISATEUR
@@ -387,10 +393,11 @@ export async function handleRefreshToken(req: Request, res: Response) {
     // ─────────────────────────────────────────────────────────────────────
     loginLogger.info("[AUTH DEBUG] Cookies reçus", {
       cookies: Object.keys(req.cookies || {}),
-      hasRefreshToken: !!req.cookies?.refreshToken,
+      hasRefreshToken: !!req.cookies?.[REFRESH_TOKEN_COOKIE_NAME],
     });
 
-    const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
+    const refreshToken =
+      req.cookies?.[REFRESH_TOKEN_COOKIE_NAME] || req.body?.refreshToken;
 
     if (!refreshToken) {
       loginLogger.warn("[AUTH] Tentative de refresh sans token", {
@@ -546,9 +553,13 @@ export async function handleRefreshToken(req: Request, res: Response) {
     // ─────────────────────────────────────────────────────────────────────
     // 8. CONFIGURER LES NOUVEAUX COOKIES
     // ─────────────────────────────────────────────────────────────────────
-    res.cookie("token", newJwt, getJwtCookieOptions());
+    res.cookie(JWT_COOKIE_NAME, newJwt, getJwtCookieOptions());
 
-    res.cookie("refreshToken", newRefreshToken, getRefreshTokenCookieOptions());
+    res.cookie(
+      REFRESH_TOKEN_COOKIE_NAME,
+      newRefreshToken,
+      getRefreshTokenCookieOptions(),
+    );
 
     // ─────────────────────────────────────────────────────────────────────
     // 9. AUDIT ET RÉPONSE
@@ -593,7 +604,8 @@ export const checkAuth = async (req: Request, res: Response) => {
     // Seuls les cookies et Authorization header sont acceptés
     // ─────────────────────────────────────────────────────────────────────
     const token =
-      req.cookies?.token || req.headers.authorization?.split(" ")[1];
+      req.cookies?.[JWT_COOKIE_NAME] ||
+      req.headers.authorization?.split(" ")[1];
 
     if (!token) {
       return res.status(401).json({
@@ -608,7 +620,7 @@ export const checkAuth = async (req: Request, res: Response) => {
     if (await redisSessionService.isTokenBlacklisted(token)) {
       loginLogger.warn("[AUTH] Tentative d'utilisation d'un token blacklisté");
       // Supprimer le cookie invalide
-      res.clearCookie("token", clearCookieOptions);
+      res.clearCookie(JWT_COOKIE_NAME, clearCookieOptions);
       return res.status(401).json({
         authenticated: false,
         reason: "token_revoked",
@@ -623,7 +635,9 @@ export const checkAuth = async (req: Request, res: Response) => {
       throw new Error("Configuration de sécurité manquante");
     }
 
-    const decoded = jwt.verify(token, process.env.JWT_SECRET) as {
+    const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+      algorithms: ["HS256"],
+    }) as {
       id: string;
       isAdmin?: boolean;
       iat?: number;
@@ -635,7 +649,7 @@ export const checkAuth = async (req: Request, res: Response) => {
     if (decoded.exp && decoded.exp * 1000 < Date.now()) {
       loginLogger.warn("[AUTH] Token expiré", { userId: decoded.id });
       // Supprimer le cookie expiré
-      res.clearCookie("token", clearCookieOptions);
+      res.clearCookie(JWT_COOKIE_NAME, clearCookieOptions);
       return res.status(401).json({
         authenticated: false,
         reason: "token_expired",
@@ -660,8 +674,8 @@ export const checkAuth = async (req: Request, res: Response) => {
           "[AUTH] JTI invalide dans checkAuth - session probablement expirée",
           { userId: decoded.id },
         );
-        res.clearCookie("token", clearCookieOptions);
-        res.clearCookie("refreshToken", clearCookieOptions);
+        res.clearCookie(JWT_COOKIE_NAME, clearCookieOptions);
+        res.clearCookie(REFRESH_TOKEN_COOKIE_NAME, clearCookieOptions);
         return res.status(401).json({
           authenticated: false,
           reason: "session_expired",
@@ -695,7 +709,7 @@ export const checkAuth = async (req: Request, res: Response) => {
     });
   } catch (error: unknown) {
     // Supprimer le cookie invalide dans tous les cas d'erreur
-    res.clearCookie("token", clearCookieOptions);
+    res.clearCookie(JWT_COOKIE_NAME, clearCookieOptions);
 
     // Distinguer les différents types d'erreurs JWT
     if (isErrorWithName(error, "TokenExpiredError")) {
@@ -742,7 +756,9 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
       if (!process.env.JWT_SECRET) {
         throw new Error("JWT_SECRET is not configured");
       }
-      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET) as {
+      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET, {
+        algorithms: ["HS256"],
+      }) as {
         userId: string;
         type: string;
       };
@@ -785,10 +801,14 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
 
     // Configuration des cookies
     // Cookie pour le JWT
-    res.cookie("token", token, getJwtCookieOptions());
+    res.cookie(JWT_COOKIE_NAME, token, getJwtCookieOptions());
 
     // Cookie pour le refresh token
-    res.cookie("refreshToken", refreshToken, getRefreshTokenCookieOptions());
+    res.cookie(
+      REFRESH_TOKEN_COOKIE_NAME,
+      refreshToken,
+      getRefreshTokenCookieOptions(),
+    );
 
     // Charger les données utilisateur
     await loadAndDecryptUserData(userId);

@@ -116,7 +116,7 @@ export async function handleCreateFiche(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la création de la fiche.",
-      error: getErrorMessage(error) || "Une erreur inconnue s'est produite.",
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -178,7 +178,7 @@ export async function handleUpdateFiche(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la mise à jour de la fiche.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -246,7 +246,7 @@ export async function handleDeleteFiche(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la suppression de la fiche.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -311,7 +311,7 @@ export async function handleGetAllFiches(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la récupération des fiches.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -355,7 +355,7 @@ export async function handleGetFicheById(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la récupération de la fiche.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -413,7 +413,7 @@ export async function handleGetUserFiches(req: Request, res: Response) {
     );
     return res.status(500).json({
       message: "Erreur lors de la récupération des fiches de l'utilisateur.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -469,7 +469,7 @@ export async function handleAddPointToFiche(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de l'ajout du point à la fiche.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -551,7 +551,7 @@ export async function handleRemovePointFromFiche(req: Request, res: Response) {
     return res.status(500).json({
       success: false,
       message: "Erreur lors de la dissociation du point de la fiche",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -587,7 +587,7 @@ export async function handleGetPointsByFicheId(req: Request, res: Response) {
     });
     return res.status(500).json({
       success: false,
-      message: getErrorMessage(error),
+      message: "Une erreur interne est survenue",
     });
   }
 }
@@ -662,7 +662,7 @@ export async function handleGetFicheByPointId(req: Request, res: Response) {
     );
     return res.status(500).json({
       message: "Erreur lors de la récupération de la fiche associée au point",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -866,7 +866,7 @@ export async function handleSearchFiches(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la recherche avancée de fiches.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }

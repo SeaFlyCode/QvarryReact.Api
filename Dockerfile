@@ -12,9 +12,10 @@ WORKDIR /app
 # Copie des fichiers de dépendances et config
 COPY package*.json ./
 COPY tsconfig.json ./
+COPY tsconfig.prod.json ./
 
 # Installation des dépendances (--ignore-scripts évite d'exécuter "prepare" qui lance le build)
-RUN npm install --legacy-peer-deps --ignore-scripts
+RUN npm install --ignore-scripts
 
 # Copie du code source
 COPY . .
@@ -51,7 +52,7 @@ WORKDIR /app
 
 # Copie package.json et installation des deps de production
 COPY --from=builder /app/package*.json ./
-RUN npm install --omit=dev --legacy-peer-deps --ignore-scripts && \
+RUN npm install --omit=dev --ignore-scripts && \
     npm cache clean --force
 
 # -----------------------------------------------------------------------------

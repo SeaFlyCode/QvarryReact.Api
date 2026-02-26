@@ -381,3 +381,11 @@ Gemfile.lock
 !package.json
 !*.md
 
+
+# Test coverage
+coverage/
+.nyc_output/
+*.lcov
+
+# Jest cache
+.jest/

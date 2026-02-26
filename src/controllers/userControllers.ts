@@ -3,7 +3,6 @@ import { Request, Response } from "express";
 import {
   createUser,
   deleteUserById,
-  getUserById,
   updateUserById,
   getUserByEmail,
 } from "../services/userService";
@@ -31,6 +30,19 @@ import { logger } from "../services/loggerService";
 
 const userLogger = logger.child({ service: "users" });
 
+// SEC-044: Champs sensibles à exclure des réponses API
+const EXCLUDED_USER_FIELDS = [
+  "password",
+  "password_history",
+  "reset_password_token",
+  "reset_password_expires",
+  "email_verification_token",
+  "email_verification_code",
+  "email_verification_expires",
+  "two_factor_secret",
+  "two_factor_recovery_codes",
+];
+
 function decryptUser(user: IUser): IUser {
   return {
     ...user.toObject(),
@@ -41,6 +53,18 @@ function decryptUser(user: IUser): IUser {
     ip_creation: decrypt(user.ip_creation),
     ip_last_connection: decrypt(user.ip_last_connection),
   };
+}
+
+/**
+ * SEC-044: Nettoie les données utilisateur avant de les retourner au client
+ * Supprime tous les champs sensibles (mots de passe, tokens, secrets)
+ */
+function sanitizeUserForResponse(user: any): any {
+  const sanitized = { ...user };
+  EXCLUDED_USER_FIELDS.forEach((field) => {
+    delete sanitized[field];
+  });
+  return sanitized;
 }
 
 /**
@@ -207,7 +231,7 @@ export async function handleCreateUser(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la création de l'utilisateur.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -222,14 +246,29 @@ export async function handleGetAllUsers(req: Request, res: Response) {
     );
     const skip = (page - 1) * limit;
 
+    // SEC-044: Exclure les champs sensibles de la query Mongoose
+    const selectFields = EXCLUDED_USER_FIELDS.map((field) => `-${field}`).join(
+      " ",
+    );
+
     // Récupérer les utilisateurs avec pagination depuis MongoDB
     const [users, total] = await Promise.all([
-      UserModel.find().sort({ creation_date: -1 }).skip(skip).limit(limit),
+      UserModel.find()
+        .select(selectFields)
+        .sort({ creation_date: -1 })
+        .skip(skip)
+        .limit(limit),
       UserModel.countDocuments(),
     ]);
 
+    // SEC-044: Déchiffrer puis sanitize chaque utilisateur
+    const sanitizedUsers = users.map((user) => {
+      const decrypted = decryptUser(user);
+      return sanitizeUserForResponse(decrypted);
+    });
+
     res.status(200).json({
-      data: users.map((user) => decryptUser(user)),
+      data: sanitizedUsers,
       pagination: {
         page,
         limit,
@@ -243,7 +282,7 @@ export async function handleGetAllUsers(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la récupération des utilisateurs.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -268,18 +307,27 @@ export async function handleGetUserById(req: Request, res: Response) {
       });
     }
 
-    const user = await getUserById(userId);
+    // SEC-044: Exclure les champs sensibles de la query Mongoose
+    const selectFields = EXCLUDED_USER_FIELDS.map((field) => `-${field}`).join(
+      " ",
+    );
+
+    const user = await UserModel.findById(userId).select(selectFields);
     if (!user) {
       return res.status(404).json({ message: "Utilisateur non trouvé." });
     }
 
-    res.status(200).json(decryptUser(user));
+    // SEC-044: Déchiffrer puis sanitize
+    const decrypted = decryptUser(user);
+    const sanitized = sanitizeUserForResponse(decrypted);
+
+    res.status(200).json(sanitized);
   } catch (error: unknown) {
     userLogger.error("Erreur recuperation utilisateur", {
       userId: req.params.id,
       error: getErrorMessage(error),
     });
-    return res.status(400).json({ message: getErrorMessage(error) });
+    return res.status(400).json({ message: "Une erreur interne est survenue" });
   }
 }
 
@@ -310,7 +358,7 @@ export async function handleDeleteUser(req: Request, res: Response) {
       userId: req.params.id,
       error: getErrorMessage(error),
     });
-    return res.status(400).json({ message: getErrorMessage(error) });
+    return res.status(400).json({ message: "Une erreur interne est survenue" });
   }
 }
 
@@ -489,7 +537,7 @@ export async function handleUpdateUser(req: Request, res: Response) {
       userId: req.params.id,
       error: getErrorMessage(error),
     });
-    return res.status(400).json({ message: getErrorMessage(error) });
+    return res.status(400).json({ message: "Une erreur interne est survenue" });
   }
 }
 
@@ -584,7 +632,7 @@ export async function handleVerifyEmailByCode(req: Request, res: Response) {
     });
     return res.status(500).json({
       message: "Erreur lors de la vérification de l'email.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }
@@ -657,7 +705,7 @@ export async function handleResendVerificationEmail(
     });
     return res.status(500).json({
       message: "Erreur lors de l'envoi du code de vérification.",
-      error: getErrorMessage(error),
+      error: "Une erreur interne est survenue",
     });
   }
 }

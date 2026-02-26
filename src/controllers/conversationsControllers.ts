@@ -218,9 +218,12 @@ export async function createPrivateConversation(req: Request, res: Response) {
 
     res.status(201).json({ conversationId: conversation._id });
   } catch (err) {
+    convoLogger.error("Erreur création conversation privée", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la création de la conversation privée",
-      details: err,
     });
   }
 }
@@ -313,9 +316,11 @@ export async function createGroupConversation(req: Request, res: Response) {
 
     res.status(201).json({ conversationId: conversation._id });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erreur lors de la création du groupe", details: err });
+    convoLogger.error("Erreur création groupe", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors de la création du groupe" });
   }
 }
 
@@ -499,9 +504,12 @@ export async function listConversations(req: Request, res: Response) {
       },
     });
   } catch (err) {
+    convoLogger.error("Erreur récupération conversations", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des conversations",
-      details: err,
     });
   }
 }
@@ -551,9 +559,12 @@ export async function getConversationDetails(req: Request, res: Response) {
       createdAt: conversation.createdAt,
     });
   } catch (err) {
+    convoLogger.error("Erreur récupération détails conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des détails",
-      details: err,
     });
   }
 }
@@ -615,9 +626,11 @@ export async function addGroupMembers(req: Request, res: Response) {
     );
     res.json({ success: true, conversation: conversation.toObject() });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erreur lors de l'ajout de membres", details: err });
+    convoLogger.error("Erreur ajout membres groupe", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors de l'ajout de membres" });
   }
 }
 
@@ -691,9 +704,12 @@ export async function removeGroupMember(req: Request, res: Response) {
     });
     res.json({ success: true });
   } catch (err) {
+    convoLogger.error("Erreur suppression membre groupe", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la suppression du membre",
-      details: err instanceof Error ? err.message : err,
     });
   }
 }
@@ -750,7 +766,11 @@ export async function leaveGroup(req: Request, res: Response) {
     memoryStorage.getSession(userId)?.conversations.delete(id);
     res.json({ success: true });
   } catch (err) {
-    res.status(500).json({ error: "Erreur lors du quit", details: err });
+    convoLogger.error("Erreur quit groupe", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors du quit" });
   }
 }
 
@@ -857,9 +877,7 @@ export async function deleteGroup(req: Request, res: Response) {
       groupId: req.params.id,
       error: err,
     });
-    res
-      .status(500)
-      .json({ error: "Erreur lors de la suppression du groupe", details: err });
+    res.status(500).json({ error: "Erreur lors de la suppression du groupe" });
   }
 }
 
@@ -914,9 +932,11 @@ export async function updateGroupName(req: Request, res: Response) {
     });
     res.json({ success: true, conversation: conversation.toObject() });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erreur lors du changement de nom", details: err });
+    convoLogger.error("Erreur changement nom groupe", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors du changement de nom" });
   }
 }
 
@@ -933,6 +953,13 @@ export async function updateGroupMemberRole(req: Request, res: Response) {
     const { userId: memberId, role } = req.body;
     if (!id || !memberId || !role)
       return res.status(400).json({ error: "ID, userId et role requis" });
+    // Validation du rôle avec whitelist
+    const VALID_GROUP_ROLES = ["admin", "member"];
+    if (!VALID_GROUP_ROLES.includes(role)) {
+      return res.status(400).json({
+        error: "Rôle invalide. Les rôles autorisés sont : admin, member",
+      });
+    }
     const conversation = await Conversation.findById(id);
     if (!conversation || !conversation.isGroup) {
       return res.status(404).json({ error: "Groupe non trouvé" });
@@ -961,9 +988,11 @@ export async function updateGroupMemberRole(req: Request, res: Response) {
     );
     res.json({ success: true });
   } catch (err) {
-    res
-      .status(500)
-      .json({ error: "Erreur lors du changement de rôle", details: err });
+    convoLogger.error("Erreur changement rôle membre", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors du changement de rôle" });
   }
 }
 
@@ -1106,7 +1135,6 @@ export async function markConversationAsRead(req: Request, res: Response) {
     });
     res.status(500).json({
       error: "Erreur lors du marquage de la conversation comme lue",
-      details: err,
     });
   }
 }
@@ -1192,7 +1220,6 @@ export async function deleteConversation(req: Request, res: Response) {
     });
     res.status(500).json({
       error: "Erreur lors du masquage de la conversation",
-      details: err,
     });
   }
 }
@@ -1290,7 +1317,6 @@ export async function adminDeleteConversationPermanent(
     });
     res.status(500).json({
       error: "Erreur lors de la suppression définitive",
-      details: err,
     });
   }
 }
