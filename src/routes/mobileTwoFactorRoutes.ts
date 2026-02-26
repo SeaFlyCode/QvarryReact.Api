@@ -7,18 +7,17 @@
 
 import express from "express";
 import {
-    mobileSetupTwoFactor,
-    mobileVerifyAndEnableTwoFactor,
-    mobileDisableTwoFactor,
-    mobileVerifyTwoFactorLogin,
-    mobileRegenerateRecoveryCodes,
-    mobileGetTwoFactorStatus
+  mobileSetupTwoFactor,
+  mobileVerifyAndEnableTwoFactor,
+  mobileDisableTwoFactor,
+  mobileVerifyTwoFactorLogin,
+  mobileRegenerateRecoveryCodes,
+  mobileGetTwoFactorStatus,
 } from "../controllers/mobileTwoFactorControllers";
 import { mobileAuthMiddleware } from "../middlewares/mobileAuthMiddleware";
 import {
-    verifyMobilePlatform,
-    mobileRateLimitMiddleware,
-    mobileSecurityMiddleware
+  verifyMobilePlatform,
+  mobileSecurityMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
 
 const router = express.Router();
@@ -44,7 +43,12 @@ const router = express.Router();
  *     "recoveryCodesRemaining": number
  *   }
  */
-router.get("/status", verifyMobilePlatform, mobileAuthMiddleware, mobileGetTwoFactorStatus);
+router.get(
+  "/status",
+  verifyMobilePlatform,
+  mobileAuthMiddleware,
+  mobileGetTwoFactorStatus,
+);
 
 /**
  * POST /api/mobile/2fa/setup
@@ -60,7 +64,12 @@ router.get("/status", verifyMobilePlatform, mobileAuthMiddleware, mobileGetTwoFa
  *     "message": "..."
  *   }
  */
-router.post("/setup", verifyMobilePlatform, mobileAuthMiddleware, mobileSetupTwoFactor);
+router.post(
+  "/setup",
+  verifyMobilePlatform,
+  mobileAuthMiddleware,
+  mobileSetupTwoFactor,
+);
 
 /**
  * POST /api/mobile/2fa/verify-setup
@@ -78,7 +87,12 @@ router.post("/setup", verifyMobilePlatform, mobileAuthMiddleware, mobileSetupTwo
  *     "message": "..."
  *   }
  */
-router.post("/verify-setup", verifyMobilePlatform, mobileAuthMiddleware, mobileVerifyAndEnableTwoFactor);
+router.post(
+  "/verify-setup",
+  verifyMobilePlatform,
+  mobileAuthMiddleware,
+  mobileVerifyAndEnableTwoFactor,
+);
 
 /**
  * POST /api/mobile/2fa/disable
@@ -96,7 +110,12 @@ router.post("/verify-setup", verifyMobilePlatform, mobileAuthMiddleware, mobileV
  *     "message": "..."
  *   }
  */
-router.post("/disable", verifyMobilePlatform, mobileAuthMiddleware, mobileDisableTwoFactor);
+router.post(
+  "/disable",
+  verifyMobilePlatform,
+  mobileAuthMiddleware,
+  mobileDisableTwoFactor,
+);
 
 /**
  * POST /api/mobile/2fa/regenerate-codes
@@ -114,7 +133,12 @@ router.post("/disable", verifyMobilePlatform, mobileAuthMiddleware, mobileDisabl
  *     "message": "..."
  *   }
  */
-router.post("/regenerate-codes", verifyMobilePlatform, mobileAuthMiddleware, mobileRegenerateRecoveryCodes);
+router.post(
+  "/regenerate-codes",
+  verifyMobilePlatform,
+  mobileAuthMiddleware,
+  mobileRegenerateRecoveryCodes,
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ROUTES PUBLIQUES (pendant le login)
@@ -147,7 +171,10 @@ router.post("/regenerate-codes", verifyMobilePlatform, mobileAuthMiddleware, mob
  *     "refreshTokenExpiresIn": number
  *   }
  */
-router.post("/verify-login", mobileSecurityMiddleware, mobileVerifyTwoFactorLogin);
+router.post(
+  "/verify-login",
+  mobileSecurityMiddleware,
+  mobileVerifyTwoFactorLogin,
+);
 
 export default router;
-

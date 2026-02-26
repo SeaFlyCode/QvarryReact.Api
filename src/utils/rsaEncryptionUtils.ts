@@ -135,7 +135,7 @@ export function decryptWithPrivateKey(
     let decrypted = decipher.update(dataToDecrypt, "hex", "utf-8");
     decrypted += decipher.final("utf-8");
     return decrypted;
-  } catch (error) {
+  } catch (_error) {
     throw new Error(
       "Déchiffrement échoué : vérification d'intégrité des données échouée (données modifiées ou corrompues)",
     );
@@ -268,7 +268,7 @@ export function isValidPublicKey(publicKey: string): boolean {
       Buffer.from(testData),
     );
     return encrypted.length > 0;
-  } catch (error) {
+  } catch (_error) {
     return false;
   }
 }
@@ -305,7 +305,7 @@ export function isValidPrivateKey(privateKey: string): boolean {
     const signature = sign.sign(privateKey);
 
     return signature.length > 0;
-  } catch (error) {
+  } catch (_error) {
     return false;
   }
 }

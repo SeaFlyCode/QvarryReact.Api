@@ -58,7 +58,7 @@ export class MemoryStorageService {
     }
   }
 
-  private logAccess(method: string, userId: string, details?: any): void {
+  private logAccess(method: string, userId: string, _details?: any): void {
     // Vérifier que userId est défini
     if (!userId) {
       return;
@@ -667,13 +667,11 @@ export class MemoryStorageService {
   // Nettoyer les sessions expirées
   private cleanExpiredSessions(): void {
     const now = new Date();
-    let expiredSessions = 0;
 
     for (const [userId, session] of this.sessions.entries()) {
       const elapsed = now.getTime() - session.lastAccessed.getTime();
       if (elapsed > this.SESSION_TIMEOUT) {
         this.endSession(userId);
-        expiredSessions++;
       }
     }
   }
@@ -802,7 +800,7 @@ export class MemoryStorageService {
 
           // Assigner la valeur ObjectID au point
           (point as any).ficheId = objectIdFicheId;
-        } catch (idError) {
+        } catch (_idError) {
           // Fallback à une chaîne simple si la conversion échoue
           (point as any).ficheId = ficheId;
         }
@@ -849,7 +847,7 @@ export class MemoryStorageService {
         fiche.points_ids = fiche.points_ids.filter(
           (id) => id.toString() !== pointId,
         );
-      } catch (filterError) {
+      } catch (_filterError) {
         return false;
       }
 
@@ -863,7 +861,7 @@ export class MemoryStorageService {
           ) {
             (point as any).ficheId = undefined;
           }
-        } catch (pointError) {
+        } catch (_pointError) {
           // On continue malgré l'erreur pour au moins mettre à jour la fiche
         }
       }

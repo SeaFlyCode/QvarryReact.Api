@@ -1,10 +1,10 @@
 import express from "express";
 import {
-    handleShareData,
-    handleGetSharedData,
-    handleUpdateShareStatus,
-    handleGetReceivedShares,
-    handleGetSentShares
+  handleShareData,
+  handleGetSharedData,
+  handleUpdateShareStatus,
+  handleGetReceivedShares,
+  handleGetSentShares,
 } from "../controllers/dataShareControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
 
@@ -29,4 +29,3 @@ router.get("/:shareId", handleGetSharedData);
 router.patch("/:shareId/status", handleUpdateShareStatus);
 
 export default router;
-

@@ -11,7 +11,6 @@ import QRCode from "qrcode";
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import jwt from "jsonwebtoken";
-import mongoose from "mongoose";
 
 import UserModel from "../models/users";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
@@ -58,7 +57,10 @@ function generateRecoveryCodes(): string[] {
 /**
  * Hash les codes de récupération avec bcrypt
  */
-async function hashRecoveryCodes(codes: string[]): Promise<string[]> {
+async function hashRecoveryCodes(
+  codes: string[],
+  _details?: any,
+): Promise<string[]> {
   const hashedCodes: string[] = [];
   for (const code of codes) {
     const hash = await bcrypt.hash(code.replace(/-/g, ""), 12);
@@ -391,7 +393,13 @@ export async function mobileDisableTwoFactor(
 
     // Vérifier le code 2FA ou un code de récupération
     if (code) {
-      const decryptedSecret = decrypt(user.two_factor_secret!);
+      if (!user.two_factor_secret) {
+        return res.status(400).json({
+          error: "Secret 2FA manquant",
+          code: "MISSING_2FA_SECRET",
+        });
+      }
+      const decryptedSecret = decrypt(user.two_factor_secret);
       const totpVerify = new TOTP({
         secret: Secret.fromBase32(decryptedSecret),
         algorithm: "SHA1",
@@ -406,14 +414,16 @@ export async function mobileDisableTwoFactor(
         const codeNormalized = code.replace(/-/g, "").toUpperCase();
         let recoveryCodeUsed = false;
 
-        for (let i = 0; i < user.two_factor_recovery_codes!.length; i++) {
-          const isMatch = await bcrypt.compare(
-            codeNormalized,
-            user.two_factor_recovery_codes![i],
-          );
-          if (isMatch) {
-            recoveryCodeUsed = true;
-            break;
+        if (user.two_factor_recovery_codes) {
+          for (let i = 0; i < user.two_factor_recovery_codes.length; i++) {
+            const isMatch = await bcrypt.compare(
+              codeNormalized,
+              user.two_factor_recovery_codes[i],
+            );
+            if (isMatch) {
+              recoveryCodeUsed = true;
+              break;
+            }
           }
         }
 
@@ -730,14 +740,16 @@ export async function mobileVerifyTwoFactorLogin(
       const codeNormalized = code.replace(/-/g, "").toUpperCase();
       let recoveryCodeIndex = -1;
 
-      for (let i = 0; i < user.two_factor_recovery_codes!.length; i++) {
-        const isMatch = await bcrypt.compare(
-          codeNormalized,
-          user.two_factor_recovery_codes![i],
-        );
-        if (isMatch) {
-          recoveryCodeIndex = i;
-          break;
+      if (user.two_factor_recovery_codes) {
+        for (let i = 0; i < user.two_factor_recovery_codes.length; i++) {
+          const isMatch = await bcrypt.compare(
+            codeNormalized,
+            user.two_factor_recovery_codes[i],
+          );
+          if (isMatch) {
+            recoveryCodeIndex = i;
+            break;
+          }
         }
       }
 
@@ -768,8 +780,10 @@ export async function mobileVerifyTwoFactorLogin(
       }
 
       // Supprimer le code utilisé
-      user.two_factor_recovery_codes!.splice(recoveryCodeIndex, 1);
-      await user.save();
+      if (user.two_factor_recovery_codes) {
+        user.two_factor_recovery_codes.splice(recoveryCodeIndex, 1);
+        await user.save();
+      }
       codeValid = true;
 
       // Réinitialiser le compteur de récupération
@@ -782,14 +796,14 @@ export async function mobileVerifyTwoFactorLogin(
         ipAddress: req.ip || req.socket.remoteAddress,
         userAgent: req.headers["user-agent"],
         details: {
-          remainingCodes: user.two_factor_recovery_codes!.length,
+          remainingCodes: user.two_factor_recovery_codes?.length || 0,
           platform: mobileContext?.platform,
         },
       });
 
       mobile2faLogger.info("Code de récupération utilisé", {
         userId,
-        remainingCodes: user.two_factor_recovery_codes!.length,
+        remainingCodes: user.two_factor_recovery_codes?.length || 0,
       });
     } else {
       // Vérifier comme code TOTP normal

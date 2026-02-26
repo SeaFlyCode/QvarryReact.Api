@@ -10,7 +10,6 @@ import * as fs from "fs";
 // On utilise un try-catch pour éviter les erreurs si le middleware n'est pas encore créé
 let getCorrelationId: (() => string | undefined) | undefined;
 try {
-  // eslint-disable-next-line @typescript-eslint/no-var-requires
   const correlationModule = require("../middlewares/correlationMiddleware");
   getCorrelationId = correlationModule.getCorrelationId;
 } catch {

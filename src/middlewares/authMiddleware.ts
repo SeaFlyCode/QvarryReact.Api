@@ -5,7 +5,7 @@ import { memoryStorage } from "../services/memoryStorageService";
 import { redisSessionService } from "../services/redisSessionService";
 import UserModel from "../models/users";
 import { jwtKeyManager } from "../utils/jwtKeyManager";
-import { getErrorMessage, isErrorWithName } from "../utils/errorUtils";
+import { isErrorWithName } from "../utils/errorUtils";
 import { loadAndDecryptUserData } from "../controllers/auth";
 import { anonymizeIp } from "../utils/logUtils";
 import { logger } from "../services/loggerService";

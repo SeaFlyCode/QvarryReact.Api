@@ -44,6 +44,7 @@ export interface ArchiveOptions {
 class DataArchiveService {
   private static instance: DataArchiveService;
 
+  // eslint-disable-next-line @typescript-eslint/no-empty-function
   private constructor() {}
 
   static getInstance(): DataArchiveService {

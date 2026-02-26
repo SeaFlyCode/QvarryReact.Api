@@ -1,6 +1,6 @@
 import { getErrorMessage } from "../utils/errorUtils";
 import { Request, Response } from "express";
-import Contact, { IContact } from "../models/contacts";
+import Contact from "../models/contacts";
 import User from "../models/users";
 import { memoryStorage } from "../services/memoryStorageService";
 import { Types } from "mongoose";
@@ -30,7 +30,7 @@ async function getDisplayName(userId: string): Promise<string> {
   if (user.showPseudo && user.pseudo) {
     try {
       return decrypt(user.pseudo);
-    } catch (e) {
+    } catch (_e) {
       // Fallback sur le nom si erreur de déchiffrement du pseudo
     }
   }
@@ -40,7 +40,7 @@ async function getDisplayName(userId: string): Promise<string> {
     const name = decrypt(user.name);
     const surname = decrypt(user.surname);
     return `${name} ${surname}`;
-  } catch (e) {
+  } catch (_e) {
     return "Un utilisateur";
   }
 }
@@ -154,7 +154,7 @@ export const addContact = async (
             (targetUser._id as Types.ObjectId).toString(),
             reverseContact,
           );
-        } catch (error) {
+        } catch (_error) {
           // Session refresh silencieux
         }
       }
@@ -301,7 +301,7 @@ export const listContacts = async (
             if (otherUser.pseudo && otherUser.pseudo.trim() !== "") {
               try {
                 decryptedPseudo = decrypt(otherUser.pseudo);
-              } catch (pseudoError) {
+              } catch (_pseudoError) {
                 decryptedPseudo = undefined;
               }
             }
@@ -523,7 +523,7 @@ export const getContactDetails = async (
         if (contactUser.pseudo && contactUser.pseudo.trim() !== "") {
           try {
             decryptedPseudo = decrypt(contactUser.pseudo);
-          } catch (e) {
+          } catch (_e) {
             decryptedPseudo = undefined;
           }
         }

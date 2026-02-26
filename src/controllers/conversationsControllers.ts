@@ -34,7 +34,7 @@ async function getDisplayName(userId: string): Promise<string> {
   if (user.showPseudo && user.pseudo) {
     try {
       return decrypt(user.pseudo);
-    } catch (e) {
+    } catch (_e) {
       // Fallback sur le nom si erreur de déchiffrement du pseudo
     }
   }
@@ -44,7 +44,7 @@ async function getDisplayName(userId: string): Promise<string> {
     const name = decrypt(user.name);
     const surname = decrypt(user.surname);
     return `${name} ${surname}`;
-  } catch (e) {
+  } catch (_e) {
     return "Un utilisateur";
   }
 }
@@ -133,15 +133,15 @@ export async function createPrivateConversation(req: Request, res: Response) {
 
         // Stocker en mémoire
         const conversationToStore = {
-          _id: conversation!._id,
-          name: conversation!.name ?? null,
-          isGroup: conversation!.isGroup,
-          creatorId: conversation!.creatorId ?? null,
-          participants: conversation!.participants,
-          lastMessage: conversation!.lastMessage ?? null,
-          deletedBy: conversation!.deletedBy ?? [],
-          createdAt: conversation!.createdAt,
-          updatedAt: conversation!.updatedAt,
+          _id: conversation._id,
+          name: conversation.name ?? null,
+          isGroup: conversation.isGroup,
+          creatorId: conversation.creatorId ?? null,
+          participants: conversation.participants,
+          lastMessage: conversation.lastMessage ?? null,
+          deletedBy: conversation.deletedBy ?? [],
+          createdAt: conversation.createdAt,
+          updatedAt: conversation.updatedAt,
         };
         memoryStorage.storeConversation(
           userId,
@@ -149,7 +149,7 @@ export async function createPrivateConversation(req: Request, res: Response) {
         );
 
         return res.status(200).json({
-          conversationId: conversation!._id.toString(),
+          conversationId: conversation._id.toString(),
           existing: true,
           reactivated: true,
           message: "Conversation réactivée",
@@ -374,7 +374,7 @@ export async function listConversations(req: Request, res: Response) {
           updatedAt: conv.updatedAt,
         };
         memoryStorage.storeConversation(
-          userId!,
+          userId as string,
           conversationToStore as import("../models/conversations").IConversation,
         );
       });
@@ -441,7 +441,7 @@ export async function listConversations(req: Request, res: Response) {
           if (conv.name) {
             try {
               decryptedName = await decryptCommunication(conv.name);
-            } catch (e) {
+            } catch (_e) {
               decryptedName = null;
             }
           }

@@ -94,7 +94,7 @@ export async function createFiche(ficheData: Partial<IFiche>): Promise<IFiche> {
  * Limite le nombre de résultats et ajoute un timeout pour la performance
  */
 export async function getAllFiches(): Promise<any[]> {
-  return await FicheModel.find()
+  return FicheModel.find()
     .sort({ date_creation: -1 })
     .limit(1000) // Limite pour éviter les surcharges
     .maxTimeMS(10000) // Timeout de 10 secondes
@@ -106,7 +106,7 @@ export async function getAllFiches(): Promise<any[]> {
  */
 export async function getFicheById(ficheId: string): Promise<any | null> {
   validateObjectId(ficheId, "ID de fiche");
-  return await FicheModel.findById(ficheId).lean();
+  return FicheModel.findById(ficheId).lean();
 }
 
 /**
@@ -114,9 +114,7 @@ export async function getFicheById(ficheId: string): Promise<any | null> {
  */
 export async function getFichesByUserId(userId: string): Promise<any[]> {
   validateObjectId(userId, "ID utilisateur");
-  return await FicheModel.find({ userId: userId })
-    .sort({ date_creation: -1 })
-    .lean();
+  return FicheModel.find({ userId: userId }).sort({ date_creation: -1 }).lean();
 }
 
 /**
@@ -131,7 +129,7 @@ export async function updateFicheById(
   // Mise à jour de la date de modification
   updateData.date_modification = new Date();
 
-  return await FicheModel.findByIdAndUpdate(
+  return FicheModel.findByIdAndUpdate(
     ficheId,
     updateData,
     { new: true }, // Retourne le document mis à jour
@@ -158,7 +156,7 @@ export async function searchFiches(
   // Nettoyage et validation des critères
   const query = sanitizeSearchCriteria(criteria);
 
-  return await FicheModel.find(query)
+  return FicheModel.find(query)
     .sort({ date_creation: -1 })
     .limit(100) // Limiter le nombre de résultats
     .maxTimeMS(5000) // Timeout de 5 secondes pour éviter les requêtes longues
@@ -182,7 +180,7 @@ export async function findFichesNearLocation(
     throw new Error("La distance maximale doit être entre 1m et 50km.");
   }
 
-  return await FicheModel.find({
+  return FicheModel.find({
     "center_cavite.coordinates": {
       $near: {
         $geometry: {
@@ -205,7 +203,7 @@ export async function addPointToFiche(ficheId: string, pointId: string) {
   validateObjectId(ficheId, "ID de fiche");
   validateObjectId(pointId, "ID de point");
 
-  return await FicheModel.findByIdAndUpdate(
+  return FicheModel.findByIdAndUpdate(
     ficheId,
     { $addToSet: { points_ids: pointId } }, // utilise $addToSet pour éviter les doublons
     { new: true },
@@ -219,7 +217,7 @@ export async function removePointFromFiche(ficheId: string, pointId: string) {
   validateObjectId(ficheId, "ID de fiche");
   validateObjectId(pointId, "ID de point");
 
-  return await FicheModel.findByIdAndUpdate(
+  return FicheModel.findByIdAndUpdate(
     ficheId,
     { $pull: { points_ids: pointId } },
     { new: true },

@@ -280,7 +280,10 @@ export async function disableTwoFactor(
 
     // Vérifier le code 2FA ou un code de récupération
     if (code) {
-      const decryptedSecret = decrypt(user.two_factor_secret!);
+      if (!user.two_factor_secret) {
+        return res.status(400).json({ error: "Secret 2FA manquant" });
+      }
+      const decryptedSecret = decrypt(user.two_factor_secret);
       const totpVerify = new TOTP({
         secret: Secret.fromBase32(decryptedSecret),
         algorithm: "SHA1",
@@ -295,14 +298,16 @@ export async function disableTwoFactor(
         const codeNormalized = code.replace(/-/g, "").toUpperCase();
         let recoveryCodeUsed = false;
 
-        for (let i = 0; i < user.two_factor_recovery_codes!.length; i++) {
-          const isMatch = await bcrypt.compare(
-            codeNormalized,
-            user.two_factor_recovery_codes![i],
-          );
-          if (isMatch) {
-            recoveryCodeUsed = true;
-            break;
+        if (user.two_factor_recovery_codes) {
+          for (let i = 0; i < user.two_factor_recovery_codes.length; i++) {
+            const isMatch = await bcrypt.compare(
+              codeNormalized,
+              user.two_factor_recovery_codes[i],
+            );
+            if (isMatch) {
+              recoveryCodeUsed = true;
+              break;
+            }
           }
         }
 
@@ -363,7 +368,12 @@ export async function verifyTwoFactorLogin(
     // HIGH-01 FIX: Valider le tempToken signé au lieu d'accepter un userId brut
     let userId: string;
     try {
-      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET!) as {
+      if (!process.env.JWT_SECRET) {
+        return res
+          .status(500)
+          .json({ error: "Configuration serveur manquante" });
+      }
+      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET) as {
         userId: string;
         type: string;
       };
@@ -393,14 +403,16 @@ export async function verifyTwoFactorLogin(
       const codeNormalized = code.replace(/-/g, "").toUpperCase();
       let recoveryCodeIndex = -1;
 
-      for (let i = 0; i < user.two_factor_recovery_codes!.length; i++) {
-        const isMatch = await bcrypt.compare(
-          codeNormalized,
-          user.two_factor_recovery_codes![i],
-        );
-        if (isMatch) {
-          recoveryCodeIndex = i;
-          break;
+      if (user.two_factor_recovery_codes) {
+        for (let i = 0; i < user.two_factor_recovery_codes.length; i++) {
+          const isMatch = await bcrypt.compare(
+            codeNormalized,
+            user.two_factor_recovery_codes[i],
+          );
+          if (isMatch) {
+            recoveryCodeIndex = i;
+            break;
+          }
         }
       }
 
@@ -417,8 +429,10 @@ export async function verifyTwoFactorLogin(
       }
 
       // Supprimer le code utilisé
-      user.two_factor_recovery_codes!.splice(recoveryCodeIndex, 1);
-      await user.save();
+      if (user.two_factor_recovery_codes) {
+        user.two_factor_recovery_codes.splice(recoveryCodeIndex, 1);
+        await user.save();
+      }
 
       await auditService.log({
         userId,
@@ -426,12 +440,14 @@ export async function verifyTwoFactorLogin(
         level: "warning",
         ipAddress: req.ip || req.socket.remoteAddress,
         userAgent: req.headers["user-agent"],
-        details: { remainingCodes: user.two_factor_recovery_codes!.length },
+        details: {
+          remainingCodes: user.two_factor_recovery_codes?.length || 0,
+        },
       });
 
       twoFactorLogger.warn("Code de récupération utilisé", {
         userId,
-        remainingCodes: user.two_factor_recovery_codes!.length,
+        remainingCodes: user.two_factor_recovery_codes?.length || 0,
       });
     } else {
       // Vérifier comme code TOTP normal

@@ -1,4 +1,3 @@
-import { getErrorMessage } from "../utils/errorUtils";
 // server/src/middlewares/adminMiddleware.ts
 import { Request, Response, NextFunction } from "express";
 import { auditService } from "../services/auditService";

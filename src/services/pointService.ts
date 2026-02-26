@@ -39,7 +39,7 @@ export async function getAllPointsByUserId(userId: string): Promise<any[]> {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
     throw new Error("L'ID utilisateur fourni n'est pas valide.");
   }
-  return await PointModel.find({
+  return PointModel.find({
     userId,
     is_active: true, // Ne récupère que les points actifs
   })
@@ -56,7 +56,7 @@ export async function getPointById(
   if (!mongoose.Types.ObjectId.isValid(pointId)) {
     throw new Error("L'ID du point n'est pas valide.");
   }
-  return await PointModel.findOne({
+  return PointModel.findOne({
     _id: pointId,
     userId,
     is_active: true,
@@ -91,7 +91,7 @@ export async function updatePoint(
     updated_at: new Date(),
   };
 
-  return await PointModel.findOneAndUpdate(
+  return PointModel.findOneAndUpdate(
     { _id: pointId, userId, is_active: true },
     dataToUpdate,
     { new: true, runValidators: true },
@@ -103,7 +103,7 @@ export async function getPointsByFicheId(ficheId: string): Promise<any[]> {
   if (!mongoose.Types.ObjectId.isValid(ficheId)) {
     throw new Error("L'ID de la fiche n'est pas valide.");
   }
-  return await PointModel.find({
+  return PointModel.find({
     ficheId,
     is_active: true,
   })
@@ -124,11 +124,7 @@ export async function linkPointToFiche(
     throw new Error("L'ID du point ou de la fiche n'est pas valide.");
   }
 
-  return await PointModel.findByIdAndUpdate(
-    pointId,
-    { ficheId },
-    { new: true },
-  );
+  return PointModel.findByIdAndUpdate(pointId, { ficheId }, { new: true });
 }
 
 // Dissocier un point d'une fiche
@@ -139,7 +135,7 @@ export async function unlinkPointFromFiche(
     throw new Error("L'ID du point n'est pas valide.");
   }
 
-  return await PointModel.findByIdAndUpdate(
+  return PointModel.findByIdAndUpdate(
     pointId,
     { ficheId: null },
     { new: true },
@@ -161,7 +157,7 @@ export async function getPointsByIds(pointIds: string[]): Promise<any[]> {
     return [];
   }
 
-  return await PointModel.find({
+  return PointModel.find({
     _id: { $in: validIds },
     is_active: true,
   })

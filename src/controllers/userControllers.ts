@@ -3,7 +3,6 @@ import { Request, Response } from "express";
 import {
   createUser,
   deleteUserById,
-  getAllUsers,
   getUserById,
   updateUserById,
   getUserByEmail,
@@ -11,8 +10,7 @@ import {
 import bcrypt from "bcrypt";
 import crypto from "crypto";
 import UserModel, { IUser, IUserBase } from "../models/users";
-import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
-import { hashEmail } from "../utils/masterEncryptionUtils";
+import { encrypt, decrypt, hashEmail } from "../utils/masterEncryptionUtils";
 import {
   validatePasswordStrength,
   isPasswordInHistory,

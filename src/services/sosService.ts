@@ -8,8 +8,6 @@
 import mongoose from "mongoose";
 import SosSessionModel, {
   ISosSession,
-  SosSessionStatus,
-  SosResolvedBy,
   ISosParticipant,
   SosParticipantStatus,
 } from "../models/sosSession";
@@ -35,7 +33,6 @@ const STAGE_1_DELAY_MINUTES = 15; // Délai avant stage 1 (après expiration)
 const STAGE_2_DELAY_MINUTES = 30; // Délai avant stage 2 (après expiration)
 const MIN_DURATION_MINUTES = 15; // Durée minimale
 const MAX_DURATION_MINUTES = 480; // Durée maximale (8h)
-const MAX_ACTIVE_SESSIONS = 1; // Une seule session active par utilisateur
 
 // Détection de surface et reconnexion
 const SURFACE_DISTANCE_THRESHOLD_METERS = 200; // Seuil de déplacement pour suggestion surface
@@ -174,7 +171,7 @@ class SosService {
 
     // Gérer les contacts de session (override)
     let useDefaultContacts = true;
-    let sessionContactIds: mongoose.Types.ObjectId[] = [];
+    const sessionContactIds: mongoose.Types.ObjectId[] = [];
 
     if (sessionContacts) {
       useDefaultContacts = false;
@@ -196,7 +193,7 @@ class SosService {
         // Vérifier que les contacts permanents existent et appartiennent à l'utilisateur
         const permanentContacts = await SosContactModel.find({
           _id: {
-            $in: sessionContacts.permanentContactIds!.map(
+            $in: (sessionContacts.permanentContactIds || []).map(
               (id) => new mongoose.Types.ObjectId(id),
             ),
           },
@@ -208,7 +205,7 @@ class SosService {
 
         if (
           permanentContacts.length !==
-          sessionContacts.permanentContactIds!.length
+          (sessionContacts.permanentContactIds || []).length
         ) {
           throw new Error("INVALID_CONTACT_IDS");
         }
@@ -220,7 +217,8 @@ class SosService {
 
       // Valider les contacts supplémentaires temporaires
       if (hasAdditionalContacts) {
-        for (const additionalContact of sessionContacts.additionalContacts!) {
+        for (const additionalContact of sessionContacts.additionalContacts ||
+          []) {
           // Validation format téléphone
           if (!/^\+[1-9]\d{6,14}$/.test(additionalContact.phone)) {
             throw new Error("INVALID_PHONE_FORMAT");
@@ -584,7 +582,9 @@ class SosService {
 
     if (activeParticipants.length > 0) {
       const mostRecentHeartbeat = Math.max(
-        ...activeParticipants.map((p) => p.lastHeartbeatAt!.getTime()),
+        ...activeParticipants
+          .map((p) => p.lastHeartbeatAt?.getTime())
+          .filter((t): t is number => t !== undefined),
       );
       const newExpiresAt = new Date(
         mostRecentHeartbeat + HEARTBEAT_EXTENSION_MINUTES * 60 * 1000,
@@ -1024,13 +1024,14 @@ class SosService {
     // Calcul des durées réelles (resolvedAt - activatedAt en minutes)
     const durations = allSessions
       .filter((s) => s.resolvedAt)
-      .map((s) =>
-        Math.round(
-          (new Date(s.resolvedAt!).getTime() -
+      .map((s) => {
+        if (!s.resolvedAt) return 0;
+        return Math.round(
+          (new Date(s.resolvedAt).getTime() -
             new Date(s.activatedAt).getTime()) /
             60000,
-        ),
-      );
+        );
+      });
 
     const totalDuration = durations.reduce((sum, d) => sum + d, 0);
     const averageDuration =
@@ -1206,21 +1207,24 @@ class SosService {
           // Mettre à jour les timestamps de session avec les plus anciennes dates des participants
           const stage0Dates = activeParticipants
             .filter((p) => p.stage0TriggeredAt)
-            .map((p) => p.stage0TriggeredAt!.getTime());
+            .map((p) => p.stage0TriggeredAt as Date)
+            .map((d) => d.getTime());
           if (stage0Dates.length > 0) {
             session.stage0TriggeredAt = new Date(Math.min(...stage0Dates));
           }
 
           const stage1Dates = activeParticipants
             .filter((p) => p.stage1TriggeredAt)
-            .map((p) => p.stage1TriggeredAt!.getTime());
+            .map((p) => p.stage1TriggeredAt as Date)
+            .map((d) => d.getTime());
           if (stage1Dates.length > 0) {
             session.stage1TriggeredAt = new Date(Math.min(...stage1Dates));
           }
 
           const stage2Dates = activeParticipants
             .filter((p) => p.stage2TriggeredAt)
-            .map((p) => p.stage2TriggeredAt!.getTime());
+            .map((p) => p.stage2TriggeredAt as Date)
+            .map((d) => d.getTime());
           if (stage2Dates.length > 0) {
             session.stage2TriggeredAt = new Date(Math.min(...stage2Dates));
           }
@@ -1305,9 +1309,6 @@ class SosService {
       sessionId: sessionId.toString(),
       message: "Escalade Stage 1 — D'autres utilisateurs sont notifiés !",
     });
-
-    // Récupérer tous les IDs des participants de la session (pour les exclure)
-    const participantIds = session.participants.map((p) => p.userId.toString());
 
     // Notifier TOUS les utilisateurs Qvarry vérifiés (sauf TOUS les participants de la session)
     const allVerifiedUsers = await UserModel.find({
@@ -2379,7 +2380,7 @@ class SosService {
 
     const smsResult = await SosEventModel.aggregate(smsPipeline);
 
-    let sms = {
+    const sms = {
       totalSent: 0,
       totalFailed: 0,
       successRate: 0,

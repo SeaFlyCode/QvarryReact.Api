@@ -186,7 +186,7 @@ export async function handleCreatePoint(req: Request, res: Response) {
           const fidStr = fidObj.toString();
 
           // Vérifier si la fiche existe en mémoire
-          let ficheInMemory = memoryStorage.getFicheById(userId, fidStr);
+          const ficheInMemory = memoryStorage.getFicheById(userId, fidStr);
 
           // Si la fiche n'est pas en mémoire, essayer de la recharger depuis la base
           if (!ficheInMemory) {

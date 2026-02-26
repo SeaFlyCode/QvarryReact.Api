@@ -11,8 +11,7 @@
 
 import { Request, Response, NextFunction } from "express";
 import { auditService } from "../services/auditService";
-import { redisSessionService } from "../services/redisSessionService";
-import { anonymizeIp, maskDeviceId, sanitizeLogData } from "../utils/logUtils";
+import { anonymizeIp, maskDeviceId } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
 
 const mobileSecLogger = logger.child({ service: "mobile-security" });
@@ -68,11 +67,6 @@ const knownDevices = new Map<
   { userId?: string; firstSeen: Date; lastSeen: Date; trustScore: number }
 >();
 const blockedDevices = new Set<string>();
-
-// Préfixes Redis pour le rate limiting mobile
-const REDIS_PREFIX_RATE_LIMIT = "qvarry:mobile_rate:";
-const REDIS_PREFIX_BLOCKED_DEVICE = "qvarry:blocked_device:";
-const REDIS_PREFIX_KNOWN_DEVICE = "qvarry:known_device:";
 
 // Bundle IDs autorisés pour l'attestation
 const ALLOWED_BUNDLE_IDS = [
@@ -237,7 +231,7 @@ export const mobileRateLimitMiddleware = async (
   const deviceId = req.headers["x-device-id"] as string;
   const now = new Date();
 
-  let entry = mobileRateLimitStore.get(identifier);
+  const entry = mobileRateLimitStore.get(identifier);
 
   if (!entry) {
     mobileRateLimitStore.set(identifier, {

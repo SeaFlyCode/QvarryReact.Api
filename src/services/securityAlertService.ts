@@ -303,16 +303,11 @@ class SecurityAlertService {
       });
 
       for (const admin of admins) {
-        let adminEmail: string, adminName: string;
+        let adminEmail: string;
         try {
           adminEmail = decrypt(admin.email);
-        } catch {
+        } catch (_error) {
           adminEmail = admin.email;
-        }
-        try {
-          adminName = decrypt(admin.name);
-        } catch {
-          adminName = admin.name;
         }
 
         securityLogger.info("Envoi alerte admin", {

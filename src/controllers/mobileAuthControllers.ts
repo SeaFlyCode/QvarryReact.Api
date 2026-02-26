@@ -7,18 +7,14 @@
 
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
-import jwt from "jsonwebtoken";
 import crypto from "crypto";
 import mongoose from "mongoose";
 
-import { getUserByEmail } from "../services/userService";
-import { createUser } from "../services/userService";
+import { getUserByEmail, createUser } from "../services/userService";
 import { refreshTokenService } from "../services/refreshTokenService";
 // CRIT-09: sessionService supprimé, redisSessionService est la source de vérité unique
-import { memoryStorage } from "../services/memoryStorageService";
 import { redisSessionService } from "../services/redisSessionService";
 import { auditService } from "../services/auditService";
-import { jwtKeyManager } from "../utils/jwtKeyManager";
 import { decrypt, encrypt, hashEmail } from "../utils/masterEncryptionUtils";
 import { validatePasswordStrength } from "../utils/passwordUtils";
 import { validateEmail } from "../utils/emailUtils";
@@ -29,7 +25,6 @@ import {
   sendPasswordResetEmail,
 } from "../services/emailService";
 import { associateDeviceWithUser } from "../middlewares/mobileSecurityMiddleware";
-import { getErrorMessage } from "../utils/errorUtils";
 import { maskEmail } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
 
@@ -45,10 +40,6 @@ import {
 
 import UserModel, { IUserBase } from "../models/users";
 import MaintenanceModel from "../models/maintenance";
-import KeysModel from "../models/keys";
-import PointModel from "../models/points";
-import FicheModel from "../models/fiches";
-import ListModel from "../models/lists";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS (réutilisés depuis authControllers)
@@ -512,8 +503,6 @@ export async function handleMobileForgotPassword(req: Request, res: Response) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 export async function handleMobileRefreshToken(req: Request, res: Response) {
-  const mobileContext = (req as any).mobileContext;
-
   try {
     const { refreshToken } = req.body;
 

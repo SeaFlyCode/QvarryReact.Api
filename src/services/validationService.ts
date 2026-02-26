@@ -1,4 +1,4 @@
-import { Request, Response, NextFunction } from 'express';
+import { Request, Response, NextFunction } from "express";
 
 // Fonction pour valider les données d'une fiche
 export function validateFicheData(data: any) {
@@ -6,24 +6,24 @@ export function validateFicheData(data: any) {
 
   // Champs obligatoires à vérifier
   const requiredFields = [
-    'name',
-    'ville',
-    'type',
-    'etat',
+    "name",
+    "ville",
+    "type",
+    "etat",
     // 'userId', // NE PAS exiger userId côté front
-    'difficulte_acces',
-    'risque_oxygene',
-    'acces_souterrain',
-    'praticite_souterrain',
-    'etat_general'
+    "difficulte_acces",
+    "risque_oxygene",
+    "acces_souterrain",
+    "praticite_souterrain",
+    "etat_general",
     // 'points_ids' n'est plus obligatoire
   ];
 
-  requiredFields.forEach(field => {
+  requiredFields.forEach((field) => {
     if (
       data[field] === undefined ||
       data[field] === null ||
-      (typeof data[field] === 'string' && !data[field].trim()) ||
+      (typeof data[field] === "string" && !data[field].trim()) ||
       (Array.isArray(data[field]) && data[field].length === 0)
     ) {
       errors.push(`Le champ ${field} est obligatoire`);
@@ -40,7 +40,9 @@ export function validateFicheData(data: any) {
   }
   // Validation de la longueur de l'accessibilité
   if (data.accessibilite && data.accessibilite.length > 2000) {
-    errors.push("La description d'accessibilité ne peut pas dépasser 2000 caractères");
+    errors.push(
+      "La description d'accessibilité ne peut pas dépasser 2000 caractères",
+    );
   }
 
   // Validation des IDs de points
@@ -50,7 +52,7 @@ export function validateFicheData(data: any) {
     } else {
       for (let i = 0; i < data.points_ids.length; i++) {
         const pointId = data.points_ids[i];
-        if (typeof pointId !== 'string' && typeof pointId !== 'object') {
+        if (typeof pointId !== "string" && typeof pointId !== "object") {
           errors.push(`L'ID du point à l'index ${i} n'est pas valide`);
         }
       }
@@ -59,7 +61,7 @@ export function validateFicheData(data: any) {
 
   return {
     isValid: errors.length === 0,
-    errors
+    errors,
   };
 }
 
@@ -70,7 +72,7 @@ export function validateFiche(req: Request, res: Response, next: NextFunction) {
   if (!validation.isValid) {
     return res.status(400).json({
       message: "Validation échouée",
-      errors: validation.errors
+      errors: validation.errors,
     });
   }
 

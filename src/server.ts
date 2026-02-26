@@ -138,7 +138,6 @@ logger.info("[SECURITY] Rate limiter global activé", {
 });
 
 // Log de l'environnement au démarrage
-const modeIcon = NODE_ENV === "production" ? "🚀" : "🔧";
 logger.info("Express Server démarré", { env: NODE_ENV, port: PORT, envType });
 
 const clientUrl = process.env.CLIENT_URL || "http://localhost:3001";

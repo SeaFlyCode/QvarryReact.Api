@@ -416,7 +416,10 @@ class WebSocketService {
       if (!this.clients.has(client.userId)) {
         this.clients.set(client.userId, new Set());
       }
-      this.clients.get(client.userId)!.add(client);
+      const userClientsSet = this.clients.get(client.userId);
+      if (userClientsSet) {
+        userClientsSet.add(client);
+      }
 
       wsLogger.info("Notifications - Client connecté", {
         userId: client.userId,
@@ -566,11 +569,16 @@ class WebSocketService {
       if (!this.messageClients.has(client.userId)) {
         this.messageClients.set(client.userId, new Map());
       }
-      const userConversations = this.messageClients.get(client.userId)!;
-      if (!userConversations.has(conversationId)) {
-        userConversations.set(conversationId, new Set());
+      const userConversations = this.messageClients.get(client.userId);
+      if (userConversations) {
+        if (!userConversations.has(conversationId)) {
+          userConversations.set(conversationId, new Set());
+        }
+        const conversationClients = userConversations.get(conversationId);
+        if (conversationClients) {
+          conversationClients.add(client);
+        }
       }
-      userConversations.get(conversationId)!.add(client);
 
       wsLogger.info("Messages - Client connecté", {
         userId: client.userId,
@@ -637,7 +645,7 @@ class WebSocketService {
           let data: any;
           try {
             data = JSON.parse(message.toString());
-          } catch (parseError) {
+          } catch (_parseError) {
             wsLogger.warn("Messages - JSON invalide", {
               userId: client.userId,
             });
@@ -799,7 +807,7 @@ class WebSocketService {
               query: data.query || {},
             };
             const fakeRes: any = {
-              status: (code: number) => ({
+              status: (_code: number) => ({
                 json: (obj: any) => {
                   client.send(JSON.stringify({ type: "messages", ...obj }));
                 },
@@ -816,7 +824,7 @@ class WebSocketService {
               },
             };
             const fakeRes: any = {
-              status: (code: number) => ({
+              status: (_code: number) => ({
                 json: (obj: any) => {
                   client.send(JSON.stringify({ type: "message_read", ...obj }));
                 },
@@ -834,7 +842,7 @@ class WebSocketService {
               },
             };
             const fakeRes: any = {
-              status: (code: number) => ({
+              status: (_code: number) => ({
                 json: (obj: any) => {
                   client.send(
                     JSON.stringify({ type: "message_reply", ...obj }),
@@ -853,7 +861,7 @@ class WebSocketService {
               },
             };
             const fakeRes: any = {
-              status: (code: number) => ({
+              status: (_code: number) => ({
                 json: (obj: any) => {
                   client.send(
                     JSON.stringify({ type: "message_edited", ...obj }),
@@ -871,7 +879,7 @@ class WebSocketService {
               },
             };
             const fakeRes: any = {
-              status: (code: number) => ({
+              status: (_code: number) => ({
                 json: (obj: any) => {
                   client.send(
                     JSON.stringify({ type: "message_deleted", ...obj }),

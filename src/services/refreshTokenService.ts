@@ -45,7 +45,7 @@ class RefreshTokenService {
     if (!value) return undefined;
     try {
       return decrypt(value);
-    } catch (error) {
+    } catch (_error) {
       // Peut être une ancienne valeur non chiffrée
       refreshLogger.warn("Valeur non chiffrée détectée, retour en clair");
       return value;

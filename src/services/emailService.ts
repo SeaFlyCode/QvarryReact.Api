@@ -166,7 +166,8 @@ const escapeHtml = (str: string): string => {
  */
 const loadTemplate = (templateName: string): string => {
   if (templateCache.has(templateName)) {
-    return templateCache.get(templateName)!;
+    const cached = templateCache.get(templateName);
+    if (cached) return cached;
   }
 
   const templatePath = path.join(

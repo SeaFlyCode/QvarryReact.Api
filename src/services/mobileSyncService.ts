@@ -820,9 +820,12 @@ class MobileSyncService {
 
         if (clientVersion > 0 && clientVersion < serverVersion) {
           // Conflit: le client a une version obsolète
+          if (!change.id) {
+            throw new Error("Change ID manquant");
+          }
           conflicts.push({
             type: "point",
-            id: change.id!,
+            id: change.id,
             localVersion: data,
             serverVersion: this.decryptPoint(existingPoint, userKey),
             resolution: "server_wins",
@@ -948,9 +951,12 @@ class MobileSyncService {
 
         if (clientVersion > 0 && clientVersion < serverVersion) {
           // Conflit: le client a une version obsolète
+          if (!change.id) {
+            throw new Error("Change ID manquant");
+          }
           conflicts.push({
             type: "fiche",
-            id: change.id!,
+            id: change.id,
             localVersion: data,
             serverVersion: this.decryptFiche(existingFiche, userKey),
             resolution: "server_wins",
@@ -1089,9 +1095,12 @@ class MobileSyncService {
         const serverVersion = (existingList as any).version || 1;
 
         if (clientVersion > 0 && clientVersion < serverVersion) {
+          if (!change.id) {
+            throw new Error("Change ID manquant");
+          }
           conflicts.push({
             type: "list",
-            id: change.id!,
+            id: change.id,
             localVersion: data,
             serverVersion: this.transformList(existingList, userKey),
             resolution: "server_wins",
@@ -1143,7 +1152,7 @@ class MobileSyncService {
     userId: string,
     change: LocalChange,
     synced: LocalChange[],
-    conflicts: SyncConflict[],
+    _conflicts: SyncConflict[],
   ): Promise<void> {
     const data = change.data;
 

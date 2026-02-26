@@ -4,7 +4,6 @@ import mongoose from "mongoose";
 import { memoryStorage } from "../services/memoryStorageService";
 import { validateFicheData } from "../services/validationService";
 import { syncService } from "../services/syncService";
-import FicheModel, { IFiche } from "../models/fiches";
 import { loadAndDecryptUserData } from "./auth/authHelpers";
 import { logger } from "../services/loggerService";
 
@@ -44,7 +43,13 @@ export async function handleCreateFiche(req: Request, res: Response) {
       });
     }
 
-    const userId = req.user!.id;
+    if (!req.user?.id) {
+      return res.status(401).json({
+        message: "Utilisateur non authentifié",
+      });
+    }
+
+    const userId = req.user.id;
 
     // Filtrer les IDs de points valides
     let validPointsIds = [];
@@ -634,7 +639,7 @@ export async function handleGetFicheByPointId(req: Request, res: Response) {
         );
         Object.assign(point, { ficheId: objectIdFicheId });
         memoryStorage.storePoint(userId, point);
-      } catch (error) {
+      } catch (_error) {
         // Fallback en cas d'erreur
         Object.assign(point, { ficheId: String((associatedFiche as any)._id) });
         memoryStorage.storePoint(userId, point);

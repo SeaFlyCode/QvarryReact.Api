@@ -13,12 +13,14 @@ const ALGORITHM = "aes-256-gcm";
 const IV_LENGTH = 12; // 96 bits (recommandé pour GCM)
 const AUTH_TAG_LENGTH = 16; // 128 bits
 
-const ENCRYPTION_KEY = process.env.ENCRYPTION_KEY_MASTER;
-if (!ENCRYPTION_KEY) {
+const ENCRYPTION_KEY_RAW = process.env.ENCRYPTION_KEY_MASTER;
+if (!ENCRYPTION_KEY_RAW) {
   throw new Error(
     "❌ ENCRYPTION_KEY_MASTER n'est pas défini dans les variables d'environnement. Vérifiez que le .env est bien chargé dans server.ts !",
   );
 }
+// Type assertion: après le check, on sait que ENCRYPTION_KEY_RAW est défini
+const ENCRYPTION_KEY: string = ENCRYPTION_KEY_RAW;
 if (Buffer.from(ENCRYPTION_KEY, "hex").length !== 32) {
   throw new Error(
     "❌ La clé de chiffrement doit être une chaîne hexadécimale de 64 caractères (32 octets).",
@@ -38,7 +40,7 @@ export function encrypt(text: string): string {
   const iv = crypto.randomBytes(IV_LENGTH);
   const cipher = crypto.createCipheriv(
     ALGORITHM,
-    Buffer.from(ENCRYPTION_KEY!, "hex"),
+    Buffer.from(ENCRYPTION_KEY, "hex"),
     iv,
     { authTagLength: AUTH_TAG_LENGTH },
   );
@@ -81,7 +83,7 @@ export function decrypt(text: string): string {
 
   const decipher = crypto.createDecipheriv(
     ALGORITHM,
-    Buffer.from(ENCRYPTION_KEY!, "hex"),
+    Buffer.from(ENCRYPTION_KEY, "hex"),
     iv,
     { authTagLength: AUTH_TAG_LENGTH },
   );
@@ -92,7 +94,7 @@ export function decrypt(text: string): string {
     let decrypted = decipher.update(encrypted, "hex", "utf-8");
     decrypted += decipher.final("utf-8");
     return decrypted;
-  } catch (error) {
+  } catch (_error) {
     throw new Error(
       "❌ Déchiffrement échoué : vérification d'intégrité des données échouée (données modifiées ou corrompues)",
     );

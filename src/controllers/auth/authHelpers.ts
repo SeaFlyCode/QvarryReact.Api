@@ -6,7 +6,6 @@ import FicheModel from "../../models/fiches";
 import ListModel from "../../models/lists";
 import KeysModel from "../../models/keys";
 import { decrypt, encrypt } from "../../utils/masterEncryptionUtils";
-import { decryptUserKeys } from "../../utils/userEncryptionUtils";
 import crypto from "crypto";
 import mongoose from "mongoose";
 import { redisSessionService } from "../../services/redisSessionService";
@@ -303,7 +302,7 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
         ),
       };
       memoryStorage.storeList(userId, decryptedList as any);
-    } catch (listDecryptError) {
+    } catch (_listDecryptError) {
       // Fallback : si le déchiffrement échoue, la liste est probablement en plaintext (migration)
       authHelpersLogger.warn(
         "Déchiffrement de la liste échoué, stockage en plaintext (migration nécessaire)",
@@ -465,9 +464,6 @@ export async function refreshFromDB(
   // Important: ne pas marquer dirty les items qu'on vient d'ingérer (ils viennent de la DB)
   // On remet les dirty sets à l'état d'avant le refresh pour ne pas re-sync vers la DB
   // ce qui vient de la DB
-  const dirtyPointsBefore = memoryStorage.getDirtyPointIds(userId);
-  const dirtyFichesBefore = memoryStorage.getDirtyFicheIds(userId);
-  const dirtyListsBefore = memoryStorage.getDirtyListIds(userId);
 
   memoryStorage.setLastRefreshedAt(userId, new Date());
 
@@ -730,7 +726,7 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         });
       }
 
-      const { name, description, location_encrypted } = point;
+      const { name, description } = point;
 
       // Rechifrer les données modifiées
       if (name) {

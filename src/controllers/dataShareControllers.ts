@@ -191,11 +191,11 @@ export const handleShareData = async (
       if (sender.showPseudo && sender.pseudo) {
         try {
           senderName = decrypt(sender.pseudo);
-        } catch (e) {}
+        } catch (_e) {}
       } else if (sender.name) {
         try {
           senderName = decrypt(sender.name);
-        } catch (e) {}
+        } catch (_e) {}
       }
     }
 

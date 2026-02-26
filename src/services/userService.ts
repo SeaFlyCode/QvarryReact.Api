@@ -1,9 +1,8 @@
 import mongoose from "mongoose";
 import crypto from "crypto";
 import { encrypt, decrypt, hashEmail } from "../utils/masterEncryptionUtils";
-import UserModel, { IUser } from "../models/users";
+import UserModel, { IUser, IUserBase } from "../models/users";
 import KeyModel from "../models/keys";
-import { IUserBase } from "../models/users";
 import {
   generateRSAKeyPair,
   encryptPrivateKey,
@@ -373,7 +372,7 @@ export async function deleteUserById(userId: string): Promise<{
 
 // Récupération de tous les utilisateurs
 export async function getAllUsers(): Promise<IUser[]> {
-  return await UserModel.find({});
+  return UserModel.find({});
 }
 
 // Récupération d'un utilisateur par email (décrypté)
@@ -405,7 +404,7 @@ export async function getUserByEmail(email: string): Promise<IUser | null> {
 export async function getUserById(userId: string): Promise<IUser | null> {
   if (!mongoose.Types.ObjectId.isValid(userId))
     throw new Error("L'ID fourni n'est pas valide.");
-  return await UserModel.findById(userId);
+  return UserModel.findById(userId);
 }
 
 // Mise à jour d'un utilisateur par ID

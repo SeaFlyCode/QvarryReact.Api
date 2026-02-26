@@ -136,7 +136,7 @@ export async function getUserNotifications(
     query.read = false;
   }
 
-  return await NotificationModel.find(query)
+  return NotificationModel.find(query)
     .populate("senderId", "name surname pseudo showPseudo")
     .sort({ createdAt: -1 })
     .limit(50) // Limiter aux 50 dernières
@@ -202,7 +202,7 @@ export async function cleanupOldNotifications(): Promise<number> {
 export async function getUnreadNotificationsCount(
   userId: mongoose.Types.ObjectId,
 ): Promise<number> {
-  return await NotificationModel.countDocuments({
+  return NotificationModel.countDocuments({
     userId: userId,
     read: false,
   });

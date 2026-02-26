@@ -1,5 +1,5 @@
 // server/src/services/auditService.ts
-import AuditLog, { IAuditLog } from "../models/auditLogs";
+import AuditLog from "../models/auditLogs";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
@@ -88,7 +88,7 @@ class AuditService {
     if (!value) return undefined;
     try {
       return decrypt(value);
-    } catch (error) {
+    } catch (_error) {
       // Peut être une ancienne valeur non chiffrée
       auditLogger.warn("Valeur non chiffrée détectée, retour en clair");
       return value;
@@ -124,7 +124,6 @@ class AuditService {
       await log.save();
 
       // Log console pour le monitoring en temps réel (sans données sensibles)
-      const emoji = this.getLevelEmoji(options.level || "info");
       auditLogger.info("Événement d'audit enregistré", {
         action: options.action,
         userId: options.userId?.toString() || "N/A",

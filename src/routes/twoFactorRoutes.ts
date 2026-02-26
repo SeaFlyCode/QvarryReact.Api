@@ -1,11 +1,11 @@
 import express from "express";
 import {
-    setupTwoFactor,
-    verifyAndEnableTwoFactor,
-    disableTwoFactor,
-    verifyTwoFactorLogin,
-    regenerateRecoveryCodes,
-    getTwoFactorStatus
+  setupTwoFactor,
+  verifyAndEnableTwoFactor,
+  disableTwoFactor,
+  verifyTwoFactorLogin,
+  regenerateRecoveryCodes,
+  getTwoFactorStatus,
 } from "../controllers/twoFactorControllers";
 import { authMiddleware } from "../middlewares/authMiddleware";
 

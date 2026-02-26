@@ -78,7 +78,7 @@ export const maintenanceMiddleware = async (
             return next();
           }
         }
-      } catch (e) {
+      } catch (_e) {
         // Token invalide, ignorer et bloquer
       }
     }

@@ -184,9 +184,12 @@ export async function handleLoginUser(req: Request, res: Response) {
       await resetLoginAttempts(email);
 
       // HIGH-01 FIX: Générer un tempToken signé au lieu d'envoyer le userId en clair
+      if (!process.env.JWT_SECRET) {
+        throw new Error("JWT_SECRET is not configured");
+      }
       const tempToken = jwt.sign(
         { userId, type: "temp-2fa-web", jti: crypto.randomUUID() },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET,
         { expiresIn: "5m" },
       );
 
@@ -736,7 +739,10 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
     // HIGH-01 FIX: Valider le tempToken signé au lieu d'accepter un userId brut
     let userId: string;
     try {
-      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET!) as {
+      if (!process.env.JWT_SECRET) {
+        throw new Error("JWT_SECRET is not configured");
+      }
+      const decoded = jwt.verify(tempToken, process.env.JWT_SECRET) as {
         userId: string;
         type: string;
       };

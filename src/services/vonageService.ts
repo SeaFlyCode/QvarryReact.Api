@@ -131,7 +131,15 @@ class VonageService {
     }
 
     // Toutes les tentatives ont échoué
-    return { ...lastResult!, attempts: maxRetries };
+    if (!lastResult) {
+      return {
+        success: false,
+        error: "Échec de toutes les tentatives sans résultat",
+        attempts: maxRetries,
+        to: to,
+      };
+    }
+    return { ...lastResult, attempts: maxRetries };
   }
 
   /**

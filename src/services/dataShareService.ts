@@ -1,8 +1,8 @@
 import mongoose from "mongoose";
 import DataShareModel, { IDataShare, DataType } from "../models/dataShare";
-import FicheModel, { IFiche } from "../models/fiches";
-import PointModel, { IPoint } from "../models/points";
-import ListModel, { IList } from "../models/lists";
+import FicheModel from "../models/fiches";
+import PointModel from "../models/points";
+import ListModel from "../models/lists";
 import KeysModel from "../models/keys";
 import UserModel from "../models/users";
 import { decryptUserKeys } from "../utils/userEncryptionUtils";
@@ -241,7 +241,7 @@ async function getListWithPoints(
     if (!value.includes(":")) return value;
     try {
       return await decryptUserKeys(userId, value);
-    } catch (e) {
+    } catch (_e) {
       return value;
     }
   };
@@ -409,7 +409,7 @@ async function getPoint(
     if (!value.includes(":")) return value;
     try {
       return await decryptUserKeys(userId, value);
-    } catch (e) {
+    } catch (_e) {
       return value;
     }
   };

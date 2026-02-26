@@ -152,7 +152,7 @@ export async function handleResetPassword(req: Request, res: Response) {
     }
 
     // Vérifier le code (stocké comme token:code)
-    const [storedToken, storedCode] = (user.reset_password_token || "").split(
+    const [_storedToken, storedCode] = (user.reset_password_token || "").split(
       ":",
     );
     if (storedCode !== code) {

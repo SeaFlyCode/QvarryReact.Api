@@ -30,7 +30,7 @@ async function getDisplayName(userId: string): Promise<string> {
   if (user.showPseudo && user.pseudo) {
     try {
       return decrypt(user.pseudo);
-    } catch (e) {
+    } catch (_e) {
       // Fallback sur le nom si erreur de déchiffrement du pseudo
     }
   }
@@ -40,7 +40,7 @@ async function getDisplayName(userId: string): Promise<string> {
     const name = decrypt(user.name);
     const surname = decrypt(user.surname);
     return `${name} ${surname}`;
-  } catch (e) {
+  } catch (_e) {
     return "Un utilisateur";
   }
 }

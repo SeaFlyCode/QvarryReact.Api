@@ -595,8 +595,6 @@ export async function handleUpdateListPointsOrder(req: Request, res: Response) {
  */
 export async function handleGetAllListsAdmin(req: Request, res: Response) {
   try {
-    const adminId = req.user?.id;
-
     // La vérification des droits admin est déjà faite dans le middleware
 
     // Récupération des utilisateurs avec leurs données
