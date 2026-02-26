@@ -13,6 +13,9 @@ import { decrypt } from "../utils/masterEncryptionUtils";
 import { syncService } from "../services/syncService";
 import { sendShareNotificationEmail } from "../services/emailService";
 import User from "../models/users";
+import { logger } from "../services/loggerService";
+
+const dataShareLogger = logger.child({ service: "data-share" });
 
 /**
  * Déchiffre les informations d'un utilisateur en respectant le paramètre showPseudo
@@ -44,7 +47,10 @@ function decryptUserInfo(user: any): {
       try {
         decryptedPseudo = decrypt(user.pseudo);
       } catch (e) {
-        console.error(`Erreur déchiffrement pseudo pour ${userId}:`, e);
+        dataShareLogger.error("Erreur déchiffrement pseudo", {
+          userId,
+          error: e,
+        });
       }
     }
 
@@ -71,7 +77,7 @@ function decryptUserInfo(user: any): {
       showPseudo: false,
     };
   } catch (error) {
-    console.error("Erreur lors du déchiffrement des infos utilisateur:", error);
+    dataShareLogger.error("Erreur déchiffrement infos utilisateur", { error });
     return {
       _id: user._id?.toString() || "",
       name: "Erreur",
@@ -99,8 +105,11 @@ export const handleShareData = async (
 
     const { receiverIds, dataType, dataId, message } = req.body;
 
-    console.log(`📤 [SHARE] Demande de partage par l'utilisateur ${senderId}`);
-    console.log(`📤 [SHARE] Type: ${dataType}, Data ID: ${dataId}`);
+    dataShareLogger.info("Demande de partage", {
+      senderId,
+      dataType,
+      dataId,
+    });
 
     // Validation des paramètres
     if (
@@ -135,15 +144,14 @@ export const handleShareData = async (
 
     // IMPORTANT: Forcer la synchronisation avant le partage pour s'assurer que
     // toutes les données (notamment les points d'une liste) sont en base de données
-    console.log(`🔄 [SHARE] Synchronisation des données avant partage...`);
+    dataShareLogger.info("Synchronisation des données avant partage");
     try {
       await syncService.syncNow(senderId);
-      console.log(`✅ [SHARE] Synchronisation terminée`);
+      dataShareLogger.info("Synchronisation terminée");
     } catch (syncError) {
-      console.warn(
-        `⚠️ [SHARE] Avertissement lors de la synchronisation:`,
-        syncError,
-      );
+      dataShareLogger.warn("Avertissement lors de la synchronisation", {
+        error: syncError,
+      });
       // On continue quand même, les données peuvent être récupérées depuis la mémoire
     }
 
@@ -164,9 +172,11 @@ export const handleShareData = async (
       receiverCount: receiverObjectIds.length,
     });
 
-    console.log(
-      `📤 [SHARE] ${dataType} partagé par ${senderId} avec ${receiverObjectIds.length} destinataire(s)`,
-    );
+    dataShareLogger.info("Données partagées", {
+      dataType,
+      senderId,
+      receiverCount: receiverObjectIds.length,
+    });
 
     // Envoyer des emails aux destinataires (asynchrone, ne bloque pas la réponse)
     const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
@@ -207,18 +217,23 @@ export const handleShareData = async (
             shareLink,
             message || undefined,
           ).catch((err) =>
-            console.error(`Erreur envoi email partage à ${receiverId}:`, err),
+            dataShareLogger.error("Erreur envoi email partage", {
+              receiverId,
+              error: err,
+            }),
           );
         }
       } catch (emailError) {
-        console.error(
-          `Erreur récupération destinataire ${receiverId}:`,
-          emailError,
-        );
+        dataShareLogger.error("Erreur récupération destinataire", {
+          receiverId,
+          error: emailError,
+        });
       }
     }
   } catch (error: unknown) {
-    console.error("❌ [SHARE ERROR]", error);
+    dataShareLogger.error("Erreur partage", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors du partage des données",
       details: getErrorMessage(error),
@@ -271,11 +286,14 @@ export const handleGetSharedData = async (
       signatureValid: result.signatureValid,
     });
 
-    console.log(
-      `📥 [SHARE] Données récupérées par ${receiverId} - Signature: ${result.signatureValid ? "���" : "❌"}`,
-    );
+    dataShareLogger.info("Données récupérées", {
+      receiverId,
+      signatureValid: result.signatureValid,
+    });
   } catch (error: unknown) {
-    console.error("❌ [GET SHARED DATA ERROR]", error);
+    dataShareLogger.error("Erreur récupération données partagées", {
+      error: getErrorMessage(error),
+    });
 
     if (getErrorMessage(error).includes("expiré")) {
       res.status(410).json({ error: getErrorMessage(error) });
@@ -341,12 +359,16 @@ export const handleUpdateShareStatus = async (
       });
     }
 
-    console.log(
-      `✅ [SHARE STATUS] ${status} par ${receiverId} pour ${shareId}`,
-      result.copiedData ? `- Données copiées: ${result.copiedData.type}` : "",
-    );
+    dataShareLogger.info("Statut partage mis à jour", {
+      status,
+      receiverId,
+      shareId,
+      copiedData: result.copiedData?.type,
+    });
   } catch (error: unknown) {
-    console.error("❌ [UPDATE SHARE STATUS ERROR]", error);
+    dataShareLogger.error("Erreur mise à jour statut", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la mise à jour du statut",
       details: getErrorMessage(error),
@@ -418,11 +440,15 @@ export const handleGetReceivedShares = async (
       },
     });
 
-    console.log(
-      `📬 [RECEIVED SHARES] ${sharesFormatted.length} partages sur ${total} pour ${receiverId}`,
-    );
+    dataShareLogger.info("Partages reçus récupérés", {
+      receiverId,
+      count: sharesFormatted.length,
+      total,
+    });
   } catch (error: unknown) {
-    console.error("❌ [GET RECEIVED SHARES ERROR]", error);
+    dataShareLogger.error("Erreur récupération partages reçus", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des partages reçus",
       details: getErrorMessage(error),
@@ -496,11 +522,15 @@ export const handleGetSentShares = async (
       },
     });
 
-    console.log(
-      `📤 [SENT SHARES] ${sharesFormatted.length} partages sur ${total} de ${senderId}`,
-    );
+    dataShareLogger.info("Partages envoyés récupérés", {
+      senderId,
+      count: sharesFormatted.length,
+      total,
+    });
   } catch (error: unknown) {
-    console.error("❌ [GET SENT SHARES ERROR]", error);
+    dataShareLogger.error("Erreur récupération partages envoyés", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des partages envoyés",
       details: getErrorMessage(error),

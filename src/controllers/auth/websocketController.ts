@@ -2,6 +2,9 @@ import { getErrorMessage } from "../../utils/errorUtils";
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import { logger } from "../../services/loggerService";
+
+const wsAuthLogger = logger.child({ service: "ws-auth" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: OBTENIR UN TOKEN TEMPORAIRE POUR WEBSOCKET
@@ -21,7 +24,7 @@ export const getWebSocketToken = (req: Request, res: Response) => {
     // Générer un token JWT temporaire spécifique pour WebSocket
     // Durée de vie courte : 5 minutes
     if (!process.env.JWT_SECRET) {
-      console.error("❌ [SECURITY] JWT_SECRET non défini");
+      wsAuthLogger.error("JWT_SECRET not defined");
       throw new Error("Configuration de sécurité manquante");
     }
 
@@ -39,19 +42,21 @@ export const getWebSocketToken = (req: Request, res: Response) => {
       { expiresIn: "5m" }, // Token valide 5 minutes
     );
 
-    console.log(
-      `🔑 [AUTH] Token WebSocket généré pour userId: ${userId} (jti: ${tokenJti.substring(0, 8)}..., expire dans 5min)`,
-    );
+    wsAuthLogger.info("WebSocket token generated", {
+      userId,
+      jti: tokenJti.substring(0, 8),
+      expiresIn: "5m",
+    });
 
     return res.status(200).json({
       token: wsToken,
       expiresIn: 300, // 5 minutes en secondes
     });
   } catch (error: unknown) {
-    console.error(
-      "❌ [AUTH] Erreur lors de la génération du token WebSocket:",
-      error,
-    );
+    wsAuthLogger.error("WebSocket token generation error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return res.status(500).json({
       error: "Erreur lors de la génération du token",
       details: getErrorMessage(error),

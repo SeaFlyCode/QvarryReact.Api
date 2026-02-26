@@ -1,5 +1,5 @@
 import { getErrorMessage, isErrorWithName } from "../../utils/errorUtils";
-import { maskEmail } from "../../utils/logUtils";
+import { maskEmail, anonymizeIp } from "../../utils/logUtils";
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
@@ -29,6 +29,9 @@ import {
   generateSecureToken,
   loadAndDecryptUserData,
 } from "./authHelpers";
+import { logger } from "../../services/loggerService";
+
+const loginLogger = logger.child({ service: "auth-login" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: LOGIN UTILISATEUR
@@ -44,7 +47,7 @@ export async function handleLoginUser(req: Request, res: Response) {
     // 1. VALIDATION DES ENTRÉES
     // ─────────────────────────────────────────────────────────────────────
     if (!email || !password) {
-      console.warn(`⚠️ [AUTH] Tentative de connexion avec champs manquants`);
+      loginLogger.warn("[AUTH] Tentative de connexion avec champs manquants");
       return res.status(400).json({
         error: "Email et mot de passe requis.",
       });
@@ -53,7 +56,9 @@ export async function handleLoginUser(req: Request, res: Response) {
     // Validation du format email
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (!emailRegex.test(email)) {
-      console.warn(`⚠️ [AUTH] Format d'email invalide: ${maskEmail(email)}`);
+      loginLogger.warn("[AUTH] Format d'email invalide", {
+        email: maskEmail(email),
+      });
       return res.status(400).json({
         error: "Format d'email invalide.",
       });
@@ -103,8 +108,9 @@ export async function handleLoginUser(req: Request, res: Response) {
     const isMaintenanceActive = maintenance?.isActive || false;
 
     if (isMaintenanceActive && !user.is_admin) {
-      console.warn(
-        `🔧 [AUTH] Connexion refusée pendant maintenance pour non-admin: ${maskEmail(email)}`,
+      loginLogger.warn(
+        "[AUTH] Connexion refusée pendant maintenance pour non-admin",
+        { email: maskEmail(email) },
       );
       return res.status(503).json({
         error:
@@ -118,9 +124,9 @@ export async function handleLoginUser(req: Request, res: Response) {
     // 4.3 VÉRIFICATION DU BLOCAGE DU COMPTE
     // ─────────────────────────────────────────────────────────────────────
     if (user.is_blocked) {
-      console.warn(
-        `🚫 [AUTH] Tentative de connexion d'un compte bloqué: ${maskEmail(email)}`,
-      );
+      loginLogger.warn("[AUTH] Tentative de connexion d'un compte bloqué", {
+        email: maskEmail(email),
+      });
       return res.status(403).json({
         error:
           "Votre compte a été suspendu. Contactez l'administrateur pour plus d'informations.",
@@ -145,9 +151,9 @@ export async function handleLoginUser(req: Request, res: Response) {
     if (!user.is_admin_validated) {
       // Vérifier si le compte a été refusé
       if (user.admin_validation_rejected) {
-        console.warn(
-          `🚫 [AUTH] Tentative de connexion d'un compte refusé: ${maskEmail(email)}`,
-        );
+        loginLogger.warn("[AUTH] Tentative de connexion d'un compte refusé", {
+          email: maskEmail(email),
+        });
         return res.status(403).json({
           error:
             "Votre demande de compte a été refusée. Contactez l'administrateur pour plus d'informations.",
@@ -156,8 +162,9 @@ export async function handleLoginUser(req: Request, res: Response) {
         });
       }
 
-      console.warn(
-        `⏳ [AUTH] Tentative de connexion d'un compte en attente de validation: ${maskEmail(email)}`,
+      loginLogger.warn(
+        "[AUTH] Tentative de connexion d'un compte en attente de validation",
+        { email: maskEmail(email) },
       );
       return res.status(403).json({
         error:
@@ -171,7 +178,7 @@ export async function handleLoginUser(req: Request, res: Response) {
     // ─────────────────────────────────────────────────────────────────────
     if (user.two_factor_enabled) {
       const userId = (user._id as mongoose.Types.ObjectId).toString();
-      console.log(`🔐 [AUTH] 2FA requis pour ${maskEmail(email)}`);
+      loginLogger.info("[AUTH] 2FA requis", { email: maskEmail(email) });
 
       // Réinitialiser les tentatives car le mot de passe est correct
       await resetLoginAttempts(email);
@@ -266,19 +273,19 @@ export async function handleLoginUser(req: Request, res: Response) {
     });
 
     const loginDuration = Date.now() - startTime;
-    console.log(
-      `✅ [AUTH] Connexion réussie: ${maskEmail(email)} (user: ${userId}) en ${loginDuration}ms`,
-    );
+    loginLogger.info("[AUTH] Connexion réussie", {
+      email: maskEmail(email),
+      userId,
+      duration: loginDuration,
+    });
 
     // ─────────────────────────────────────────────────────────────────────
     // 9.5 ENVOI D'EMAIL D'ALERTE DE SÉCURITÉ (optionnel, configurable)
     // ─────────────────────────────────────────────────────────────────────
-    console.log(
-      `📧 [AUTH] SEND_LOGIN_ALERTS = '${process.env.SEND_LOGIN_ALERTS}' (type: ${typeof process.env.SEND_LOGIN_ALERTS})`,
-    );
-    console.log(
-      `📧 [AUTH] User login_notifications_enabled = ${user.login_notifications_enabled ?? true}`,
-    );
+    loginLogger.info("[AUTH] Vérification des alertes de connexion", {
+      SEND_LOGIN_ALERTS: process.env.SEND_LOGIN_ALERTS,
+      userPreference: user.login_notifications_enabled ?? true,
+    });
 
     // Vérifier à la fois la variable d'environnement globale ET la préférence utilisateur
     const userWantsLoginNotifications =
@@ -288,9 +295,9 @@ export async function handleLoginUser(req: Request, res: Response) {
       process.env.SEND_LOGIN_ALERTS === "true" &&
       userWantsLoginNotifications
     ) {
-      console.log(
-        `📧 [AUTH] Envoi d'email d'alerte de connexion pour ${maskEmail(email)}...`,
-      );
+      loginLogger.info("[AUTH] Envoi d'email d'alerte de connexion", {
+        email: maskEmail(email),
+      });
       const userName = decrypt(user.name);
       const loginTime = new Date().toLocaleString("fr-FR", {
         dateStyle: "full",
@@ -306,22 +313,23 @@ export async function handleLoginUser(req: Request, res: Response) {
         loginTime, // location/time info
       )
         .then(() => {
-          console.log(
-            `📧 [AUTH] ✅ Email d'alerte envoyé à ${maskEmail(email)}`,
-          );
+          loginLogger.info("[AUTH] Email d'alerte envoyé", {
+            email: maskEmail(email),
+          });
         })
         .catch((err) => {
-          console.error(
-            `📧 [AUTH] ❌ Erreur envoi email alerte connexion:`,
-            err,
-          );
+          loginLogger.error("[AUTH] Erreur envoi email alerte connexion", {
+            email: maskEmail(email),
+            error: err instanceof Error ? err.message : String(err),
+            stack: err instanceof Error ? err.stack : undefined,
+          });
         });
     } else {
       if (!userWantsLoginNotifications) {
-        console.log(`📧 [AUTH] Email d'alerte désactivé par l'utilisateur`);
+        loginLogger.info("[AUTH] Email d'alerte désactivé par l'utilisateur");
       } else {
-        console.log(
-          `📧 [AUTH] Email d'alerte de connexion désactivé (SEND_LOGIN_ALERTS != 'true')`,
+        loginLogger.info(
+          "[AUTH] Email d'alerte de connexion désactivé (SEND_LOGIN_ALERTS != 'true')",
         );
       }
     }
@@ -355,7 +363,10 @@ export async function handleLoginUser(req: Request, res: Response) {
 
     res.status(200).json(response);
   } catch (error: unknown) {
-    console.error(`❌ [AUTH] Erreur lors de la connexion:`, error);
+    loginLogger.error("[AUTH] Erreur lors de la connexion", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la connexion. Veuillez réessayer.",
     });
@@ -371,20 +382,17 @@ export async function handleRefreshToken(req: Request, res: Response) {
     // ─────────────────────────────────────────────────────────────────────
     // 1. RÉCUPÉRATION DU REFRESH TOKEN
     // ─────────────────────────────────────────────────────────────────────
-    console.log(
-      `🔍 [AUTH DEBUG] Cookies reçus:`,
-      Object.keys(req.cookies || {}),
-    );
-    console.log(
-      `🔍 [AUTH DEBUG] RefreshToken présent:`,
-      !!req.cookies?.refreshToken,
-    );
+    loginLogger.info("[AUTH DEBUG] Cookies reçus", {
+      cookies: Object.keys(req.cookies || {}),
+      hasRefreshToken: !!req.cookies?.refreshToken,
+    });
 
     const refreshToken = req.cookies?.refreshToken || req.body?.refreshToken;
 
     if (!refreshToken) {
-      console.warn(`⚠️ [AUTH] Tentative de refresh sans token`);
-      console.warn(`⚠️ [AUTH DEBUG] Cookies disponibles:`, req.cookies);
+      loginLogger.warn("[AUTH] Tentative de refresh sans token", {
+        availableCookies: req.cookies,
+      });
       return res.status(401).json({
         error: "Refresh token manquant. Veuillez vous reconnecter.",
         code: "NO_REFRESH_TOKEN",
@@ -398,7 +406,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
       await refreshTokenService.validateRefreshToken(refreshToken);
 
     if (!storedToken) {
-      console.warn(`⚠️ [AUTH] Refresh token invalide ou expiré`);
+      loginLogger.warn("[AUTH] Refresh token invalide ou expiré");
 
       await auditService.log({
         action: "REFRESH_TOKEN_INVALID",
@@ -428,8 +436,9 @@ export async function handleRefreshToken(req: Request, res: Response) {
       );
 
       if (isStolen) {
-        console.error(
-          `🚨 [SECURITY] Vol de token détecté! Tous les tokens révoqués pour userId: ${userId}`,
+        loginLogger.error(
+          "[SECURITY] Vol de token détecté! Tous les tokens révoqués",
+          { userId },
         );
         return res.status(401).json({
           error:
@@ -447,9 +456,11 @@ export async function handleRefreshToken(req: Request, res: Response) {
     if (process.env.VALIDATE_SESSION_METADATA === "true") {
       // Changement d'IP
       if (storedToken.ipAddress && storedToken.ipAddress !== ipAddress) {
-        console.warn(
-          `⚠️ [SECURITY] Changement d'IP détecté pour userId: ${userId} (${storedToken.ipAddress} -> ${ipAddress})`,
-        );
+        loginLogger.warn("[SECURITY] Changement d'IP détecté", {
+          userId,
+          oldIp: anonymizeIp(storedToken.ipAddress || ""),
+          newIp: anonymizeIp(ipAddress || ""),
+        });
 
         await auditService.log({
           userId,
@@ -465,9 +476,9 @@ export async function handleRefreshToken(req: Request, res: Response) {
 
       // Changement de User-Agent
       if (storedToken.userAgent && storedToken.userAgent !== userAgent) {
-        console.warn(
-          `⚠️ [SECURITY] Changement de User-Agent détecté pour userId: ${userId}`,
-        );
+        loginLogger.warn("[SECURITY] Changement de User-Agent détecté", {
+          userId,
+        });
 
         await auditService.log({
           userId,
@@ -506,9 +517,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
     // 7. RESTAURER LA SESSION SI NÉCESSAIRE
     // ─────────────────────────────────────────────────────────────────────
     if (!memoryStorage.hasSession(userId)) {
-      console.log(
-        `🔄 [AUTH] Restauration de la session pour userId: ${userId}`,
-      );
+      loginLogger.info("[AUTH] Restauration de la session", { userId });
       await loadAndDecryptUserData(userId);
       // CRIT-09: Session créée via redisSessionService
       await redisSessionService.createSession(userId, {
@@ -550,7 +559,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
       details: { oldTokenId: storedToken.tokenId, newTokenId },
     });
 
-    console.log(`✅ [AUTH] Token renouvelé pour userId: ${userId}`);
+    loginLogger.info("[AUTH] Token renouvelé", { userId });
 
     res.status(200).json({
       success: true,
@@ -558,7 +567,10 @@ export async function handleRefreshToken(req: Request, res: Response) {
       message: "Token renouvelé avec succès",
     });
   } catch (error: unknown) {
-    console.error(`❌ [AUTH] Erreur lors du refresh du token:`, error);
+    loginLogger.error("[AUTH] Erreur lors du refresh du token", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors du renouvellement du token.",
       code: "REFRESH_ERROR",
@@ -591,7 +603,7 @@ export const checkAuth = async (req: Request, res: Response) => {
     // 2. VÉRIFICATION DE LA BLACKLIST (CRIT-10: via Redis uniquement)
     // ─────────────────────────────────────────────────────────────────────
     if (await redisSessionService.isTokenBlacklisted(token)) {
-      console.warn(`⚠️ [AUTH] Tentative d'utilisation d'un token blacklisté`);
+      loginLogger.warn("[AUTH] Tentative d'utilisation d'un token blacklisté");
       // Supprimer le cookie invalide
       res.clearCookie("token", clearCookieOptions);
       return res.status(401).json({
@@ -604,7 +616,7 @@ export const checkAuth = async (req: Request, res: Response) => {
     // 3. VÉRIFICATION ET DÉCODAGE DU TOKEN
     // ─────────────────────────────────────────────────────────────────────
     if (!process.env.JWT_SECRET) {
-      console.error("❌ [SECURITY] JWT_SECRET non défini");
+      loginLogger.error("[SECURITY] JWT_SECRET non défini");
       throw new Error("Configuration de sécurité manquante");
     }
 
@@ -618,7 +630,7 @@ export const checkAuth = async (req: Request, res: Response) => {
 
     // Vérifier l'expiration explicite
     if (decoded.exp && decoded.exp * 1000 < Date.now()) {
-      console.warn(`⚠️ [AUTH] Token expiré pour userId: ${decoded.id}`);
+      loginLogger.warn("[AUTH] Token expiré", { userId: decoded.id });
       // Supprimer le cookie expiré
       res.clearCookie("token", clearCookieOptions);
       return res.status(401).json({
@@ -641,8 +653,9 @@ export const checkAuth = async (req: Request, res: Response) => {
         "web",
       );
       if (!isValidJti) {
-        console.warn(
-          `⚠️ [AUTH] JTI invalide dans checkAuth pour userId: ${decoded.id} - session probablement expirée`,
+        loginLogger.warn(
+          "[AUTH] JTI invalide dans checkAuth - session probablement expirée",
+          { userId: decoded.id },
         );
         res.clearCookie("token", clearCookieOptions);
         res.clearCookie("refreshToken", clearCookieOptions);
@@ -659,9 +672,7 @@ export const checkAuth = async (req: Request, res: Response) => {
     // Note: On peut désactiver cette vérification si trop stricte
     const requireActiveSession = process.env.REQUIRE_ACTIVE_SESSION === "true";
     if (requireActiveSession && !memoryStorage.hasSession(decoded.id)) {
-      console.warn(
-        `⚠️ [AUTH] Pas de session active pour userId: ${decoded.id}`,
-      );
+      loginLogger.warn("[AUTH] Pas de session active", { userId: decoded.id });
       return res.status(401).json({
         authenticated: false,
         reason: "no_active_session",
@@ -685,22 +696,24 @@ export const checkAuth = async (req: Request, res: Response) => {
 
     // Distinguer les différents types d'erreurs JWT
     if (isErrorWithName(error, "TokenExpiredError")) {
-      console.warn(`⚠️ [AUTH] Token expiré`);
+      loginLogger.warn("[AUTH] Token expiré");
       return res.status(401).json({
         authenticated: false,
         reason: "token_expired",
       });
     } else if (isErrorWithName(error, "JsonWebTokenError")) {
-      console.warn(`⚠️ [AUTH] Token invalide:`, getErrorMessage(error));
+      loginLogger.warn("[AUTH] Token invalide", {
+        error: getErrorMessage(error),
+      });
       return res.status(401).json({
         authenticated: false,
         reason: "token_invalid",
       });
     } else {
-      console.error(
-        `❌ [AUTH] Erreur lors de la vérification du token:`,
-        error,
-      );
+      loginLogger.error("[AUTH] Erreur lors de la vérification du token", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return res.status(401).json({
         authenticated: false,
         reason: "verification_error",
@@ -800,7 +813,7 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
       details: { tokenId, method: "2fa" },
     });
 
-    console.log(`✅ [AUTH] Connexion 2FA réussie pour ${userId}`);
+    loginLogger.info("[AUTH] Connexion 2FA réussie", { userId });
 
     return res.status(200).json({
       login: true,
@@ -810,10 +823,10 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
       tokenExpiresIn: getCookieConfig().jwtMaxAgeMinutes * 60,
     });
   } catch (error: unknown) {
-    console.error(
-      "❌ [AUTH] Erreur lors de la finalisation du login 2FA:",
-      error,
-    );
+    loginLogger.error("[AUTH] Erreur lors de la finalisation du login 2FA", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return res.status(500).json({ error: "Erreur lors de la connexion" });
   }
 }

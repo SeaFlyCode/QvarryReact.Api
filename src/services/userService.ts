@@ -9,6 +9,9 @@ import {
   encryptPrivateKey,
 } from "../utils/rsaEncryptionUtils";
 import dataArchiveService from "./dataArchiveService";
+import { logger } from "./loggerService";
+
+const userServiceLogger = logger.child({ service: "user-service" });
 
 // Import des modèles pour la suppression en cascade RGPD
 import PointModel from "../models/points";
@@ -65,17 +68,20 @@ export async function createUser(
       }),
     ]);
 
-    console.log(
-      `✅ [USER CREATION] Utilisateur créé avec clés AES-256 et RSA-4096 - ID: ${newUser._id}`,
-    );
+    userServiceLogger.info("Utilisateur créé avec clés AES-256 et RSA-4096", {
+      userId: newUser._id.toString(),
+    });
 
     return newUser;
   } catch (error) {
     // Si la création des clés échoue, supprimer l'utilisateur créé
     await UserModel.findByIdAndDelete(newUser._id);
-    console.error(
-      "❌ Erreur lors de la création des clés, utilisateur supprimé:",
-      error,
+    userServiceLogger.error(
+      "Erreur lors de la création des clés, utilisateur supprimé",
+      {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
     );
     throw new Error("Erreur lors de la création du compte utilisateur");
   }
@@ -104,12 +110,15 @@ export async function deleteUserById(userId: string): Promise<{
 
   const userObjectId = new mongoose.Types.ObjectId(userId);
 
-  console.log(
-    `🗑️ [RGPD] Début de la suppression complète pour l'utilisateur: ${userId}`,
+  userServiceLogger.info(
+    "Début de la suppression complète RGPD pour utilisateur",
+    {
+      userId,
+    },
   );
 
   // ARCHIVAGE: Récupérer et archiver toutes les données avant suppression (RGPD compliant)
-  console.log(`📦 [RGPD] Archivage des données avant suppression...`);
+  userServiceLogger.info("Archivage des données avant suppression");
 
   // Récupérer l'utilisateur
   const user = await UserModel.findById(userObjectId).lean();
@@ -262,7 +271,7 @@ export async function deleteUserById(userId: string): Promise<{
     ),
   );
 
-  console.log(`✅ [RGPD] Archivage terminé. Suppression physique en cours...`);
+  userServiceLogger.info("Archivage terminé. Suppression physique en cours");
 
   // ⚠️ Pas de transaction MongoDB (nécessite replica set). L'archivage préalable permet la restauration en cas d'interruption.
 
@@ -351,10 +360,13 @@ export async function deleteUserById(userId: string): Promise<{
     auditLogs: auditLogsResult.modifiedCount || 0,
   };
 
-  console.log(
-    `✅ [RGPD] Suppression complète terminée pour l'utilisateur: ${userId}`,
+  userServiceLogger.info(
+    "Suppression complète RGPD terminée pour utilisateur",
+    {
+      userId,
+      deletedData,
+    },
   );
-  console.log(`📊 [RGPD] Données supprimées:`, deletedData);
 
   return { success: true, deletedData };
 }
@@ -411,5 +423,5 @@ export async function updateUserById(
     throw new Error(
       "Aucun utilisateur trouvé avec cet ID ou aucune mise à jour effectuée.",
     );
-  console.log("Utilisateur mis à jour avec succès !");
+  userServiceLogger.info("Utilisateur mis à jour avec succès", { userId });
 }

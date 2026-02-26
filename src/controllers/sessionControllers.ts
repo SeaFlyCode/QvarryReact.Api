@@ -5,6 +5,9 @@
 import { Request, Response } from "express";
 import { refreshTokenService } from "../services/refreshTokenService";
 import { auditService } from "../services/auditService";
+import { logger } from "../services/loggerService";
+
+const sessionLogger = logger.child({ service: "session" });
 
 /**
  * Révoquer toutes les sessions sauf la session actuelle
@@ -42,9 +45,10 @@ export async function revokeAllOtherSessions(req: Request, res: Response) {
       details: { revokedCount, keptTokenId: currentTokenId },
     });
 
-    console.log(
-      `🔐 [SESSIONS] ${revokedCount} sessions révoquées pour userId: ${userId} (session actuelle préservée)`,
-    );
+    sessionLogger.info("All other sessions revoked", {
+      revokedCount,
+      userId,
+    });
 
     res.status(200).json({
       success: true,
@@ -52,10 +56,10 @@ export async function revokeAllOtherSessions(req: Request, res: Response) {
       revokedCount,
     });
   } catch (error) {
-    console.error(
-      "❌ [SESSIONS] Erreur lors de la révocation des sessions:",
-      error,
-    );
+    sessionLogger.error("Revoke all other sessions error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la révocation des sessions",
     });

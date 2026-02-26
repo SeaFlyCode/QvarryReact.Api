@@ -6,6 +6,9 @@ import { validateFicheData } from "../services/validationService";
 import { syncService } from "../services/syncService";
 import FicheModel, { IFiche } from "../models/fiches";
 import { loadAndDecryptUserData } from "./auth/authHelpers";
+import { logger } from "../services/loggerService";
+
+const fichesLogger = logger.child({ service: "fiches" });
 
 /**
  * Gère la création d'une nouvelle fiche
@@ -103,7 +106,9 @@ export async function handleCreateFiche(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la création de la fiche:", error);
+    fichesLogger.error("Erreur lors de la création de la fiche", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de la création de la fiche.",
       error: getErrorMessage(error) || "Une erreur inconnue s'est produite.",
@@ -163,7 +168,9 @@ export async function handleUpdateFiche(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la mise à jour de la fiche:", error);
+    fichesLogger.error("Erreur lors de la mise à jour de la fiche", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de la mise à jour de la fiche.",
       error: getErrorMessage(error),
@@ -229,7 +236,9 @@ export async function handleDeleteFiche(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la suppression de la fiche:", error);
+    fichesLogger.error("Erreur lors de la suppression de la fiche", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de la suppression de la fiche.",
       error: getErrorMessage(error),
@@ -292,7 +301,9 @@ export async function handleGetAllFiches(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la récupération des fiches:", error);
+    fichesLogger.error("Erreur lors de la récupération des fiches", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de la récupération des fiches.",
       error: getErrorMessage(error),
@@ -334,7 +345,9 @@ export async function handleGetFicheById(req: Request, res: Response) {
         typeof ficheObj.commentaire === "string" ? ficheObj.commentaire : "",
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la récupération de la fiche:", error);
+    fichesLogger.error("Erreur lors de la récupération de la fiche", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de la récupération de la fiche.",
       error: getErrorMessage(error),
@@ -387,9 +400,11 @@ export async function handleGetUserFiches(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error(
-      "Erreur lors de la récupération des fiches de l'utilisateur:",
-      error,
+    fichesLogger.error(
+      "Erreur lors de la récupération des fiches de l'utilisateur",
+      {
+        error: getErrorMessage(error),
+      },
     );
     return res.status(500).json({
       message: "Erreur lors de la récupération des fiches de l'utilisateur.",
@@ -444,7 +459,9 @@ export async function handleAddPointToFiche(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de l'ajout du point à la fiche:", error);
+    fichesLogger.error("Erreur lors de l'ajout du point à la fiche", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de l'ajout du point à la fiche.",
       error: getErrorMessage(error),
@@ -522,7 +539,10 @@ export async function handleRemovePointFromFiche(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la dissociation point-fiche:", error);
+    fichesLogger.error("Erreur lors de la dissociation point-fiche", {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return res.status(500).json({
       success: false,
       message: "Erreur lors de la dissociation du point de la fiche",
@@ -556,7 +576,10 @@ export async function handleGetPointsByFicheId(req: Request, res: Response) {
       count: points.length,
     });
   } catch (error: unknown) {
-    console.error("Erreur récupération des points de la fiche:", error);
+    fichesLogger.error("Erreur recuperation des points de la fiche", {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return res.status(500).json({
       success: false,
       message: getErrorMessage(error),
@@ -625,9 +648,12 @@ export async function handleGetFicheByPointId(req: Request, res: Response) {
       .status(404)
       .json({ message: "Aucune fiche associée à ce point n'a été trouvée" });
   } catch (error: unknown) {
-    console.error(
-      "Erreur lors de la récupération de la fiche associée au point:",
-      error,
+    fichesLogger.error(
+      "Erreur lors de la recuperation de la fiche associee au point",
+      {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+      },
     );
     return res.status(500).json({
       message: "Erreur lors de la récupération de la fiche associée au point",
@@ -829,7 +855,10 @@ export async function handleSearchFiches(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la recherche avancée de fiches:", error);
+    fichesLogger.error("Erreur lors de la recherche avancee de fiches", {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return res.status(500).json({
       message: "Erreur lors de la recherche avancée de fiches.",
       error: getErrorMessage(error),

@@ -12,6 +12,10 @@ import { redisSessionService } from "../services/redisSessionService";
 // CRIT-10: blacklistedTokens Set supprimé, on utilise redisSessionService exclusivement
 import { jwtKeyManager } from "../utils/jwtKeyManager";
 import UserModel from "../models/users";
+import { anonymizeIp } from "../utils/logUtils";
+import { logger } from "../services/loggerService";
+
+const mobileAuthLogger = logger.child({ service: "mobile-auth" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -47,9 +51,10 @@ export const mobileAuthMiddleware = async (
     const authHeader = req.headers.authorization;
 
     if (!authHeader || !authHeader.startsWith("Bearer ")) {
-      console.warn(
-        `⚠️ [MOBILE-AUTH] Token manquant - ${req.method} ${req.path}`,
-      );
+      mobileAuthLogger.warn("Token manquant", {
+        method: req.method,
+        path: req.path,
+      });
       return res.status(401).json({
         error: "Token d'authentification requis",
         code: "NO_TOKEN",
@@ -70,9 +75,10 @@ export const mobileAuthMiddleware = async (
     const isBlacklisted = await redisSessionService.isTokenBlacklisted(token);
 
     if (isBlacklisted) {
-      console.warn(
-        `🚫 [MOBILE-AUTH] Token révoqué utilisé - ${req.method} ${req.path}`,
-      );
+      mobileAuthLogger.warn("Token révoqué utilisé", {
+        method: req.method,
+        path: req.path,
+      });
       return res.status(401).json({
         error: "Token révoqué. Veuillez vous reconnecter.",
         code: "TOKEN_REVOKED",
@@ -96,9 +102,7 @@ export const mobileAuthMiddleware = async (
     if (keyVersion && jwtKeyManager.hasVersion(keyVersion)) {
       const versionedSecret = jwtKeyManager.getKeyByVersion(keyVersion);
       if (!versionedSecret) {
-        console.error(
-          `❌ [MOBILE-AUTH] Clé JWT version ${keyVersion} non trouvée`,
-        );
+        mobileAuthLogger.error("Clé JWT version non trouvée", { keyVersion });
         return res.status(401).json({
           error: "Token invalide",
           code: "KEY_VERSION_INVALID",
@@ -108,7 +112,7 @@ export const mobileAuthMiddleware = async (
     } else {
       const mainSecret = process.env.JWT_SECRET;
       if (!mainSecret) {
-        console.error("❌ [MOBILE-AUTH] JWT_SECRET non défini");
+        mobileAuthLogger.error("JWT_SECRET non défini");
         throw new Error("Configuration de sécurité manquante");
       }
       jwtSecret = mainSecret;
@@ -127,9 +131,10 @@ export const mobileAuthMiddleware = async (
       headerDeviceId &&
       decoded.deviceId !== headerDeviceId
     ) {
-      console.warn(
-        `🚨 [MOBILE-AUTH] Device mismatch: token=${decoded.deviceId}, header=${headerDeviceId}`,
-      );
+      mobileAuthLogger.warn("Device mismatch détecté", {
+        tokenDeviceId: decoded.deviceId,
+        headerDeviceId,
+      });
       return res.status(401).json({
         error: "Token invalide pour cet appareil. Veuillez vous reconnecter.",
         code: "DEVICE_MISMATCH",
@@ -144,9 +149,7 @@ export const mobileAuthMiddleware = async (
         "mobile",
       );
       if (!isValidJti) {
-        console.warn(
-          `⚠️ [MOBILE-AUTH] JTI invalide pour userId: ${decoded.id}`,
-        );
+        mobileAuthLogger.warn("JTI invalide", { userId: decoded.id });
         return res.status(401).json({
           error: "Session expirée. Veuillez rafraîchir votre token.",
           code: "SESSION_EXPIRED",
@@ -158,7 +161,9 @@ export const mobileAuthMiddleware = async (
     // 6. VÉRIFICATION QUE L'UTILISATEUR EXISTE TOUJOURS
     const userExists = await UserModel.exists({ _id: decoded.id });
     if (!userExists) {
-      console.warn(`⚠️ [MOBILE-AUTH] Utilisateur ${decoded.id} n'existe plus`);
+      mobileAuthLogger.warn("Utilisateur n'existe plus", {
+        userId: decoded.id,
+      });
       return res.status(401).json({
         error: "Utilisateur non trouvé",
         code: "USER_NOT_FOUND",
@@ -176,18 +181,18 @@ export const mobileAuthMiddleware = async (
         .select("is_admin is_blocked")
         .lean();
       if (!user) {
-        console.warn(
-          `🚫 [MOBILE-AUTH] Utilisateur non trouvé en DB: ${decoded.id}`,
-        );
+        mobileAuthLogger.warn("Utilisateur non trouvé en DB", {
+          userId: decoded.id,
+        });
         return res.status(401).json({
           error: "Utilisateur non trouvé",
           code: "USER_NOT_FOUND",
         });
       }
       if (user.is_blocked) {
-        console.warn(
-          `🚫 [MOBILE-AUTH] Utilisateur bloqué tente d'accéder: ${decoded.id}`,
-        );
+        mobileAuthLogger.warn("Utilisateur bloqué tente d'accéder", {
+          userId: decoded.id,
+        });
         return res.status(403).json({
           error: "Votre compte a été suspendu",
           code: "ACCOUNT_BLOCKED",
@@ -199,8 +204,12 @@ export const mobileAuthMiddleware = async (
 
       // Rejet immédiat si escalade de privilèges détectée
       if (decoded.isAdmin && !verifiedIsAdmin) {
-        console.error(
-          `🚨 [MOBILE-AUTH] TENTATIVE D'ESCALADE DE PRIVILÈGES BLOQUÉE! userId: ${decoded.id} - IP: ${req.ip}`,
+        mobileAuthLogger.error(
+          "TENTATIVE D'ESCALADE DE PRIVILÈGES BLOQUÉE MOBILE",
+          {
+            userId: decoded.id,
+            ip: anonymizeIp(req.ip || ""),
+          },
         );
 
         // Logger l'incident de sécurité
@@ -222,9 +231,14 @@ export const mobileAuthMiddleware = async (
             },
           });
         } catch (auditError) {
-          console.error(
-            "❌ [MOBILE-AUTH] Erreur lors du log de la tentative d'escalade:",
-            auditError,
+          mobileAuthLogger.error(
+            "Erreur lors du log de la tentative d'escalade",
+            {
+              error:
+                auditError instanceof Error
+                  ? auditError.message
+                  : String(auditError),
+            },
           );
         }
 
@@ -246,10 +260,12 @@ export const mobileAuthMiddleware = async (
             );
           }
         } catch (blacklistError) {
-          console.error(
-            "❌ [MOBILE-AUTH] Erreur blacklist token compromis:",
-            blacklistError,
-          );
+          mobileAuthLogger.error("Erreur blacklist token compromis", {
+            error:
+              blacklistError instanceof Error
+                ? blacklistError.message
+                : String(blacklistError),
+          });
         }
 
         return res.status(403).json({
@@ -267,16 +283,17 @@ export const mobileAuthMiddleware = async (
 
     // Log de debug en développement
     if (process.env.NODE_ENV === "development") {
-      console.log(
-        `📱 [MOBILE-AUTH] Authentifié: userId=${decoded.id}, admin=${decoded.isAdmin}`,
-      );
+      mobileAuthLogger.info("Authentifié avec succès", {
+        userId: decoded.id,
+        isAdmin: decoded.isAdmin,
+      });
     }
 
     next();
   } catch (error: any) {
     // Gestion des erreurs JWT spécifiques
     if (error.name === "TokenExpiredError") {
-      console.warn(`⚠️ [MOBILE-AUTH] Token expiré`);
+      mobileAuthLogger.warn("Token expiré");
       return res.status(401).json({
         error: "Token expiré. Veuillez rafraîchir votre token.",
         code: "TOKEN_EXPIRED",
@@ -285,7 +302,9 @@ export const mobileAuthMiddleware = async (
     }
 
     if (error.name === "JsonWebTokenError") {
-      console.warn(`⚠️ [MOBILE-AUTH] Token JWT invalide: ${error.message}`);
+      mobileAuthLogger.warn("Token JWT invalide", {
+        error: error.message,
+      });
       return res.status(401).json({
         error: "Token invalide",
         code: "TOKEN_INVALID",
@@ -299,7 +318,10 @@ export const mobileAuthMiddleware = async (
       });
     }
 
-    console.error(`❌ [MOBILE-AUTH] Erreur inattendue:`, error);
+    mobileAuthLogger.error("Erreur inattendue", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return res.status(500).json({
       error: "Erreur d'authentification",
       code: "AUTH_ERROR",

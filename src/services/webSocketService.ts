@@ -13,6 +13,10 @@ import {
 import { decrypt as decryptCommunication } from "../utils/communicationEncryptionUtils";
 import ConversationModel from "../models/conversations";
 import { redisSessionService } from "./redisSessionService";
+import { logger } from "./loggerService";
+import { anonymizeIp } from "../utils/logUtils";
+
+const wsLogger = logger.child({ service: "websocket" });
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
@@ -186,9 +190,11 @@ function canConnect(ip: string): { allowed: boolean; reason?: string } {
   if (attempt.count > MAX_CONNECTIONS_PER_MINUTE) {
     attempt.blockedUntil = new Date(now.getTime() + BLOCK_DURATION_MS);
     connectionAttempts.set(ip, attempt);
-    console.warn(
-      `🚫 [WS RATE LIMIT] IP ${ip} bloquée pour ${BLOCK_DURATION_MS / 60000} minutes (${attempt.count} tentatives)`,
-    );
+    wsLogger.warn("WS RATE LIMIT - IP bloquée", {
+      ip: anonymizeIp(ip),
+      blockDurationMin: BLOCK_DURATION_MS / 60000,
+      attemptCount: attempt.count,
+    });
     return {
       allowed: false,
       reason: `Trop de tentatives de connexion. Bloqué pour ${BLOCK_DURATION_MS / 60000} minutes.`,
@@ -236,9 +242,9 @@ class WebSocketService {
     // WebSocket pour les messages
     this.messagesWss = new WebSocketServer({ noServer: true });
 
-    console.log(
-      "🔌 WebSocket Server initialized on paths: /ws/notifications and /ws/messages",
-    );
+    wsLogger.info("WebSocket Server initialized", {
+      paths: ["/ws/notifications", "/ws/messages"],
+    });
 
     // Gérer manuellement l'upgrade HTTP vers WebSocket
     server.on("upgrade", (request, socket, head) => {
@@ -249,31 +255,35 @@ class WebSocketService {
       const safeUrl =
         pathname +
         (parsedUrl.query.conv ? `?conv=${parsedUrl.query.conv}` : "");
-      console.log(`🔄 [WebSocket] Upgrade request pour: ${safeUrl}`);
+      wsLogger.info("Upgrade request received", {
+        url: safeUrl,
+      });
 
       // WS-004: Validation CORS pour WebSocket
       const origin = request.headers.origin;
       if (origin && !ALLOWED_WS_ORIGINS.includes(origin)) {
-        console.error(`❌ [WebSocket] Origin non autorisée: ${origin}`);
+        wsLogger.error("Origin non autorisée", {
+          origin,
+        });
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         socket.destroy();
         return;
       }
 
       if (pathname === "/ws/notifications") {
-        console.log("📡 [WebSocket] Redirection vers /ws/notifications");
+        wsLogger.info("Redirection vers /ws/notifications");
         this.notificationsWss?.handleUpgrade(request, socket, head, (ws) => {
           this.notificationsWss?.emit("connection", ws, request);
         });
       } else if (pathname === "/ws/messages") {
-        console.log("📡 [WebSocket] Redirection vers /ws/messages");
+        wsLogger.info("Redirection vers /ws/messages");
         this.messagesWss?.handleUpgrade(request, socket, head, (ws) => {
           this.messagesWss?.emit("connection", ws, request);
         });
       } else {
-        console.error(
-          `❌ [WebSocket] Chemin inconnu: ${pathname}, connexion rejetée`,
-        );
+        wsLogger.error("Chemin inconnu, connexion rejetée", {
+          pathname,
+        });
         socket.destroy();
       }
     });
@@ -289,9 +299,9 @@ class WebSocketService {
       this.notificationsWss?.clients.forEach((ws: WebSocket) => {
         const client = ws as AuthenticatedWebSocket;
         if (client.isAlive === false) {
-          console.log(
-            `💔 [WS-Notifications] Client ${client.userId} non réactif, fermeture`,
-          );
+          wsLogger.info("Notifications - Client non réactif, fermeture", {
+            userId: client.userId,
+          });
           return client.terminate();
         }
         client.isAlive = false;
@@ -304,9 +314,9 @@ class WebSocketService {
       this.messagesWss?.clients.forEach((ws: WebSocket) => {
         const client = ws as AuthenticatedWebSocket;
         if (client.isAlive === false) {
-          console.log(
-            `💔 [WS-Messages] Client ${client.userId} non réactif, fermeture`,
-          );
+          wsLogger.info("Messages - Client non réactif, fermeture", {
+            userId: client.userId,
+          });
           return client.terminate();
         }
         client.isAlive = false;
@@ -338,9 +348,10 @@ class WebSocketService {
     const rateLimitCheck = canConnect(ip);
 
     if (!rateLimitCheck.allowed) {
-      console.warn(
-        `⚠️ [WS-Notifications] Connexion refusée pour ${ip}: ${rateLimitCheck.reason}`,
-      );
+      wsLogger.warn("Notifications - Connexion refusée (rate limit)", {
+        ip: anonymizeIp(ip),
+        reason: rateLimitCheck.reason,
+      });
       client.close(4029, rateLimitCheck.reason);
       return;
     }
@@ -355,7 +366,7 @@ class WebSocketService {
     const token = query.token as string;
 
     if (!token) {
-      console.error("❌ [WS-Notifications] Connexion refusée : pas de token");
+      wsLogger.error("Notifications - Connexion refusée : pas de token");
       client.close(4001, "Authentication required");
       return;
     }
@@ -363,7 +374,7 @@ class WebSocketService {
     try {
       // Vérifier le token JWT
       if (!process.env.JWT_SECRET) {
-        console.error("❌ [SECURITY] JWT_SECRET non défini");
+        wsLogger.error("SECURITY - JWT_SECRET non défini");
         throw new Error("Configuration de sécurité manquante");
       }
 
@@ -375,8 +386,8 @@ class WebSocketService {
 
       // WS-008: Vérifier que le token est bien de type 'websocket'
       if (decoded.type !== "websocket") {
-        console.error(
-          '❌ [WS-Notifications] Token invalide: type attendu "websocket"',
+        wsLogger.error(
+          'Notifications - Token invalide: type attendu "websocket"',
         );
         client.close(4002, "Invalid token type");
         return;
@@ -388,15 +399,15 @@ class WebSocketService {
           decoded.jti,
         );
         if (!isTokenValid) {
-          console.error(
-            `❌ [WS-Notifications] Token déjà utilisé (jti: ${decoded.jti.substring(0, 8)}...)`,
-          );
+          wsLogger.error("Notifications - Token déjà utilisé", {
+            jti: decoded.jti.substring(0, 8) + "...",
+          });
           client.close(4003, "Token already used");
           return;
         }
-        console.log(
-          `✅ [WS-Notifications] Token à usage unique validé (jti: ${decoded.jti.substring(0, 8)}...)`,
-        );
+        wsLogger.info("Notifications - Token à usage unique validé", {
+          jti: decoded.jti.substring(0, 8) + "...",
+        });
       }
 
       client.userId = decoded.id;
@@ -407,7 +418,9 @@ class WebSocketService {
       }
       this.clients.get(client.userId)!.add(client);
 
-      console.log(`✅ [WS-Notifications] Client connecté : ${client.userId}`);
+      wsLogger.info("Notifications - Client connecté", {
+        userId: client.userId,
+      });
 
       // Envoyer un message de confirmation
       client.send(
@@ -428,13 +441,13 @@ class WebSocketService {
               this.clients.delete(client.userId);
             }
           }
-          console.log(
-            `👋 [WS-Notifications] Client déconnecté : ${client.userId}`,
-          );
+          wsLogger.info("Notifications - Client déconnecté", {
+            userId: client.userId,
+          });
         }
       });
     } catch (error) {
-      console.error("❌ [WS-Notifications] Token invalide:", error);
+      wsLogger.error("Notifications - Token invalide", { error });
       client.close(4002, "Invalid token");
     }
   }
@@ -456,9 +469,10 @@ class WebSocketService {
     const rateLimitCheck = canConnect(ip);
 
     if (!rateLimitCheck.allowed) {
-      console.warn(
-        `⚠️ [WS-Messages] Connexion refusée pour ${ip}: ${rateLimitCheck.reason}`,
-      );
+      wsLogger.warn("Messages - Connexion refusée (rate limit)", {
+        ip: anonymizeIp(ip),
+        reason: rateLimitCheck.reason,
+      });
       client.close(4029, rateLimitCheck.reason);
       return;
     }
@@ -475,8 +489,8 @@ class WebSocketService {
     const userId = query.user as string;
 
     if (!token || !conversationId || !userId) {
-      console.error(
-        "❌ [WS-Messages] Connexion refusée : paramètres manquants (token, conv, user)",
+      wsLogger.error(
+        "Messages - Connexion refusée : paramètres manquants (token, conv, user)",
       );
       client.close(4001, "Missing parameters");
       return;
@@ -485,7 +499,7 @@ class WebSocketService {
     try {
       // Vérifier le token JWT
       if (!process.env.JWT_SECRET) {
-        console.error("❌ [SECURITY] JWT_SECRET non défini");
+        wsLogger.error("SECURITY - JWT_SECRET non défini");
         throw new Error("Configuration de sécurité manquante");
       }
 
@@ -497,9 +511,7 @@ class WebSocketService {
 
       // WS-008: Vérifier que le token est bien de type 'websocket'
       if (decoded.type !== "websocket") {
-        console.error(
-          '❌ [WS-Messages] Token invalide: type attendu "websocket"',
-        );
+        wsLogger.error('Messages - Token invalide: type attendu "websocket"');
         client.close(4002, "Invalid token type");
         return;
       }
@@ -510,20 +522,20 @@ class WebSocketService {
           decoded.jti,
         );
         if (!isTokenValid) {
-          console.error(
-            `❌ [WS-Messages] Token déjà utilisé (jti: ${decoded.jti.substring(0, 8)}...)`,
-          );
+          wsLogger.error("Messages - Token déjà utilisé", {
+            jti: decoded.jti.substring(0, 8) + "...",
+          });
           client.close(4003, "Token already used");
           return;
         }
-        console.log(
-          `✅ [WS-Messages] Token à usage unique validé (jti: ${decoded.jti.substring(0, 8)}...)`,
-        );
+        wsLogger.info("Messages - Token à usage unique validé", {
+          jti: decoded.jti.substring(0, 8) + "...",
+        });
       }
 
       // Vérifier que l'userId du token correspond à celui de la requête
       if (decoded.id !== userId) {
-        console.error("❌ [WS-Messages] Token/userId mismatch");
+        wsLogger.error("Messages - Token/userId mismatch");
         client.close(4002, "Token mismatch");
         return;
       }
@@ -539,8 +551,12 @@ class WebSocketService {
       }).lean();
 
       if (!conversation) {
-        console.error(
-          `❌ [WS-Messages] Accès refusé: ${client.userId} n'est pas participant de la conversation ${conversationId}`,
+        wsLogger.error(
+          "Messages - Accès refusé: utilisateur n'est pas participant de la conversation",
+          {
+            userId: client.userId,
+            conversationId,
+          },
         );
         client.close(4003, "Not a participant");
         return;
@@ -556,9 +572,10 @@ class WebSocketService {
       }
       userConversations.get(conversationId)!.add(client);
 
-      console.log(
-        `✅ [WS-Messages] Client connecté : ${client.userId} pour conversation ${conversationId}`,
-      );
+      wsLogger.info("Messages - Client connecté", {
+        userId: client.userId,
+        conversationId,
+      });
 
       // Envoyer un message de confirmation
       client.send(
@@ -586,9 +603,10 @@ class WebSocketService {
           client.messageCount = (client.messageCount || 0) + 1;
 
           if (client.messageCount > MAX_MESSAGES_PER_MINUTE) {
-            console.warn(
-              `⚠️ [WS-Messages] Rate limit atteint pour ${client.userId} (${client.messageCount} msg/min)`,
-            );
+            wsLogger.warn("Messages - Rate limit atteint", {
+              userId: client.userId,
+              messagesPerMin: client.messageCount,
+            });
             client.send(
               JSON.stringify({
                 type: "error",
@@ -602,9 +620,10 @@ class WebSocketService {
           // Limite de taille des messages (WS-005 préventif)
           const MAX_MESSAGE_SIZE = 64 * 1024; // 64KB
           if (message.length > MAX_MESSAGE_SIZE) {
-            console.warn(
-              `⚠️ [WS-Messages] Message trop volumineux de ${client.userId} (${message.length} bytes)`,
-            );
+            wsLogger.warn("Messages - Message trop volumineux", {
+              userId: client.userId,
+              sizeBytes: message.length,
+            });
             client.send(
               JSON.stringify({
                 type: "error",
@@ -619,7 +638,9 @@ class WebSocketService {
           try {
             data = JSON.parse(message.toString());
           } catch (parseError) {
-            console.warn(`⚠️ [WS-Messages] JSON invalide de ${client.userId}`);
+            wsLogger.warn("Messages - JSON invalide", {
+              userId: client.userId,
+            });
             client.send(
               JSON.stringify({
                 type: "error",
@@ -645,9 +666,10 @@ class WebSocketService {
             !data.type ||
             !ALLOWED_MESSAGE_TYPES.includes(data.type)
           ) {
-            console.warn(
-              `⚠️ [WS-Messages] Type de message invalide de ${client.userId}: ${data?.type}`,
-            );
+            wsLogger.warn("Messages - Type de message invalide", {
+              userId: client.userId,
+              messageType: data?.type,
+            });
             client.send(
               JSON.stringify({
                 type: "error",
@@ -678,7 +700,7 @@ class WebSocketService {
           // WS-001 CORRIGÉ + HIGH-6: Vérification de participation à CHAQUE message (avec cache)
           // Cela empêche un utilisateur retiré d'une conversation de continuer à envoyer des messages
           if (!client.userId) {
-            console.error(`❌ [WS-Messages] userId manquant`);
+            wsLogger.error("Messages - userId manquant");
             client.close(4002, "Invalid session");
             return;
           }
@@ -689,8 +711,12 @@ class WebSocketService {
           );
 
           if (!isParticipant) {
-            console.warn(
-              `⚠️ [WS-Messages] Accès révoqué: ${client.userId} n'est plus participant de ${conversationId}`,
+            wsLogger.warn(
+              "Messages - Accès révoqué: utilisateur n'est plus participant",
+              {
+                userId: client.userId,
+                conversationId,
+              },
             );
             client.send(
               JSON.stringify({
@@ -704,10 +730,11 @@ class WebSocketService {
             return;
           }
 
-          console.log(
-            `📩 [WS-Messages] Message reçu de ${client.userId} dans conversation ${conversationId}:`,
-            data.type,
-          );
+          wsLogger.info("Messages - Message reçu", {
+            userId: client.userId,
+            conversationId,
+            messageType: data.type,
+          });
 
           // Utilisation de toute la logique du messagesController
           if (data.type === "message") {
@@ -862,7 +889,7 @@ class WebSocketService {
             );
           }
         } catch (error) {
-          console.error("[WS-Messages] Erreur parsing message:", error);
+          wsLogger.error("Messages - Erreur parsing message", { error });
         }
       });
 
@@ -882,13 +909,14 @@ class WebSocketService {
               this.messageClients.delete(client.userId);
             }
           }
-          console.log(
-            `👋 [WS-Messages] Client déconnecté : ${client.userId} de conversation ${conversationId}`,
-          );
+          wsLogger.info("Messages - Client déconnecté", {
+            userId: client.userId,
+            conversationId,
+          });
         }
       });
     } catch (error) {
-      console.error("❌ [WS-Messages] Token invalide:", error);
+      wsLogger.error("Messages - Token invalide", { error });
       client.close(4002, "Invalid token");
     }
   }
@@ -920,16 +948,18 @@ class WebSocketService {
             client.send(JSON.stringify(message));
             totalSent++;
             notifiedUsers.push(userId);
-            console.log(
-              `📤 [WS-Messages] Message diffusé à userId=${userId} (conversation=${conversationId})`,
-            );
+            wsLogger.info("Message broadcast to user in conversation", {
+              userId,
+              conversationId,
+            });
           }
         });
       }
     });
-    console.log(
-      `📊 [WS-Messages] Message diffusé à ${totalSent} client(s) pour conversation ${conversationId}`,
-    );
+    wsLogger.info("Message broadcast complete", {
+      conversationId,
+      totalSent,
+    });
 
     // Notifier TOUS les participants de la conversation via le WebSocket de notifications
     // pour qu'ils puissent mettre à jour leur liste de conversations
@@ -983,7 +1013,9 @@ class WebSocketService {
             }
           }
         } catch (e) {
-          console.error("[WS] Erreur récupération nom expéditeur:", e);
+          wsLogger.error("Failed to retrieve sender name", {
+            error: e instanceof Error ? e.message : String(e),
+          });
         }
       }
 
@@ -994,8 +1026,11 @@ class WebSocketService {
         const userClients = this.clients.get(userId);
 
         if (!userClients || userClients.size === 0) {
-          console.log(
-            `⚠️ [WS] Aucun client connecté pour l'utilisateur ${userId}`,
+          wsLogger.info(
+            "No clients connected for user in conversation update",
+            {
+              userId,
+            },
           );
           return;
         }
@@ -1013,19 +1048,20 @@ class WebSocketService {
         userClients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
             client.send(updateMessage);
-            console.log(`📤 [WS] conversation_update envoyée à ${userId}`);
+            wsLogger.info("Conversation update sent to user", { userId });
           }
         });
       });
 
-      console.log(
-        `📊 [WS-Notifications] Mise à jour conversation ${conversationId} envoyée à ${participantIds.length} participant(s)`,
-      );
+      wsLogger.info("Conversation update notification sent", {
+        conversationId,
+        participantCount: participantIds.length,
+      });
     } catch (error) {
-      console.error(
-        "[WS-Notifications] Erreur lors de la notification de mise à jour:",
-        error,
-      );
+      wsLogger.error("Failed to notify conversation update", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     }
   }
 
@@ -1039,15 +1075,16 @@ class WebSocketService {
   ): void {
     const userConversations = this.messageClients.get(userId);
     if (!userConversations) {
-      console.log(`⚠️ [WS-Messages] Utilisateur ${userId} non connecté`);
+      wsLogger.info("User not connected to messages WebSocket", { userId });
       return;
     }
 
     const conversationClients = userConversations.get(conversationId);
     if (!conversationClients || conversationClients.size === 0) {
-      console.log(
-        `⚠️ [WS-Messages] Utilisateur ${userId} non connecté à la conversation ${conversationId}`,
-      );
+      wsLogger.info("User not connected to conversation", {
+        userId,
+        conversationId,
+      });
       return;
     }
 
@@ -1059,9 +1096,10 @@ class WebSocketService {
     conversationClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(messageStr);
-        console.log(
-          `📤 [WS-Messages] Message envoyé à ${userId} dans conversation ${conversationId}`,
-        );
+        wsLogger.info("Message sent to user in conversation", {
+          userId,
+          conversationId,
+        });
       }
     });
   }
@@ -1073,7 +1111,7 @@ class WebSocketService {
     const userClients = this.clients.get(userId);
 
     if (!userClients || userClients.size === 0) {
-      console.log(`⚠️ [WS] Aucun client connecté pour l'utilisateur ${userId}`);
+      wsLogger.info("No clients connected for user notification", { userId });
       return;
     }
 
@@ -1085,7 +1123,7 @@ class WebSocketService {
     userClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
-        console.log(`📤 [WS] Notification envoyée à ${userId}`);
+        wsLogger.info("Notification sent to user", { userId });
       }
     });
   }
@@ -1110,8 +1148,9 @@ class WebSocketService {
     const userClients = this.clients.get(userId);
 
     if (!userClients || userClients.size === 0) {
-      console.log(
-        `⚠️ [WS] sync_update: utilisateur ${userId} non connecté (sera rafraîchi au prochain focus)`,
+      wsLogger.info(
+        "User not connected for sync update, will refresh on next focus",
+        { userId },
       );
       return;
     }
@@ -1135,9 +1174,12 @@ class WebSocketService {
       }
     });
 
-    console.log(
-      `📡 [WS] sync_update envoyé à ${userId} (${changes.points}P, ${changes.fiches}F, ${changes.lists}L)`,
-    );
+    wsLogger.info("Sync update sent to user", {
+      userId,
+      points: changes.points,
+      fiches: changes.fiches,
+      lists: changes.lists,
+    });
   }
 
   /**
@@ -1163,9 +1205,10 @@ class WebSocketService {
     messageIds: string[],
     participantUserIds: string[],
   ): void {
-    console.log(
-      `👁️ [WS] Notifying messages read in ${conversationId} by ${readByUserId}`,
-    );
+    wsLogger.info("Notifying messages read", {
+      conversationId,
+      readByUserId,
+    });
 
     const message = JSON.stringify({
       type: "message_read",
@@ -1184,7 +1227,7 @@ class WebSocketService {
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(message);
-          console.log(`📤 [WS] message_read envoyé à ${userId}`);
+          wsLogger.info("Message read notification sent", { userId });
         }
       });
     }
@@ -1223,17 +1266,19 @@ class WebSocketService {
   ): boolean {
     const userConversations = this.messageClients.get(userId);
     if (!userConversations) {
-      console.log(
-        `🔍 [WS] isUserConnectedToConversation(${userId}, ${conversationId}): false (pas de conversations)`,
-      );
+      wsLogger.debug("User not connected to any conversation", {
+        userId,
+        conversationId,
+      });
       return false;
     }
 
     const conversationClients = userConversations.get(conversationId);
     if (!conversationClients || conversationClients.size === 0) {
-      console.log(
-        `🔍 [WS] isUserConnectedToConversation(${userId}, ${conversationId}): false (pas de clients pour cette conv)`,
-      );
+      wsLogger.debug("User has no clients for conversation", {
+        userId,
+        conversationId,
+      });
       return false;
     }
 
@@ -1246,9 +1291,13 @@ class WebSocketService {
     }
 
     const isConnected = openCount > 0;
-    console.log(
-      `🔍 [WS] isUserConnectedToConversation(${userId}, ${conversationId}): ${isConnected} (${openCount} clients ouverts sur ${conversationClients.size})`,
-    );
+    wsLogger.debug("Checked user connection to conversation", {
+      userId,
+      conversationId,
+      isConnected,
+      openCount,
+      totalClients: conversationClients.size,
+    });
     return isConnected;
   }
 
@@ -1263,9 +1312,9 @@ class WebSocketService {
     conversation: any,
     creatorId: string,
   ): void {
-    console.log(
-      `📬 [WS] Notification nouvelle conversation ${conversation._id} aux participants`,
-    );
+    wsLogger.info("Notifying new conversation to participants", {
+      conversationId: conversation._id,
+    });
 
     const message = JSON.stringify({
       type: "new_conversation",
@@ -1287,16 +1336,16 @@ class WebSocketService {
 
       const userClients = this.clients.get(userId);
       if (!userClients || userClients.size === 0) {
-        console.log(
-          `⚠️ [WS] Utilisateur ${userId} non connecté pour new_conversation`,
-        );
+        wsLogger.info("User not connected for new conversation notification", {
+          userId,
+        });
         continue;
       }
 
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(message);
-          console.log(`📤 [WS] new_conversation envoyé à ${userId}`);
+          wsLogger.info("New conversation notification sent", { userId });
         }
       });
     }
@@ -1313,9 +1362,9 @@ class WebSocketService {
     participantIds: string[],
     deletedByUserId: string,
   ): void {
-    console.log(
-      `🗑️ [WS] Notification suppression groupe ${conversationId} aux participants`,
-    );
+    wsLogger.info("Notifying group deletion to participants", {
+      conversationId,
+    });
 
     const message = JSON.stringify({
       type: "group_deleted",
@@ -1332,7 +1381,7 @@ class WebSocketService {
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(message);
-          console.log(`📤 [WS] group_deleted envoyé à ${odId}`);
+          wsLogger.info("Group deleted notification sent", { userId: odId });
         }
       });
     }
@@ -1351,9 +1400,10 @@ class WebSocketService {
     updateType: string,
     data: any,
   ): void {
-    console.log(
-      `🔄 [WS] Notification mise à jour groupe ${conversationId}: ${updateType}`,
-    );
+    wsLogger.info("Notifying group update to participants", {
+      conversationId,
+      updateType,
+    });
 
     const message = JSON.stringify({
       type: "group_update",
@@ -1369,7 +1419,10 @@ class WebSocketService {
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(message);
-          console.log(`📤 [WS] group_update (${updateType}) envoyé à ${odId}`);
+          wsLogger.info("Group update notification sent", {
+            userId: odId,
+            updateType,
+          });
         }
       });
     }
@@ -1383,9 +1436,10 @@ class WebSocketService {
    * @param removedUserId - ID de l'utilisateur retiré
    */
   notifyMemberRemoved(conversationId: string, removedUserId: string): void {
-    console.log(
-      `👋 [WS] Notification membre retiré: ${removedUserId} du groupe ${conversationId}`,
-    );
+    wsLogger.info("Notifying member removed from group", {
+      conversationId,
+      removedUserId,
+    });
 
     // ═══════════════════════════════════════════════════════════════════════════
     // RÉVOCATION TEMPS RÉEL: Fermer les connexions WebSocket messages pour cette conversation
@@ -1406,9 +1460,10 @@ class WebSocketService {
             );
             // Fermer la connexion avec le code 4003 (Access revoked)
             client.close(4003, "Access revoked - removed from conversation");
-            console.log(
-              `🔒 [WS] Connexion messages fermée pour ${removedUserId} (conversation ${conversationId})`,
-            );
+            wsLogger.info("Message connection closed for removed member", {
+              userId: removedUserId,
+              conversationId,
+            });
           }
         });
         // Nettoyer la map
@@ -1422,9 +1477,9 @@ class WebSocketService {
     // Envoyer la notification via WebSocket notifications
     const userClients = this.clients.get(removedUserId);
     if (!userClients || userClients.size === 0) {
-      console.log(
-        `⚠️ [WS] Utilisateur ${removedUserId} non connecté pour member_removed`,
-      );
+      wsLogger.info("User not connected for member removed notification", {
+        userId: removedUserId,
+      });
       return;
     }
 
@@ -1436,7 +1491,9 @@ class WebSocketService {
     userClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         client.send(message);
-        console.log(`📤 [WS] member_removed envoyé à ${removedUserId}`);
+        wsLogger.info("Member removed notification sent", {
+          userId: removedUserId,
+        });
       }
     });
   }
@@ -1452,9 +1509,10 @@ class WebSocketService {
     newName: string,
     participantIds: string[],
   ): void {
-    console.log(
-      `✏️ [WS] Notification changement de nom groupe ${conversationId}: "${newName}"`,
-    );
+    wsLogger.info("Notifying group name change to participants", {
+      conversationId,
+      newName,
+    });
 
     const message = JSON.stringify({
       type: "group_name_changed",
@@ -1469,7 +1527,9 @@ class WebSocketService {
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
           client.send(message);
-          console.log(`📤 [WS] group_name_changed envoyé à ${odId}`);
+          wsLogger.info("Group name change notification sent", {
+            userId: odId,
+          });
         }
       });
     }

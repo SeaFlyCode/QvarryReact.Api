@@ -9,6 +9,9 @@
 import { Request, Response } from "express";
 import { sosService } from "../services/sosService";
 import { getErrorMessage } from "../utils/errorUtils";
+import { logger } from "../services/loggerService";
+
+const adminSosLogger = logger.child({ service: "admin-sos" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: DASHBOARD ADMIN SOS
@@ -29,16 +32,19 @@ export async function handleAdminSosDashboard(req: Request, res: Response) {
     const dashboard = await sosService.getAdminDashboard();
 
     const duration = Date.now() - startTime;
-    console.log(
-      `📊 [ADMIN-SOS] Dashboard récupéré par admin ${adminId} en ${duration}ms`,
-    );
+    adminSosLogger.info("Dashboard récupéré par admin", {
+      adminId,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
       data: dashboard,
     });
   } catch (error) {
-    console.error(`❌ [ADMIN-SOS] Erreur dashboard:`, getErrorMessage(error));
+    adminSosLogger.error("Erreur dashboard", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération du dashboard.",
       code: "INTERNAL_ERROR",
@@ -68,9 +74,11 @@ export async function handleAdminSosActiveSessions(
     const sessions = await sosService.getAllActiveSessions();
 
     const duration = Date.now() - startTime;
-    console.log(
-      `📋 [ADMIN-SOS] ${sessions.length} sessions actives récupérées par admin ${adminId} en ${duration}ms`,
-    );
+    adminSosLogger.info("Sessions actives récupérées par admin", {
+      adminId,
+      sessionsCount: sessions.length,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
@@ -78,10 +86,9 @@ export async function handleAdminSosActiveSessions(
       count: sessions.length,
     });
   } catch (error) {
-    console.error(
-      `❌ [ADMIN-SOS] Erreur sessions actives:`,
-      getErrorMessage(error),
-    );
+    adminSosLogger.error("Erreur sessions actives", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des sessions actives.",
       code: "INTERNAL_ERROR",
@@ -119,9 +126,11 @@ export async function handleAdminSosSessionDetails(
     const details = await sosService.getSessionDetails(sessionId);
 
     const duration = Date.now() - startTime;
-    console.log(
-      `🔍 [ADMIN-SOS] Détails session ${sessionId} récupérés par admin ${adminId} en ${duration}ms`,
-    );
+    adminSosLogger.info("Détails session récupérés par admin", {
+      adminId,
+      sessionId,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
@@ -135,10 +144,9 @@ export async function handleAdminSosSessionDetails(
       });
     }
 
-    console.error(
-      `❌ [ADMIN-SOS] Erreur détails session:`,
-      getErrorMessage(error),
-    );
+    adminSosLogger.error("Erreur détails session", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des détails.",
       code: "INTERNAL_ERROR",
@@ -179,9 +187,11 @@ export async function handleAdminSosCancelSession(req: Request, res: Response) {
     );
 
     const duration = Date.now() - startTime;
-    console.log(
-      `🛑 [ADMIN-SOS] Session ${sessionId} annulée par admin ${adminId} en ${duration}ms`,
-    );
+    adminSosLogger.info("Session annulée par admin", {
+      adminId,
+      sessionId,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
@@ -190,6 +200,13 @@ export async function handleAdminSosCancelSession(req: Request, res: Response) {
         status: session.status,
         resolvedAt: session.resolvedAt,
         resolvedBy: session.resolvedBy,
+        participantCount: session.participants?.length || 0,
+        isGroupSession: (session.participants?.length || 0) > 1,
+        participants: session.participants?.map((p: any) => ({
+          userId: p.userId.toString(),
+          status: p.status,
+          leftAt: p.leftAt,
+        })),
       },
       message: "Session annulée avec succès.",
     });
@@ -201,10 +218,9 @@ export async function handleAdminSosCancelSession(req: Request, res: Response) {
       });
     }
 
-    console.error(
-      `❌ [ADMIN-SOS] Erreur annulation session:`,
-      getErrorMessage(error),
-    );
+    adminSosLogger.error("Erreur annulation session", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de l'annulation de la session.",
       code: "INTERNAL_ERROR",
@@ -228,10 +244,13 @@ export async function handleAdminSosHistory(req: Request, res: Response) {
       });
     }
 
-    // Query params
+    // Query params — userId OU participantId (le service gère le $or)
     const limit = Math.min(parseInt(req.query.limit as string) || 50, 100);
     const status = req.query.status as string | undefined;
-    const userId = req.query.userId as string | undefined;
+    const userId =
+      (req.query.userId as string) ||
+      (req.query.participantId as string) ||
+      undefined;
 
     const sessions = await sosService.getAdminSessionHistory(
       limit,
@@ -240,9 +259,11 @@ export async function handleAdminSosHistory(req: Request, res: Response) {
     );
 
     const duration = Date.now() - startTime;
-    console.log(
-      `📜 [ADMIN-SOS] Historique (${sessions.length} sessions) récupéré par admin ${adminId} en ${duration}ms`,
-    );
+    adminSosLogger.info("Historique récupéré par admin", {
+      adminId,
+      sessionsCount: sessions.length,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
@@ -255,7 +276,9 @@ export async function handleAdminSosHistory(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error(`❌ [ADMIN-SOS] Erreur historique:`, getErrorMessage(error));
+    adminSosLogger.error("Erreur historique", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération de l'historique.",
       code: "INTERNAL_ERROR",
@@ -306,16 +329,19 @@ export async function handleAdminSosStats(req: Request, res: Response) {
     const stats = await sosService.getAdminSosStats(startDate, endDate);
 
     const duration = Date.now() - startTime;
-    console.log(
-      `📈 [ADMIN-SOS] Stats récupérées par admin ${adminId} en ${duration}ms`,
-    );
+    adminSosLogger.info("Stats récupérées par admin", {
+      adminId,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
       data: stats,
     });
   } catch (error) {
-    console.error(`❌ [ADMIN-SOS] Erreur stats:`, getErrorMessage(error));
+    adminSosLogger.error("Erreur stats", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des statistiques.",
       code: "INTERNAL_ERROR",

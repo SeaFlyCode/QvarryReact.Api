@@ -2,6 +2,10 @@
  * Utilitaires pour la gestion des erreurs de manière type-safe
  */
 
+import { logger } from "../services/loggerService";
+
+const errorLogger = logger.child({ service: "error-utils" });
+
 /**
  * Extrait le message d'erreur d'une erreur inconnue
  * @param error - L'erreur capturée (de type unknown)
@@ -17,7 +21,10 @@ export function getErrorMessage(
 
   // Logger l'erreur complète dans tous les cas pour le debugging
   if (isProduction) {
-    console.error("[ERROR] Erreur interne masquée pour le client:", error);
+    errorLogger.error("Internal error masked for client", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
   }
 
   // En production, retourner un message générique

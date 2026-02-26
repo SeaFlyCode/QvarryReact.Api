@@ -16,6 +16,9 @@ import {
 import { decrypt as decryptMaster } from "../utils/masterEncryptionUtils";
 import { memoryStorage } from "./memoryStorageService";
 import { createNotification } from "./notificationService";
+import { logger } from "./loggerService";
+
+const dataShareLogger = logger.child({ service: "data-share" });
 
 // Durée de validité des signatures de partage (alignée sur la durée de vie des partages)
 const SHARE_SIGNATURE_VALIDITY_MS = 20 * 24 * 60 * 60 * 1000; // 20 jours
@@ -140,9 +143,11 @@ async function getFicheWithPoints(
     try {
       return await decryptUserKeys(userId, value);
     } catch (e) {
-      console.warn(
-        `[SHARE] Erreur déchiffrement, valeur retournée telle quelle:`,
-        e,
+      dataShareLogger.warn(
+        "Erreur déchiffrement, valeur retournée telle quelle",
+        {
+          error: e instanceof Error ? e.message : String(e),
+        },
       );
       return value;
     }
@@ -579,10 +584,14 @@ export async function shareData(
           },
         );
       } catch (notifError) {
-        console.error(
-          `❌ [DATA SHARE] Erreur notification pour ${receiverId}:`,
-          notifError,
-        );
+        dataShareLogger.error("Erreur notification pour destinataire", {
+          receiverId: receiverId.toString(),
+          error:
+            notifError instanceof Error
+              ? notifError.message
+              : String(notifError),
+          stack: notifError instanceof Error ? notifError.stack : undefined,
+        });
       }
     }),
   );
@@ -591,9 +600,11 @@ export async function shareData(
   dataShare.notificationSent = true;
   await dataShare.save();
 
-  console.log(
-    `✅ [DATA SHARE] ${dataType} partagé par ${senderId} avec ${receiverIds.length} destinataire(s)`,
-  );
+  dataShareLogger.info("Données partagées avec succès", {
+    dataType,
+    senderId: senderId.toString(),
+    recipientCount: receiverIds.length,
+  });
 
   return dataShare;
 }
@@ -700,9 +711,10 @@ export async function getSharedData(
     await dataShare.save();
   }
 
-  console.log(
-    `✅ [DATA SHARE] Données récupérées par ${receiverId} - Signature: ${isSignatureValid ? "VALIDE" : "INVALIDE"}`,
-  );
+  dataShareLogger.info("Données récupérées par destinataire", {
+    receiverId: receiverId.toString(),
+    signatureValid: isSignatureValid,
+  });
 
   return {
     data,
@@ -779,9 +791,9 @@ async function getSharedDataForCopy(
   // 6. Parser les données
   const data = JSON.parse(decryptedDataJSON);
 
-  console.log(
-    `✅ [DATA SHARE COPY] Données récupérées pour copie - shareId: ${shareId}`,
-  );
+  dataShareLogger.info("Données récupérées pour copie", {
+    shareId: shareId.toString(),
+  });
 
   return {
     data,
@@ -863,14 +875,17 @@ export async function updateShareStatus(
       const data = JSON.parse(decryptedDataJSON);
       preloadedData = { data, dataType: dataShare.dataType };
 
-      console.log(
-        `✅ [DATA SHARE] Données préchargées pour copie - shareId: ${shareId}`,
-      );
+      dataShareLogger.info("Données préchargées pour copie", {
+        shareId: shareId.toString(),
+      });
     } catch (preloadError) {
-      console.error(
-        `❌ [DATA SHARE] Erreur lors du préchargement des données:`,
-        preloadError,
-      );
+      dataShareLogger.error("Erreur lors du préchargement des données", {
+        error:
+          preloadError instanceof Error
+            ? preloadError.message
+            : String(preloadError),
+        stack: preloadError instanceof Error ? preloadError.stack : undefined,
+      });
       throw new Error(
         `Impossible de déchiffrer les données: ${(preloadError as Error).message}`,
       );
@@ -881,7 +896,10 @@ export async function updateShareStatus(
   dataShare.encryptedDataPerReceiver[receiverDataIndex].status = status;
   await dataShare.save();
 
-  console.log(`✅ [DATA SHARE] Statut mis à jour: ${status} par ${receiverId}`);
+  dataShareLogger.info("Statut mis à jour", {
+    status,
+    receiverId: receiverId.toString(),
+  });
 
   // ═══════════════════════════════════════════════════════════════════════════
   // VÉRIFICATION SI TOUS LES DESTINATAIRES ONT RÉPONDU
@@ -896,8 +914,11 @@ export async function updateShareStatus(
   if (allResponded) {
     dataShare.isActive = false;
     await dataShare.save();
-    console.log(
-      `🗑️ [DATA SHARE] Partage ${shareId} désactivé - Tous les destinataires ont répondu`,
+    dataShareLogger.info(
+      "Partage désactivé - Tous les destinataires ont répondu",
+      {
+        shareId: shareId.toString(),
+      },
     );
   }
 
@@ -931,10 +952,11 @@ export async function updateShareStatus(
       );
     }
   } catch (notifError) {
-    console.error(
-      `❌ [DATA SHARE] Erreur notification pour l'expéditeur:`,
-      notifError,
-    );
+    dataShareLogger.error("Erreur notification pour l'expéditeur", {
+      error:
+        notifError instanceof Error ? notifError.message : String(notifError),
+      stack: notifError instanceof Error ? notifError.stack : undefined,
+    });
   }
 
   // Si accepté, copier les données dans le compte du destinataire
@@ -947,10 +969,10 @@ export async function updateShareStatus(
       );
       return { copiedData };
     } catch (error) {
-      console.error(
-        `❌ [DATA SHARE] Erreur lors de la copie des données:`,
-        error,
-      );
+      dataShareLogger.error("Erreur lors de la copie des données", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       throw new Error(
         `Partage accepté mais erreur lors de la copie des données: ${(error as Error).message}`,
       );
@@ -1013,9 +1035,11 @@ async function copySharedDataToReceiver(
   const receiverIdStr = receiverId.toString();
   const hasSession = memoryStorage.hasSession(receiverIdStr);
 
-  console.log(
-    `📦 [DATA SHARE] Copie des données ${dataType} pour ${receiverId}... (session active: ${hasSession})`,
-  );
+  dataShareLogger.info("Copie des données pour utilisateur", {
+    dataType,
+    receiverId: receiverId.toString(),
+    hasSession,
+  });
 
   switch (dataType) {
     case "point": {
@@ -1076,10 +1100,12 @@ async function copySharedDataToReceiver(
           updatedAt: newPoint.updatedAt,
         };
         memoryStorage.storePoint(receiverIdStr, pointForMemory as any);
-        console.log(`✅ [DATA SHARE] Point ajouté au memoryStorage`);
+        dataShareLogger.info("Point ajouté au memoryStorage");
       }
 
-      console.log(`✅ [DATA SHARE] Point copié et chiffré: ${newPoint._id}`);
+      dataShareLogger.info("Point copié et chiffré", {
+        pointId: newPoint._id.toString(),
+      });
       return {
         type: "point",
         id: newPoint._id.toString(),
@@ -1318,14 +1344,15 @@ async function copySharedDataToReceiver(
           date_modification: newFiche.date_modification,
         };
         memoryStorage.storeFiche(receiverIdStr, ficheForMemory as any);
-        console.log(
-          `✅ [DATA SHARE] Fiche et ${newPointIds.length} points ajoutés au memoryStorage`,
-        );
+        dataShareLogger.info("Fiche et points ajoutés au memoryStorage", {
+          pointCount: newPointIds.length,
+        });
       }
 
-      console.log(
-        `✅ [DATA SHARE] Fiche copiée et chiffrée: ${newFiche._id} avec ${newPointIds.length} points`,
-      );
+      dataShareLogger.info("Fiche copiée et chiffrée", {
+        ficheId: newFiche._id.toString(),
+        pointCount: newPointIds.length,
+      });
       return {
         type: "fiche",
         id: newFiche._id.toString(),
@@ -1451,14 +1478,15 @@ async function copySharedDataToReceiver(
           updatedAt: newList.updatedAt,
         };
         memoryStorage.storeList(receiverIdStr, listForMemory as any);
-        console.log(
-          `✅ [DATA SHARE] Liste et ${newPointIds.length} points ajoutés au memoryStorage`,
-        );
+        dataShareLogger.info("Liste et points ajoutés au memoryStorage", {
+          pointCount: newPointIds.length,
+        });
       }
 
-      console.log(
-        `✅ [DATA SHARE] Liste copiée et chiffrée: ${newList._id} avec ${newPointIds.length} points`,
-      );
+      dataShareLogger.info("Liste copiée et chiffrée", {
+        listId: newList._id.toString(),
+        pointCount: newPointIds.length,
+      });
       return {
         type: "liste",
         id: newList._id.toString(),
@@ -1532,9 +1560,9 @@ export async function cleanupExpiredShares(): Promise<number> {
     },
   );
 
-  console.log(
-    `🧹 [DATA SHARE CLEANUP] ${result.modifiedCount} partages expirés désactivés`,
-  );
+  dataShareLogger.info("Partages expirés désactivés", {
+    count: result.modifiedCount,
+  });
 
   return result.modifiedCount;
 }

@@ -2,6 +2,9 @@
 import { Request, Response } from "express";
 import { refreshTokenService } from "../services/refreshTokenService";
 import { auditService } from "../services/auditService";
+import { logger } from "../services/loggerService";
+
+const securityLogger = logger.child({ service: "security" });
 
 /**
  * Obtenir les sessions actives de l'utilisateur connecté
@@ -39,7 +42,10 @@ export async function getUserSessions(req: Request, res: Response) {
       .status(200)
       .json({ sessions: formattedSessions, count: formattedSessions.length });
   } catch (error) {
-    console.error("❌ [SECURITY] Erreur sessions:", error);
+    securityLogger.error("Get sessions error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération des sessions" });
@@ -59,11 +65,9 @@ export async function revokeSession(req: Request, res: Response) {
     if (!tokenId)
       return res.status(400).json({ error: "ID de session manquant" });
     if (tokenId === currentTokenId) {
-      return res
-        .status(400)
-        .json({
-          error: "Utilisez la déconnexion pour terminer votre session actuelle",
-        });
+      return res.status(400).json({
+        error: "Utilisez la déconnexion pour terminer votre session actuelle",
+      });
     }
 
     await refreshTokenService.revokeToken(tokenId, "user_revoked");
@@ -81,7 +85,10 @@ export async function revokeSession(req: Request, res: Response) {
       .status(200)
       .json({ success: true, message: "Session révoquée avec succès" });
   } catch (error) {
-    console.error("❌ [SECURITY] Erreur révocation:", error);
+    securityLogger.error("Revoke session error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la révocation de la session" });
@@ -121,7 +128,10 @@ export async function getSecurityEvents(req: Request, res: Response) {
       .status(200)
       .json({ events: filteredEvents, count: filteredEvents.length });
   } catch (error) {
-    console.error("❌ [SECURITY] Erreur events:", error);
+    securityLogger.error("Get security events error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération des événements" });

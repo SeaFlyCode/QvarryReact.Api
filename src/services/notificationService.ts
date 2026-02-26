@@ -5,6 +5,9 @@ import NotificationModel, {
 } from "../models/notifications";
 import { webSocketService } from "./webSocketService"; // Correction de l'import nommé
 import dataArchiveService from "./dataArchiveService";
+import { logger } from "./loggerService";
+
+const notifLogger = logger.child({ service: "notification" });
 
 /**
  * Créer une nouvelle notification
@@ -50,7 +53,10 @@ export async function createNotification(
 
   await notification.save();
 
-  console.log(`🔔 [NOTIFICATION] Créée pour ${userId} - Type: ${type}`);
+  notifLogger.info("Notification créée", {
+    userId: userId.toString(),
+    type,
+  });
 
   // Envoyer la notification via WebSocket si l'utilisateur est connecté
   if (
@@ -88,7 +94,9 @@ export async function markNotificationAsRead(
     },
   );
 
-  console.log(`✅ [NOTIFICATION] Marquée comme lue: ${notificationId}`);
+  notifLogger.info("Notification marquée comme lue", {
+    notificationId: notificationId.toString(),
+  });
 }
 
 /**
@@ -107,9 +115,10 @@ export async function markAllNotificationsAsRead(
     },
   );
 
-  console.log(
-    `✅ [NOTIFICATION] ${result.modifiedCount} notifications marquées comme lues pour ${userId}`,
-  );
+  notifLogger.info("Notifications marquées comme lues", {
+    count: result.modifiedCount,
+    userId: userId.toString(),
+  });
 
   return result.modifiedCount;
 }
@@ -163,7 +172,9 @@ export async function deleteNotification(
     userId: userId,
   });
 
-  console.log(`🗑️ [NOTIFICATION] Supprimée: ${notificationId}`);
+  notifLogger.info("Notification supprimée", {
+    notificationId: notificationId.toString(),
+  });
 }
 
 /**
@@ -178,9 +189,9 @@ export async function cleanupOldNotifications(): Promise<number> {
     read: true, // Ne supprimer que les notifications déjà lues
   });
 
-  console.log(
-    `🧹 [NOTIFICATION CLEANUP] ${result.deletedCount} anciennes notifications supprimées`,
-  );
+  notifLogger.info("Nettoyage des anciennes notifications", {
+    deletedCount: result.deletedCount,
+  });
 
   return result.deletedCount;
 }
@@ -227,9 +238,9 @@ export async function notifyShareReceived(
 
   await Promise.all(notifications);
 
-  console.log(
-    `🔔 [SHARE] Notifications envoyées à ${receiverIds.length} destinataire(s)`,
-  );
+  notifLogger.info("Notifications de partage envoyées", {
+    recipientCount: receiverIds.length,
+  });
 }
 
 /**

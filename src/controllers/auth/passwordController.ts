@@ -19,6 +19,9 @@ import {
   addToPasswordHistory,
   validatePasswordStrength,
 } from "../../utils/passwordUtils";
+import { logger } from "../../services/loggerService";
+
+const passwordLogger = logger.child({ service: "auth-password" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RÉINITIALISATION DE MOT DE PASSE
@@ -78,16 +81,19 @@ export async function handleForgotPassword(req: Request, res: Response) {
       "1 heure",
     );
 
-    console.log(
-      `🔐 [FORGOT-PASSWORD] Code de réinitialisation envoyé à: ${maskEmail(email)}`,
-    );
+    passwordLogger.info("[FORGOT-PASSWORD] Code de réinitialisation envoyé", {
+      email: maskEmail(email),
+    });
 
     res.status(200).json({
       message:
         "Si cet email est associé à un compte, un lien de réinitialisation sera envoyé.",
     });
   } catch (error: unknown) {
-    console.error("❌ [FORGOT-PASSWORD] Erreur:", error);
+    passwordLogger.error("[FORGOT-PASSWORD] Erreur", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       message: "Erreur lors de l'envoi de l'email de réinitialisation.",
       error: getErrorMessage(error),
@@ -166,8 +172,11 @@ export async function handleResetPassword(req: Request, res: Response) {
       allPasswordsToCheck,
     );
     if (isInHistory) {
-      console.warn(
-        `⚠️ [RESET-PASSWORD] Tentative de réutilisation d'un ancien mot de passe pour: ${maskEmail(email)}`,
+      passwordLogger.warn(
+        "[RESET-PASSWORD] Tentative de réutilisation d'un ancien mot de passe",
+        {
+          email: maskEmail(email),
+        },
       );
       return res.status(400).json({
         message:
@@ -202,9 +211,10 @@ export async function handleResetPassword(req: Request, res: Response) {
     // Supprimer également la session Redis
     await redisSessionService.deleteSession(userId);
 
-    console.log(
-      `🔐 [RESET-PASSWORD] ${revokedCount} tokens révoqués pour: ${maskEmail(email)}`,
-    );
+    passwordLogger.info("[RESET-PASSWORD] Tokens révoqués", {
+      email: maskEmail(email),
+      revokedCount,
+    });
 
     // Audit de la révocation
     await auditService.log({
@@ -226,9 +236,9 @@ export async function handleResetPassword(req: Request, res: Response) {
 
     await sendPasswordChangedEmail(email, userName, ipAddress, deviceInfo);
 
-    console.log(
-      `✅ [RESET-PASSWORD] Mot de passe réinitialisé pour: ${maskEmail(email)}`,
-    );
+    passwordLogger.info("[RESET-PASSWORD] Mot de passe réinitialisé", {
+      email: maskEmail(email),
+    });
 
     res.status(200).json({
       message:
@@ -236,7 +246,10 @@ export async function handleResetPassword(req: Request, res: Response) {
       success: true,
     });
   } catch (error: unknown) {
-    console.error("❌ [RESET-PASSWORD] Erreur:", error);
+    passwordLogger.error("[RESET-PASSWORD] Erreur", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       message: "Erreur lors de la réinitialisation du mot de passe.",
       error: getErrorMessage(error),

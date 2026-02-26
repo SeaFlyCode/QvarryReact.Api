@@ -3,6 +3,9 @@ import fs from "fs";
 import path from "path";
 import crypto from "crypto";
 import { maskEmail, anonymizeIp } from "../utils/logUtils";
+import { logger } from "./loggerService";
+
+const emailLogger = logger.child({ service: "email" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SERVICE D'ENVOI D'EMAILS - QVARRY
@@ -58,9 +61,9 @@ setInterval(
       }
     }
     if (cleaned > 0) {
-      console.log(
-        `🧹 [EMAIL] Cache déduplication nettoyé: ${cleaned} entrées supprimées`,
-      );
+      emailLogger.info("Cache déduplication nettoyé", {
+        entriesRemoved: cleaned,
+      });
     }
   },
   5 * 60 * 1000,
@@ -125,7 +128,7 @@ const createTransporter = () => {
 
   if (isDev && !process.env.SMTP_HOST) {
     // Mode développement : utilise Ethereal (fake SMTP)
-    console.log("📧 Mode développement: Les emails seront loggés en console");
+    emailLogger.info("Mode développement: Les emails seront loggés en console");
     return null;
   }
 
@@ -326,9 +329,11 @@ export const sendEmail = async (options: EmailOptions): Promise<boolean> => {
     const dedupCheck = canSendEmail(emailHash);
 
     if (!dedupCheck.allowed) {
-      console.warn(
-        `⚠️ [EMAIL] Envoi bloqué (doublon): ${maskEmail(to)} - ${template} - ${dedupCheck.reason}`,
-      );
+      emailLogger.warn("Envoi bloqué (doublon)", {
+        to: maskEmail(to),
+        template,
+        reason: dedupCheck.reason,
+      });
       return true; // Retourne true car ce n'est pas une erreur, juste un doublon évité
     }
 
@@ -351,30 +356,31 @@ export const sendEmail = async (options: EmailOptions): Promise<boolean> => {
 
     if (!transporter) {
       // Mode développement : afficher l'email dans la console
-      console.log("\n" + "═".repeat(60));
-      console.log("📧 EMAIL (MODE DÉVELOPPEMENT)");
-      console.log("═".repeat(60));
-      console.log(`📬 À: ${maskEmail(to)}`);
-      console.log(`📌 Sujet: ${subject}`);
-      console.log(`📝 Template: ${template}`);
-      console.log(`🔑 Hash: ${emailHash.substring(0, 8)}...`);
-      console.log("─".repeat(60));
-      console.log("Variables:", JSON.stringify(variables, null, 2));
-      console.log("═".repeat(60) + "\n");
+      emailLogger.info("Email sent (dev mode)", {
+        to: maskEmail(to),
+        subject,
+        template,
+        hash: emailHash.substring(0, 8),
+        variables,
+      });
       return true;
     }
 
     const info = await transporter.sendMail(mailOptions);
-    console.log(
-      `✅ Email envoyé à ${maskEmail(to)} (${template}): ${info.messageId}`,
-    );
+    emailLogger.info("Email envoyé", {
+      to: maskEmail(to),
+      template,
+      messageId: info.messageId,
+    });
 
     return true;
   } catch (error) {
-    console.error(
-      `❌ Erreur envoi email à ${maskEmail(to)} (${template}):`,
-      error,
-    );
+    emailLogger.error("Erreur envoi email", {
+      to: maskEmail(to),
+      template,
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return false;
   }
 };

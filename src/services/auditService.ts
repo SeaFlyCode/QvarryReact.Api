@@ -3,6 +3,9 @@ import AuditLog, { IAuditLog } from "../models/auditLogs";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
+import { logger } from "./loggerService";
+
+const auditLogger = logger.child({ service: "audit" });
 
 type AuditLevel = "info" | "warning" | "error" | "critical";
 
@@ -38,8 +41,8 @@ class AuditService {
       const secret = process.env.IP_HASH_SECRET;
       if (!secret || secret.length < 32) {
         if (!AuditService.ipHashSecretValidated) {
-          console.error(
-            "🚨 [SECURITY] FATAL: IP_HASH_SECRET manquant ou trop court (min 32 chars). Les IPs ne seront pas hashées.",
+          auditLogger.error(
+            "FATAL: IP_HASH_SECRET manquant ou trop court (min 32 chars). Les IPs ne seront pas hashées.",
           );
           if (process.env.NODE_ENV === "production") {
             process.exit(1);
@@ -54,7 +57,10 @@ class AuditService {
         .digest("hex")
         .substring(0, 16);
     } catch (error) {
-      console.error("❌ [AUDIT] Erreur de hachage IP:", error);
+      auditLogger.error("Erreur de hachage IP", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return undefined;
     }
   }
@@ -67,7 +73,10 @@ class AuditService {
     try {
       return encrypt(value);
     } catch (error) {
-      console.error("❌ [AUDIT] Erreur de chiffrement:", error);
+      auditLogger.error("Erreur de chiffrement", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return undefined;
     }
   }
@@ -81,7 +90,7 @@ class AuditService {
       return decrypt(value);
     } catch (error) {
       // Peut être une ancienne valeur non chiffrée
-      console.warn("⚠️ [AUDIT] Valeur non chiffrée détectée, retour en clair");
+      auditLogger.warn("Valeur non chiffrée détectée, retour en clair");
       return value;
     }
   }
@@ -116,9 +125,11 @@ class AuditService {
 
       // Log console pour le monitoring en temps réel (sans données sensibles)
       const emoji = this.getLevelEmoji(options.level || "info");
-      console.log(
-        `${emoji} [AUDIT] ${options.action} - User: ${options.userId || "N/A"}`,
-      );
+      auditLogger.info("Événement d'audit enregistré", {
+        action: options.action,
+        userId: options.userId?.toString() || "N/A",
+        level: options.level || "info",
+      });
 
       // Déclencher les alertes de sécurité pour les événements critiques ou erreur
       if (options.level === "critical" || options.level === "error") {
@@ -134,17 +145,23 @@ class AuditService {
             autoBlock: true,
           });
         } catch (alertError) {
-          console.error(
-            "❌ [AUDIT] Erreur lors du déclenchement de l'alerte de sécurité:",
-            alertError,
+          auditLogger.error(
+            "Erreur lors du déclenchement de l'alerte de sécurité",
+            {
+              error:
+                alertError instanceof Error
+                  ? alertError.message
+                  : String(alertError),
+              stack: alertError instanceof Error ? alertError.stack : undefined,
+            },
           );
         }
       }
     } catch (error) {
-      console.error(
-        "❌ [AUDIT] Erreur lors de l'enregistrement du log:",
-        error,
-      );
+      auditLogger.error("Erreur lors de l'enregistrement du log", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     }
   }
 

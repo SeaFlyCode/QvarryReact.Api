@@ -7,6 +7,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import rateLimit from "express-rate-limit";
+import { anonymizeIp } from "../utils/logUtils";
+import { logger } from "../services/loggerService";
+
+const rateLimitLogger = logger.child({ service: "rate-limit" });
 
 const NODE_ENV = process.env.NODE_ENV || "development";
 const isProduction = NODE_ENV === "production";
@@ -85,9 +89,10 @@ export const globalRateLimiter = rateLimit({
   legacyHeaders: false,
   skip: (req) => req.path === "/health",
   handler: (req, res) => {
-    console.warn(
-      `🚨 [GLOBAL RATE LIMIT] IP ${req.ip} a dépassé la limite globale (${req.path})`,
-    );
+    rateLimitLogger.warn("Global rate limit dépassé", {
+      ip: anonymizeIp(req.ip || ""),
+      path: req.path,
+    });
     res.status(429).json({
       error: "Trop de requêtes, veuillez réessayer plus tard.",
       code: "GLOBAL_RATE_LIMIT_EXCEEDED",
@@ -224,9 +229,9 @@ export const wsConnectionLimiter = rateLimit({
   legacyHeaders: false,
   skipSuccessfulRequests: false,
   handler: (req, res) => {
-    console.warn(
-      `⚠️ [WS RATE LIMIT] Trop de tentatives de connexion depuis ${req.ip}`,
-    );
+    rateLimitLogger.warn("WS rate limit dépassé", {
+      ip: anonymizeIp(req.ip || ""),
+    });
     res.status(429).json({
       error: "Trop de connexions WebSocket",
       code: "WS_RATE_LIMIT_EXCEEDED",
@@ -322,18 +327,14 @@ export const usersLimiter = rateLimit({
 // LOG DE CONFIGURATION AU DÉMARRAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
-const envIcon = isProduction ? "🔒" : "🔧";
 const envLabel = isProduction ? "PRODUCTION" : "DEVELOPMENT";
-const multiplierInfo = isProduction ? "" : ` (x${DEV_MULTIPLIER})`;
-console.log(
-  `${envIcon} [RATE LIMIT] Environnement: ${envLabel}${multiplierInfo}`,
-);
-console.log(
-  `   ├── Auth: ${limit(config.auth.maxRequests)} req/${config.auth.windowMinutes}min`,
-);
-console.log(
-  `   ├── Mobile: ${limit(config.mobile.maxRequests)} req/${config.mobile.windowMinutes}min`,
-);
-console.log(`   ├── 2FA: ${getLimit("twoFactor")} req/5min`);
-console.log(`   ├── General: ${getLimit("general")} req/min`);
-console.log(`   └── Global: ${getLimit("global")} req/min`);
+const multiplier = isProduction ? 1 : DEV_MULTIPLIER;
+rateLimitLogger.info("Rate limiting configuré", {
+  env: envLabel,
+  multiplier,
+  auth: `${limit(config.auth.maxRequests)} req/${config.auth.windowMinutes}min`,
+  mobile: `${limit(config.mobile.maxRequests)} req/${config.mobile.windowMinutes}min`,
+  twoFactor: `${getLimit("twoFactor")} req/5min`,
+  general: `${getLimit("general")} req/min`,
+  global: `${getLimit("global")} req/min`,
+});

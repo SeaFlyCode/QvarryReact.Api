@@ -21,6 +21,9 @@ import DeletedData, {
   DeletedEntityType,
   IDeletedData,
 } from "../models/deletedData";
+import { logger } from "./loggerService";
+
+const archiveLogger = logger.child({ service: "data-archive" });
 
 // Types pour le contexte de l'action
 export interface ActionContext {
@@ -86,15 +89,19 @@ class DataArchiveService {
         isRestored: false,
       });
 
-      console.log(
-        `📦 [ARCHIVE] ${entityType} ${entityId} archivé par ${deletedBy}`,
-      );
+      archiveLogger.info("Entité archivée", {
+        entityType,
+        entityId: entityId.toString(),
+        deletedBy: deletedBy.toString(),
+      });
       return archived;
     } catch (error) {
-      console.error(
-        `❌ [ARCHIVE] Erreur archivage ${entityType} ${entityId}:`,
-        error,
-      );
+      archiveLogger.error("Erreur archivage", {
+        entityType,
+        entityId: entityId.toString(),
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       throw error;
     }
   }
@@ -183,9 +190,11 @@ class DataArchiveService {
     );
 
     if (archived) {
-      console.log(
-        `♻️ [RESTORE] ${entityType} ${entityId} restauré par ${restoredBy}`,
-      );
+      archiveLogger.info("Entité restaurée", {
+        entityType,
+        entityId: entityId.toString(),
+        restoredBy: restoredBy.toString(),
+      });
     }
 
     return archived;

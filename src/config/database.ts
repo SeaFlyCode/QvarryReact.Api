@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
 import { getErrorMessage } from "../utils/errorUtils";
+import { logger } from "../services/loggerService";
+
+const dbLogger = logger.child({ service: "database" });
 
 /**
  * Masque les credentials dans une connection string MongoDB
@@ -20,7 +23,7 @@ export async function connectToDatabase() {
     : isProduction;
 
   if (!dbConnString) {
-    console.error("❌ Missing DB_CONN_STRING environment variable");
+    dbLogger.error("Missing DB_CONN_STRING environment variable");
     throw new Error("Missing DB_CONN_STRING env variable");
   }
 
@@ -46,16 +49,17 @@ export async function connectToDatabase() {
 
   try {
     await mongoose.connect(dbConnString, mongoOptions);
-    console.log(
-      `✅ Database "${dbName}" connected${enableSSL ? " (SSL/TLS)" : ""}`,
-    );
+    dbLogger.info("Database connected", {
+      dbName,
+      ssl: enableSSL,
+    });
   } catch (error) {
     // SÉCURITÉ: Ne jamais afficher la connection string avec les credentials
     const maskedConnString = maskConnectionString(dbConnString);
-    console.error(
-      `❌ Database connection failed (${maskedConnString}):`,
-      error instanceof Error ? getErrorMessage(error) : "Unknown error",
-    );
+    dbLogger.error("Database connection failed", {
+      maskedConnString,
+      error: error instanceof Error ? getErrorMessage(error) : "Unknown error",
+    });
     throw new Error("Database connection failed");
   }
 }

@@ -2,6 +2,9 @@ import { getErrorMessage } from "../utils/errorUtils";
 import { Request, Response } from "express";
 import { syncService } from "../services/syncService";
 import { memoryStorage } from "../services/memoryStorageService";
+import { logger } from "../services/loggerService";
+
+const syncCtrlLogger = logger.child({ service: "sync-controller" });
 
 export async function handleManualSync(req: Request, res: Response) {
   try {
@@ -21,7 +24,10 @@ export async function handleManualSync(req: Request, res: Response) {
       synced,
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la synchronisation manuelle:", error);
+    syncCtrlLogger.error("Manual sync error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de la synchronisation",
@@ -64,7 +70,10 @@ export async function handleSyncRefresh(req: Request, res: Response) {
         : "Aucun changement depuis le dernier refresh",
     });
   } catch (error: unknown) {
-    console.error("Erreur lors du refresh incrémental:", error);
+    syncCtrlLogger.error("Sync refresh error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors du refresh",

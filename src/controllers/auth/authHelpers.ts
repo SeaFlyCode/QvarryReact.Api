@@ -11,6 +11,9 @@ import crypto from "crypto";
 import mongoose from "mongoose";
 import { redisSessionService } from "../../services/redisSessionService";
 import { jwtKeyManager } from "../../utils/jwtKeyManager";
+import { logger } from "../../services/loggerService";
+
+const authHelpersLogger = logger.child({ service: "auth-helpers" });
 // ═══════════════════════════════════════════════════════════════════════════
 // INTERFACES PARTAGÉES
 // ═══════════════════════════════════════════════════════════════════════════
@@ -88,8 +91,9 @@ export async function checkLoginAttempts(
   if (attempt.lastAttempt > fifteenMinutesAgo && attempt.attempts >= 5) {
     // Bloquer pour 30 minutes
     await redisSessionService.recordLoginAttempt(email, true, 30);
-    console.warn(
-      `⚠️ [SECURITY] Email bloqué pour 30min après 5 tentatives: ${maskEmail(email)}`,
+    authHelpersLogger.warn(
+      "[SECURITY] Email bloqué pour 30min après 5 tentatives",
+      { email: maskEmail(email) },
     );
     return {
       allowed: false,
@@ -106,9 +110,10 @@ export async function checkLoginAttempts(
 export async function recordFailedLogin(email: string): Promise<void> {
   await redisSessionService.recordLoginAttempt(email, false);
   const attempt = await redisSessionService.getLoginAttempts(email);
-  console.warn(
-    `⚠️ [SECURITY] Tentative de connexion échouée pour: ${maskEmail(email)} (${attempt?.attempts || 1} tentatives)`,
-  );
+  authHelpersLogger.warn("[SECURITY] Tentative de connexion échouée", {
+    email: maskEmail(email),
+    attempts: attempt?.attempts || 1,
+  });
 }
 
 // Réinitialiser les tentatives après un login réussi
@@ -192,7 +197,7 @@ function decryptListField(
 // NOUVEAU: Charger et déchiffrer toutes les données utilisateur (VERSION OPTIMISÉE)
 export async function loadAndDecryptUserData(userId: string): Promise<void> {
   const startTime = Date.now();
-  console.log(`🚀 Chargement des données de l'utilisateur ${userId}...`);
+  authHelpersLogger.info("Chargement des données de l'utilisateur", { userId });
 
   // 1. Récupérer la clé AES utilisateur (type "user") - IGNORE les clés RSA
   let userKeyData = await KeysModel.findOne({
@@ -202,7 +207,7 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
 
   // Si la clé AES utilisateur n'existe pas, la créer
   if (!userKeyData || !userKeyData.key) {
-    console.log(`⚠️ Création d'une clé AES utilisateur pour ${userId}...`);
+    authHelpersLogger.info("Création d'une clé AES utilisateur", { userId });
     const key = crypto.randomBytes(32).toString("hex");
     const cryptedKey = encrypt(key);
 
@@ -213,7 +218,7 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
       type: "user", // Type "user" = clé AES pour les données
       date: new Date(),
     });
-    console.log(`✅ Clé AES utilisateur créée pour ${userId}`);
+    authHelpersLogger.info("Clé AES utilisateur créée", { userId });
   }
 
   // Vérifier que la clé existe avant de la déchiffrer
@@ -243,23 +248,32 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
     ListModel.find({ userId, deletedAt: null }).lean(),
   ]);
 
-  console.log(
-    `📊 Chargement de ${points.length} points, ${fiches.length} fiches, ${lists.length} listes...`,
-  );
+  authHelpersLogger.info("Chargement des données", {
+    userId,
+    pointsCount: points.length,
+    fichesCount: fiches.length,
+    listsCount: lists.length,
+  });
 
   // 4. Déchiffrer tous les points EN PARALLÈLE
   const decryptPointsStart = Date.now();
   const decryptedPoints = await Promise.all(
     points.map((point) => decryptPointOptimized(point, userKey)),
   );
-  console.log(`⚡ Points déchiffrés en ${Date.now() - decryptPointsStart}ms`);
+  authHelpersLogger.info("Points déchiffrés", {
+    userId,
+    duration: Date.now() - decryptPointsStart,
+  });
 
   // 5. Déchiffrer toutes les fiches EN PARALLÈLE
   const decryptFichesStart = Date.now();
   const decryptedFiches = await Promise.all(
     fiches.map((fiche) => decryptFicheOptimized(fiche, userKey)),
   );
-  console.log(`⚡ Fiches déchiffrées en ${Date.now() - decryptFichesStart}ms`);
+  authHelpersLogger.info("Fiches déchiffrées", {
+    userId,
+    duration: Date.now() - decryptFichesStart,
+  });
 
   // 6. Déchiffrer les listes et stocker toutes les données en mémoire
   decryptedPoints.forEach((point) =>
@@ -291,8 +305,12 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
       memoryStorage.storeList(userId, decryptedList as any);
     } catch (listDecryptError) {
       // Fallback : si le déchiffrement échoue, la liste est probablement en plaintext (migration)
-      console.warn(
-        `⚠️ Déchiffrement de la liste ${(list as any)._id} échoué, stockage en plaintext (migration nécessaire)`,
+      authHelpersLogger.warn(
+        "Déchiffrement de la liste échoué, stockage en plaintext (migration nécessaire)",
+        {
+          userId,
+          listId: (list as any)._id,
+        },
       );
       memoryStorage.storeList(userId, list as any);
     }
@@ -302,9 +320,10 @@ export async function loadAndDecryptUserData(userId: string): Promise<void> {
   memoryStorage.markAsSynced(userId);
 
   const totalTime = Date.now() - startTime;
-  console.log(
-    `✅ Données de l'utilisateur ${userId} chargées en ${totalTime}ms`,
-  );
+  authHelpersLogger.info("Données de l'utilisateur chargées", {
+    userId,
+    duration: totalTime,
+  });
 }
 
 // Rafraîchir le memoryStorage avec les changements de la DB depuis le dernier refresh
@@ -316,9 +335,10 @@ export async function refreshFromDB(
   const userKey = memoryStorage.getUserEncryptionKey(userId);
   const since = memoryStorage.getLastRefreshedAt(userId);
 
-  console.log(
-    `🔄 Refresh incrémental pour ${userId} depuis ${since.toISOString()}...`,
-  );
+  authHelpersLogger.info("Refresh incrémental pour utilisateur", {
+    userId,
+    since: since.toISOString(),
+  });
 
   let added = 0;
   let updated = 0;
@@ -465,9 +485,13 @@ export async function refreshFromDB(
   // qui ne marque pas dirty. Mais pour l'instant c'est acceptable.
 
   const totalTime = Date.now() - startTime;
-  console.log(
-    `🔄 Refresh terminé en ${totalTime}ms: ${added} ajoutés, ${updated} mis à jour, ${deleted} supprimés`,
-  );
+  authHelpersLogger.info("Refresh terminé", {
+    userId,
+    duration: totalTime,
+    added,
+    updated,
+    deleted,
+  });
 
   return { added, updated, deleted };
 }
@@ -511,7 +535,10 @@ export async function decryptPointOptimized(point: any, userKey: string) {
       version: point.version || 1,
     };
   } catch (error) {
-    console.error("Erreur lors du déchiffrement du point:", error);
+    authHelpersLogger.error("Erreur lors du déchiffrement du point", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return point;
   }
 }
@@ -615,14 +642,19 @@ export async function decryptFicheOptimized(fiche: any, userKey: string) {
       version: fiche.version || 1,
     };
   } catch (error) {
-    console.error("Erreur lors du déchiffrement de la fiche:", error);
+    authHelpersLogger.error("Erreur lors du déchiffrement de la fiche", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return fiche;
   }
 }
 
 // Synchroniser les données de l'utilisateur vers la base de données
 export async function syncUserDataToDB(userId: string): Promise<void> {
-  console.log(`Synchronisation des données de l'utilisateur ${userId}...`);
+  authHelpersLogger.info("Synchronisation des données de l'utilisateur", {
+    userId,
+  });
 
   try {
     // Récupérer toutes les données en mémoire
@@ -641,9 +673,12 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     const dirtyFicheIds = memoryStorage.getDirtyFicheIds(userId);
     const dirtyListIds = memoryStorage.getDirtyListIds(userId);
 
-    console.log(
-      `📊 Dirty tracking: ${dirtyPointIds.size} points, ${dirtyFicheIds.size} fiches, ${dirtyListIds.size} listes modifiés`,
-    );
+    authHelpersLogger.info("Dirty tracking", {
+      userId,
+      dirtyPoints: dirtyPointIds.size,
+      dirtyFiches: dirtyFicheIds.size,
+      dirtyLists: dirtyListIds.size,
+    });
 
     // 1. Synchronisation des points
 
@@ -661,9 +696,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     // 1.3 Soft-delete les points qui n'existent plus en mémoire
     // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
     for (const pointToDelete of pointsToDelete) {
-      console.log(
-        `Soft-delete du point ${pointToDelete._id} de la base de données`,
-      );
+      authHelpersLogger.info("Soft-delete du point de la base de données", {
+        userId,
+        pointId: pointToDelete._id,
+      });
       await PointModel.updateOne(
         { _id: pointToDelete._id },
         { $set: { deletedAt: new Date() } },
@@ -674,17 +710,20 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     const dirtyPoints = points.filter((p: { _id: any }) =>
       dirtyPointIds.has(p._id.toString()),
     );
-    console.log(
-      `📝 Points: ${dirtyPoints.length}/${points.length} à synchroniser`,
-    );
+    authHelpersLogger.info("Points à synchroniser", {
+      userId,
+      dirtyCount: dirtyPoints.length,
+      totalCount: points.length,
+    });
     for (const point of dirtyPoints) {
       // Le reste du code de synchronisation des points reste inchangé
       let pointFromDB = await PointModel.findById(point._id);
 
       if (!pointFromDB) {
-        console.log(
-          `Création d'un nouveau point ${point._id} pour l'utilisateur ${userId}`,
-        );
+        authHelpersLogger.info("Création d'un nouveau point", {
+          userId,
+          pointId: point._id,
+        });
         pointFromDB = new PointModel({
           _id: point._id,
           userId: point.userId,
@@ -725,11 +764,20 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
             userKey,
             JSON.stringify(locationData),
           );
-          console.log(`Coordonnées chiffrées pour le point ${point._id}`);
+          authHelpersLogger.info("Coordonnées chiffrées pour le point", {
+            userId,
+            pointId: point._id,
+          });
         } catch (locError) {
-          console.error(
-            `Erreur lors du chiffrement des coordonnées pour le point ${point._id}:`,
-            locError,
+          authHelpersLogger.error(
+            "Erreur lors du chiffrement des coordonnées pour le point",
+            {
+              userId,
+              pointId: point._id,
+              error:
+                locError instanceof Error ? locError.message : String(locError),
+              stack: locError instanceof Error ? locError.stack : undefined,
+            },
           );
           return Promise.reject(
             new Error(
@@ -757,13 +805,26 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
             userKey,
             JSON.stringify(defaultLocation),
           );
-          console.log(
-            `Coordonnées par défaut utilisées pour le point ${point._id}`,
+          authHelpersLogger.info(
+            "Coordonnées par défaut utilisées pour le point",
+            {
+              userId,
+              pointId: point._id,
+            },
           );
         } catch (defLocError) {
-          console.error(
-            `Erreur lors de la création des coordonnées par défaut pour le point ${point._id}:`,
-            defLocError,
+          authHelpersLogger.error(
+            "Erreur lors de la création des coordonnées par défaut pour le point",
+            {
+              userId,
+              pointId: point._id,
+              error:
+                defLocError instanceof Error
+                  ? defLocError.message
+                  : String(defLocError),
+              stack:
+                defLocError instanceof Error ? defLocError.stack : undefined,
+            },
           );
           return Promise.reject(
             new Error(
@@ -798,17 +859,25 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
           }
           // Sinon, laisser tel quel (mais c'est un cas d'erreur)
           else {
-            console.warn(
-              `ficheId invalide pour le point ${point._id}: ${(point as any).ficheId}`,
-            );
+            authHelpersLogger.warn("ficheId invalide pour le point", {
+              userId,
+              pointId: point._id,
+              ficheId: (point as any).ficheId,
+            });
             pointFromDB.ficheId = (point as any).ficheId;
           }
 
-          console.log(
-            `Point ${point._id} associé à la fiche ${pointFromDB.ficheId}`,
-          );
+          authHelpersLogger.info("Point associé à la fiche", {
+            userId,
+            pointId: point._id,
+            ficheId: pointFromDB.ficheId,
+          });
         } catch (idError) {
-          console.error(`Erreur lors de la manipulation du ficheId:`, idError);
+          authHelpersLogger.error("Erreur lors de la manipulation du ficheId", {
+            userId,
+            error: idError instanceof Error ? idError.message : String(idError),
+            stack: idError instanceof Error ? idError.stack : undefined,
+          });
           // En cas d'erreur, garder la valeur originale
           pointFromDB.ficheId = (point as any).ficheId;
         }
@@ -816,8 +885,13 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         // Si ficheId est undefined/null dans la version mémoire, s'assurer qu'il est aussi null dans la BDD
         // C'est crucial pour les dissociations
         if (pointFromDB.ficheId) {
-          console.log(
-            `Suppression de l'association entre le point ${point._id} et la fiche ${pointFromDB.ficheId}`,
+          authHelpersLogger.info(
+            "Suppression de l'association entre le point et la fiche",
+            {
+              userId,
+              pointId: point._id,
+              ficheId: pointFromDB.ficheId,
+            },
           );
           pointFromDB.ficheId = undefined;
         }
@@ -829,9 +903,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       // Sauvegarder le point
       await pointFromDB.save();
 
-      console.log(
-        `Point ${point._id} synchronisé pour l'utilisateur ${userId}`,
-      );
+      authHelpersLogger.info("Point synchronisé", {
+        userId,
+        pointId: point._id,
+      });
     }
 
     // 2. Synchronisation des fiches
@@ -851,9 +926,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     // 2.3 Soft-delete les fiches qui n'existent plus en mémoire
     // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
     for (const ficheToDelete of fichesToDelete) {
-      console.log(
-        `Soft-delete de la fiche ${ficheToDelete._id} de la base de données`,
-      );
+      authHelpersLogger.info("Soft-delete de la fiche de la base de données", {
+        userId,
+        ficheId: ficheToDelete._id,
+      });
       await FicheModel.updateOne(
         { _id: ficheToDelete._id },
         { $set: { deletedAt: new Date() } },
@@ -864,18 +940,21 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     const dirtyFiches = fiches.filter((f) =>
       dirtyFicheIds.has((f._id as mongoose.Types.ObjectId).toString()),
     );
-    console.log(
-      `📝 Fiches: ${dirtyFiches.length}/${fiches.length} à synchroniser`,
-    );
+    authHelpersLogger.info("Fiches à synchroniser", {
+      userId,
+      dirtyCount: dirtyFiches.length,
+      totalCount: fiches.length,
+    });
     for (const fiche of dirtyFiches) {
       // Vérifier si la fiche existe déjà dans la base de données
       let ficheFromDB = await FicheModel.findById(fiche._id);
 
       // Si la fiche n'existe pas, la créer
       if (!ficheFromDB) {
-        console.log(
-          `Création d'une nouvelle fiche ${fiche._id} pour l'utilisateur ${userId}`,
-        );
+        authHelpersLogger.info("Création d'une nouvelle fiche", {
+          userId,
+          ficheId: fiche._id,
+        });
         ficheFromDB = new FicheModel({
           _id: fiche._id,
           userId: fiche.userId,
@@ -1007,9 +1086,11 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       ficheFromDB.points_ids = fiche.points_ids || [];
 
       // Journaliser pour faciliter le débogage
-      console.log(
-        `Fiche ${fiche._id}: ${ficheFromDB.points_ids.length} points synchronisés`,
-      );
+      authHelpersLogger.info("Fiche synchronisée avec points", {
+        userId,
+        ficheId: fiche._id,
+        pointsCount: ficheFromDB.points_ids.length,
+      });
 
       // Note: date_modification est gérée automatiquement par Mongoose timestamps
       // (updatedAt mappé à date_modification dans le schema)
@@ -1022,9 +1103,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       // Sauvegarder la fiche
       await ficheFromDB.save();
 
-      console.log(
-        `Fiche ${fiche._id} synchronisée pour l'utilisateur ${userId}`,
-      );
+      authHelpersLogger.info("Fiche synchronisée", {
+        userId,
+        ficheId: fiche._id,
+      });
     }
 
     // 3.1 Récupérer toutes les listes existantes dans la base de données
@@ -1042,9 +1124,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     // 3.3 Soft-delete les listes qui n'existent plus en mémoire
     // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
     for (const listToDelete of listsToDelete) {
-      console.log(
-        `Soft-delete de la liste ${listToDelete._id} de la base de données`,
-      );
+      authHelpersLogger.info("Soft-delete de la liste de la base de données", {
+        userId,
+        listId: listToDelete._id,
+      });
       await ListModel.updateOne(
         { _id: listToDelete._id },
         { $set: { deletedAt: new Date() } },
@@ -1055,9 +1138,11 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     const dirtyLists = lists.filter((l) =>
       dirtyListIds.has((l._id as mongoose.Types.ObjectId).toString()),
     );
-    console.log(
-      `📝 Listes: ${dirtyLists.length}/${lists.length} à synchroniser`,
-    );
+    authHelpersLogger.info("Listes à synchroniser", {
+      userId,
+      dirtyCount: dirtyLists.length,
+      totalCount: lists.length,
+    });
     for (const list of dirtyLists) {
       // Vérifier si la liste existe déjà dans la base de données
       let listFromDB = await ListModel.findById(list._id);
@@ -1074,9 +1159,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
 
       // Si la liste n'existe pas, la créer
       if (!listFromDB) {
-        console.log(
-          `Création d'une nouvelle liste ${list._id} pour l'utilisateur ${userId}`,
-        );
+        authHelpersLogger.info("Création d'une nouvelle liste", {
+          userId,
+          listId: list._id,
+        });
         listFromDB = new ListModel({
           _id: list._id,
           userId,
@@ -1101,19 +1187,26 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       // Sauvegarder la liste
       await listFromDB.save();
 
-      console.log(
-        `Liste ${list._id} synchronisée pour l'utilisateur ${userId} avec ${listFromDB.points.length} points`,
-      );
+      authHelpersLogger.info("Liste synchronisée avec points", {
+        userId,
+        listId: list._id,
+        pointsCount: listFromDB.points.length,
+      });
     }
 
     memoryStorage.markAsSynced(userId);
-    console.log(
-      `Données de l'utilisateur ${userId} synchronisées avec succès.`,
+    authHelpersLogger.info(
+      "Données de l'utilisateur synchronisées avec succès",
+      { userId },
     );
   } catch (error) {
-    console.error(
-      `Erreur lors de la synchronisation des données utilisateur ${userId}:`,
-      error,
+    authHelpersLogger.error(
+      "Erreur lors de la synchronisation des données utilisateur",
+      {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      },
     );
     throw error;
   }

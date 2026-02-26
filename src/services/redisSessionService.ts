@@ -1,4 +1,9 @@
 import { getErrorMessage } from "../utils/errorUtils";
+import { logger } from "./loggerService";
+
+// Create child logger for redis-session service
+const redisLogger = logger.child({ service: "redis-session" });
+
 // ═══════════════════════════════════════════════════════════════════════════
 // REDIS SESSION SERVICE - PERSISTANCE DES SESSIONS ET BLACKLIST
 // ═══════════════════════════════════════════════════════════════════════════
@@ -20,13 +25,10 @@ const IS_PRODUCTION = process.env.NODE_ENV === "production";
 
 // REM-004: Redis obligatoire en production
 if (IS_PRODUCTION && !REDIS_ENABLED) {
-  console.error("❌ [SECURITY] REDIS_ENABLED doit être activé en production!");
-  console.error(
-    "❌ [SECURITY] Redis est obligatoire pour la persistance des sessions en production.",
-  );
-  console.error(
-    "❌ [SECURITY] Configurez REDIS_ENABLED=true et les paramètres de connexion Redis.",
-  );
+  redisLogger.critical("Redis must be enabled in production", {
+    message:
+      "Redis is mandatory for session persistence in production. Configure REDIS_ENABLED=true and Redis connection parameters.",
+  });
   process.exit(1);
 }
 
@@ -71,40 +73,35 @@ if (REDIS_ENABLED) {
       redis
         .connect()
         .then(() => {
-          console.log("✅ [REDIS] Connecté avec succès");
+          redisLogger.info("Redis connected successfully");
         })
         .catch((error: any) => {
-          console.error(
-            "❌ [REDIS] Erreur de connexion:",
-            getErrorMessage(error),
-          );
-          console.warn("⚠️ [REDIS] Fallback vers stockage en mémoire");
+          redisLogger.error("Redis connection failed, falling back to memory", {
+            error: getErrorMessage(error),
+          });
           redis = null;
         });
 
       redis.on("error", (error: any) => {
-        console.error("❌ [REDIS] Erreur:", getErrorMessage(error));
+        redisLogger.error("Redis error occurred", {
+          error: getErrorMessage(error),
+        });
       });
 
       redis.on("reconnecting", () => {
-        console.log("🔄 [REDIS] Reconnexion en cours...");
+        redisLogger.info("Redis reconnecting");
       });
     }
   } catch (error: unknown) {
-    console.error(
-      "❌ [REDIS] Erreur d'initialisation:",
-      getErrorMessage(error),
-    );
-    console.warn(
-      "⚠️ [REDIS] Utilisation du stockage en mémoire comme fallback",
-    );
+    redisLogger.error("Redis initialization failed, using memory storage", {
+      error: getErrorMessage(error),
+    });
     redis = null;
   }
 } else {
-  console.warn(
-    "⚠️ [REDIS] Redis désactivé, utilisation du stockage en mémoire",
+  redisLogger.warn(
+    "Redis disabled, using memory storage - sessions will not survive restarts",
   );
-  console.warn("⚠️ [SECURITY] Les sessions ne survivront pas aux redémarrages");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -217,15 +214,15 @@ function cleanupMemoryStores(): void {
   }
 
   if (cleaned > 0) {
-    console.log(`🧹 [MEMORY CLEANUP] ${cleaned} entrées expirées nettoyées`);
+    redisLogger.info("Memory cleanup completed", { entriesCleaned: cleaned });
   }
 }
 
 // Démarrer le nettoyage périodique
 setInterval(cleanupMemoryStores, MEMORY_CLEANUP_INTERVAL_MS);
-console.log(
-  `✅ [MEMORY CLEANUP] Nettoyage automatique démarré (intervalle: ${MEMORY_CLEANUP_INTERVAL_MS / 1000}s)`,
-);
+redisLogger.info("Automatic memory cleanup started", {
+  intervalSeconds: MEMORY_CLEANUP_INTERVAL_MS / 1000,
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REDIS SESSION SERVICE
@@ -243,10 +240,11 @@ export class RedisSessionService {
       parseInt(jwtExpiresIn.replace(/[^0-9]/g, "")) *
       (jwtExpiresIn.includes("h") ? 3600 : 60);
     if (this.SESSION_TTL < jwtExpiresInSeconds) {
-      console.warn(
-        `⚠️ [REDIS SESSION] SESSION_TTL (${this.SESSION_TTL}s) est inférieur à JWT_EXPIRES_IN (${jwtExpiresInSeconds}s). ` +
-          `Les sessions pourraient expirer avant les JWT. SESSION_TTL devrait être >= JWT_EXPIRES_IN.`,
-      );
+      redisLogger.warn("SESSION_TTL is less than JWT_EXPIRES_IN", {
+        sessionTTL: this.SESSION_TTL,
+        jwtExpiresInSeconds,
+        recommendation: "SESSION_TTL should be >= JWT_EXPIRES_IN",
+      });
     }
   }
 
@@ -273,14 +271,14 @@ export class RedisSessionService {
           ? `${this.SESSION_PREFIX}${userId}:${metadata.tokenId}`
           : `${this.SESSION_PREFIX}${userId}`;
         await redis.setex(key, this.SESSION_TTL, JSON.stringify(sessionData));
-        console.log(
-          `✅ [REDIS SESSION] Session créée pour userId: ${userId}${metadata.tokenId ? `:${metadata.tokenId}` : ""}`,
-        );
+        redisLogger.info("Session created", {
+          userId,
+          tokenId: metadata.tokenId,
+        });
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS SESSION] Erreur création session:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to create session in Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         // Fallback en mémoire
         const memoryKey = metadata.tokenId
           ? `${userId}:${metadata.tokenId}`
@@ -316,10 +314,9 @@ export class RedisSessionService {
         session.lastActivity = new Date(session.lastActivity);
         return session;
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS SESSION] Erreur récupération session:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to get session from Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         // Fallback en mémoire
         const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
         return memorySessionStore.get(memoryKey) || null;
@@ -339,9 +336,11 @@ export class RedisSessionService {
         const exists = await redis.exists(key);
         return exists === 1;
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS SESSION] Erreur vérification session:`,
-          getErrorMessage(error),
+        redisLogger.error(
+          "Failed to check session existence in Redis, using memory",
+          {
+            error: getErrorMessage(error),
+          },
         );
         const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
         return memorySessionStore.has(memoryKey);
@@ -359,14 +358,14 @@ export class RedisSessionService {
           ? `${this.SESSION_PREFIX}${userId}:${tokenId}`
           : `${this.SESSION_PREFIX}${userId}`;
         await redis.del(key);
-        console.log(
-          `🗑️ [REDIS SESSION] Session supprimée pour userId: ${userId}${tokenId ? `:${tokenId}` : ""}`,
-        );
+        redisLogger.info("Session deleted", {
+          userId,
+          tokenId,
+        });
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS SESSION] Erreur suppression session:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to delete session from Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
         memorySessionStore.delete(memoryKey);
         memorySessionTimestamps.delete(memoryKey); // HIGH-11: Clean up timestamp
@@ -396,10 +395,9 @@ export class RedisSessionService {
           }
         }
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS SESSION] Erreur touch session:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to touch session in Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         // Fallback en mémoire
         const memoryKey = tokenId ? `${userId}:${tokenId}` : userId;
         const session = memorySessionStore.get(memoryKey);
@@ -442,10 +440,9 @@ export class RedisSessionService {
           return count;
         }
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS SESSION] Erreur comptage sessions:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to count sessions in Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         return memorySessionStore.size;
       }
     } else {
@@ -466,14 +463,13 @@ export class RedisSessionService {
       try {
         const key = `${this.BLACKLIST_PREFIX}${token}`;
         await redis.setex(key, expiresInSeconds, JSON.stringify(details));
-        console.log(
-          `🚫 [REDIS BLACKLIST] Token blacklisté (expire dans ${expiresInSeconds}s)`,
-        );
+        redisLogger.info("Token blacklisted", {
+          expiresInSeconds,
+        });
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS BLACKLIST] Erreur blacklist token:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to blacklist token in Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         // Fallback en mémoire
         memoryBlacklistStore.add(token);
         memoryBlacklistDetails.set(token, details);
@@ -493,9 +489,11 @@ export class RedisSessionService {
         const exists = await redis.exists(key);
         return exists === 1;
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS BLACKLIST] Erreur vérification blacklist:`,
-          getErrorMessage(error),
+        redisLogger.error(
+          "Failed to check token blacklist in Redis, using memory",
+          {
+            error: getErrorMessage(error),
+          },
         );
         return memoryBlacklistStore.has(token);
       }
@@ -518,9 +516,11 @@ export class RedisSessionService {
         details.blacklistedAt = new Date(details.blacklistedAt);
         return details;
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS BLACKLIST] Erreur récupération détails:`,
-          getErrorMessage(error),
+        redisLogger.error(
+          "Failed to get blacklisted token details from Redis, using memory",
+          {
+            error: getErrorMessage(error),
+          },
         );
         return memoryBlacklistDetails.get(token) || null;
       }
@@ -553,9 +553,11 @@ export class RedisSessionService {
           return count;
         }
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS BLACKLIST] Erreur comptage blacklist:`,
-          getErrorMessage(error),
+        redisLogger.error(
+          "Failed to count blacklisted tokens in Redis, using memory",
+          {
+            error: getErrorMessage(error),
+          },
         );
         return memoryBlacklistStore.size;
       }
@@ -588,9 +590,11 @@ export class RedisSessionService {
     if (redis) {
       try {
         await redis.flushdb();
-        console.log("🗑️ [REDIS] Base de données nettoyée");
+        redisLogger.info("Redis database flushed");
       } catch (error: unknown) {
-        console.error(`❌ [REDIS] Erreur flush:`, getErrorMessage(error));
+        redisLogger.error("Failed to flush Redis database", {
+          error: getErrorMessage(error),
+        });
       }
     }
     memorySessionStore.clear();
@@ -629,9 +633,11 @@ export class RedisSessionService {
             : undefined,
         };
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS LOGIN] Erreur récupération tentatives:`,
-          getErrorMessage(error),
+        redisLogger.error(
+          "Failed to get login attempts from Redis, using memory",
+          {
+            error: getErrorMessage(error),
+          },
         );
         return memoryLoginAttempts.get(email) || null;
       }
@@ -675,9 +681,11 @@ export class RedisSessionService {
         const key = `${this.LOGIN_ATTEMPTS_PREFIX}${email}`;
         await redis.setex(key, this.LOGIN_ATTEMPTS_TTL, JSON.stringify(data));
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS LOGIN] Erreur enregistrement tentative:`,
-          getErrorMessage(error),
+        redisLogger.error(
+          "Failed to record login attempt in Redis, using memory",
+          {
+            error: getErrorMessage(error),
+          },
         );
         memoryLoginAttempts.set(email, {
           attempts,
@@ -706,9 +714,11 @@ export class RedisSessionService {
         const key = `${this.LOGIN_ATTEMPTS_PREFIX}${email}`;
         await redis.del(key);
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS LOGIN] Erreur réinitialisation tentatives:`,
-          getErrorMessage(error),
+        redisLogger.error(
+          "Failed to reset login attempts in Redis, using memory",
+          {
+            error: getErrorMessage(error),
+          },
         );
         memoryLoginAttempts.delete(email);
         memoryLoginAttemptsTimestamps.delete(email); // HIGH-11: Clean up timestamp
@@ -735,10 +745,9 @@ export class RedisSessionService {
         const key = `${this.JTI_PREFIX}${userId}:${clientType}`;
         await redis.setex(key, expiresInSeconds, jti);
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS JTI] Erreur stockage JTI:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to store JTI in Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         const memoryKey = `${userId}:${clientType}`;
         memoryJtiStore.set(memoryKey, jti);
         memoryJtiTimestamps.set(memoryKey, Date.now()); // HIGH-11: TTL tracking
@@ -759,10 +768,9 @@ export class RedisSessionService {
         const key = `${this.JTI_PREFIX}${userId}:${clientType}`;
         return await redis.get(key);
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS JTI] Erreur récupération JTI:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to get JTI from Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         const memoryKey = `${userId}:${clientType}`;
         return memoryJtiStore.get(memoryKey) || null;
       }
@@ -789,14 +797,14 @@ export class RedisSessionService {
       try {
         const key = `${this.JTI_PREFIX}${userId}:${clientType}`;
         await redis.del(key);
-        console.log(
-          `🗑️ [REDIS JTI] JTI supprimé pour userId: ${userId}:${clientType}`,
-        );
+        redisLogger.info("JTI deleted", {
+          userId,
+          clientType,
+        });
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS JTI] Erreur suppression JTI:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to delete JTI from Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         const memoryKey = `${userId}:${clientType}`;
         memoryJtiStore.delete(memoryKey);
         memoryJtiTimestamps.delete(memoryKey);
@@ -832,10 +840,9 @@ export class RedisSessionService {
         }
         return false; // Token déjà utilisé
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS WS_TOKEN] Erreur consommation token:`,
-          getErrorMessage(error),
-        );
+        redisLogger.error("Failed to consume WS token in Redis, using memory", {
+          error: getErrorMessage(error),
+        });
         // Fallback mémoire - moins sécurisé mais fonctionnel
         return this.consumeWsTokenMemory(tokenJti);
       }
@@ -869,9 +876,11 @@ export class RedisSessionService {
         const exists = await redis.exists(key);
         return exists === 1;
       } catch (error: unknown) {
-        console.error(
-          `❌ [REDIS WS_TOKEN] Erreur vérification token:`,
-          getErrorMessage(error),
+        redisLogger.error(
+          "Failed to check WS token usage in Redis, using memory",
+          {
+            error: getErrorMessage(error),
+          },
         );
         return this.usedWsTokensMemory.has(tokenJti);
       }
@@ -890,7 +899,7 @@ export const redisSessionService = new RedisSessionService();
 // Nettoyage à la fermeture
 process.on("SIGTERM", async () => {
   if (redis) {
-    console.log("🔌 [REDIS] Fermeture de la connexion...");
+    redisLogger.info("Closing Redis connection");
     await redis.quit();
   }
 });

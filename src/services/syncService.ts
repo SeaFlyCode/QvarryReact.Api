@@ -1,5 +1,8 @@
 import { getErrorMessage } from "../utils/errorUtils";
 import { memoryStorage } from "./memoryStorageService";
+import { logger } from "./loggerService";
+
+const syncLogger = logger.child({ service: "sync" });
 
 class SyncService {
   // Synchroniser maintenant et retourner le résultat
@@ -23,10 +26,11 @@ class SyncService {
         message: "Synchronisation effectuée avec succès",
       };
     } catch (error) {
-      console.error(
-        `Échec de la synchronisation pour l'utilisateur ${userId}:`,
-        error,
-      );
+      syncLogger.error("Échec de la synchronisation", {
+        userId,
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return {
         success: false,
         message: "Échec de la synchronisation",

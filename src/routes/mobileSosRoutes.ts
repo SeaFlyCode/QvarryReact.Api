@@ -62,6 +62,7 @@ const mobileSosMiddleware = [
  *     "lat": 48.8566,                   // Optionnel - latitude
  *     "lng": 2.3522,                    // Optionnel - longitude
  *     "accuracy": 10,                   // Optionnel - précision GPS en mètres
+ *     "participantIds": ["userId1", "userId2"], // Optionnel - IDs des participants pour session de groupe
  *     "sessionContacts": {              // Optionnel - override des contacts pour cette session
  *       "permanentContactIds": ["id1", "id2"], // IDs des contacts permanents à utiliser
  *       "additionalContacts": [         // Contacts temporaires supplémentaires
@@ -75,10 +76,10 @@ const mobileSosMiddleware = [
  *   }
  *
  * Response 201:
- *   { success: true, session: { id, status, activatedAt, expiresAt, ... } }
+ *   { success: true, session: { id, status, activatedAt, expiresAt, participants, isGroupSession, ... } }
  *
  * Codes d'erreur:
- *   - 400: MISSING_DURATION, INVALID_DURATION, NO_EMERGENCY_CONTACTS, INVALID_CONTACT_IDS, INVALID_PHONE_FORMAT
+ *   - 400: MISSING_DURATION, INVALID_DURATION, NO_EMERGENCY_CONTACTS, INVALID_CONTACT_IDS, INVALID_PHONE_FORMAT, INVALID_PARTICIPANT_IDS
  *   - 401: UNAUTHORIZED
  *   - 409: SESSION_ALREADY_ACTIVE
  *   - 500: INTERNAL_ERROR
@@ -134,7 +135,8 @@ router.post("/extend", ...mobileSosMiddleware, handleSosExtend);
  *
  * Body:
  *   {
- *     "sessionId": "mongoId"            // Optionnel
+ *     "sessionId": "mongoId",            // Optionnel
+ *     "scope": "self" | "all"            // Optionnel (défaut: "all") - "self" pour quitter seul, "all" pour désactiver pour tous
  *   }
  *
  * Response 200:
@@ -152,7 +154,7 @@ router.post("/deactivate", ...mobileSosMiddleware, handleSosDeactivate);
  * Obtenir le statut de la session SOS active
  *
  * Response 200:
- *   { success: true, active: boolean, session: {...} | null }
+ *   { success: true, active: boolean, session: { ..., participants: [...], isGroupSession: boolean, creatorId: string } | null }
  */
 router.get("/status", ...mobileSosMiddleware, handleSosStatus);
 
@@ -196,6 +198,11 @@ router.get("/active", ...mobileSosMiddleware, handleSosActiveSessions);
  * POST /api/mobile/sos/:sessionId/deactivate
  * Désactiver une session SOS spécifique via son ID dans l'URL
  * Alternative à POST /api/mobile/sos/deactivate avec sessionId dans le body
+ *
+ * Body:
+ *   {
+ *     "scope": "self" | "all"            // Optionnel (défaut: "all")
+ *   }
  *
  * Response 200:
  *   { success: true, session: { id, status, resolvedAt, resolvedBy } }

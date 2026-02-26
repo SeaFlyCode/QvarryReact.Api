@@ -7,6 +7,10 @@ import UserModel from "../models/users";
 import { jwtKeyManager } from "../utils/jwtKeyManager";
 import { getErrorMessage, isErrorWithName } from "../utils/errorUtils";
 import { loadAndDecryptUserData } from "../controllers/auth";
+import { anonymizeIp } from "../utils/logUtils";
+import { logger } from "../services/loggerService";
+
+const authLogger = logger.child({ service: "auth" });
 
 // Types étendus pour Express dans ../types/express.d.ts
 
@@ -48,9 +52,10 @@ export const authMiddleware = async (
 
     // 2. VALIDATION DU TOKEN
     if (!token) {
-      console.warn(
-        `⚠️ [AUTH] Tentative d'accès sans token - ${req.method} ${req.path}`,
-      );
+      authLogger.warn("Tentative accès sans token", {
+        method: req.method,
+        path: req.path,
+      });
       return res.status(401).json({
         message: "Authentification requise. Aucun token fourni.",
         code: "NO_TOKEN",
@@ -61,9 +66,10 @@ export const authMiddleware = async (
     const isBlacklisted = await redisSessionService.isTokenBlacklisted(token);
 
     if (isBlacklisted) {
-      console.warn(
-        `🚫 [AUTH] Tentative d'utilisation d'un token révoqué - ${req.method} ${req.path}`,
-      );
+      authLogger.warn("Token révoqué utilisé", {
+        method: req.method,
+        path: req.path,
+      });
       return res.status(401).json({
         message: "Token révoqué. Veuillez vous reconnecter.",
         code: "TOKEN_REVOKED",
@@ -83,9 +89,7 @@ export const authMiddleware = async (
       // Utiliser la clé correspondante à la version du token
       const versionedSecret = jwtKeyManager.getKeyByVersion(keyVersion);
       if (!versionedSecret) {
-        console.error(
-          `❌ [SECURITY] Clé JWT version ${keyVersion} non trouvée`,
-        );
+        authLogger.error("Clé JWT version non trouvée", { keyVersion });
         return res.status(401).json({
           message: "Token invalide.",
           code: "KEY_VERSION_INVALID",
@@ -96,8 +100,8 @@ export const authMiddleware = async (
       // Fallback vers la clé principale (tokens anciens sans version)
       const mainSecret = process.env.JWT_SECRET;
       if (!mainSecret) {
-        console.error(
-          "❌ [SECURITY] JWT_SECRET non défini dans les variables d'environnement",
+        authLogger.error(
+          "JWT_SECRET non défini dans les variables d'environnement",
         );
         throw new Error("Configuration de sécurité manquante");
       }
@@ -135,9 +139,9 @@ export const authMiddleware = async (
           : false;
 
         if (!hasValidJti) {
-          console.warn(
-            `⚠️ [AUTH-MOBILE] Session/JTI invalide pour userId: ${decoded.id}`,
-          );
+          authLogger.warn("Session/JTI invalide pour mobile", {
+            userId: decoded.id,
+          });
           return res.status(401).json({
             message: "Session expirée. Veuillez rafraîchir votre token.",
             code: "SESSION_EXPIRED",
@@ -151,19 +155,22 @@ export const authMiddleware = async (
         // Les routes classiques (/api/fiches, etc.) utilisent memoryStorage
         // Pour compatibilité, on initialise la session à la volée si elle n'existe pas
         if (!memoryStorage.hasSession(decoded.id)) {
-          console.log(
-            `📱 [AUTH-MOBILE] Initialisation lazy de memoryStorage pour userId: ${decoded.id}`,
-          );
+          authLogger.info("Initialisation lazy de memoryStorage pour mobile", {
+            userId: decoded.id,
+          });
           try {
             await loadAndDecryptUserData(decoded.id);
-            console.log(
-              `✅ [AUTH-MOBILE] Session memoryStorage initialisée pour userId: ${decoded.id}`,
-            );
+            authLogger.info("Session memoryStorage initialisée pour mobile", {
+              userId: decoded.id,
+            });
           } catch (initError) {
-            console.error(
-              `❌ [AUTH-MOBILE] Erreur initialisation session:`,
-              getErrorMessage(initError),
-            );
+            authLogger.error("Erreur initialisation session mobile", {
+              userId: decoded.id,
+              error:
+                initError instanceof Error
+                  ? initError.message
+                  : String(initError),
+            });
             return res.status(500).json({
               message: "Erreur lors de l'initialisation de la session.",
               code: "SESSION_INIT_ERROR",
@@ -177,19 +184,22 @@ export const authMiddleware = async (
           const allowRecovery = process.env.ALLOW_SESSION_RECOVERY !== "false";
 
           if (allowRecovery) {
-            console.log(
-              `🔄 [AUTH] Tentative de récupération de session pour userId: ${decoded.id}`,
-            );
+            authLogger.info("Tentative de récupération de session", {
+              userId: decoded.id,
+            });
             try {
               await loadAndDecryptUserData(decoded.id);
-              console.log(
-                `✅ [AUTH] Session récupérée pour userId: ${decoded.id}`,
-              );
+              authLogger.info("Session récupérée avec succès", {
+                userId: decoded.id,
+              });
             } catch (recoveryError) {
-              console.error(
-                `❌ [AUTH] Échec récupération session:`,
-                getErrorMessage(recoveryError),
-              );
+              authLogger.error("Échec récupération session", {
+                userId: decoded.id,
+                error:
+                  recoveryError instanceof Error
+                    ? recoveryError.message
+                    : String(recoveryError),
+              });
               return res.status(401).json({
                 message: "Session expirée. Veuillez vous reconnecter.",
                 code: "SESSION_RECOVERY_FAILED",
@@ -197,9 +207,9 @@ export const authMiddleware = async (
               });
             }
           } else {
-            console.warn(
-              `⚠️ [AUTH] Session expirée ou non initialisée pour userId: ${decoded.id}`,
-            );
+            authLogger.warn("Session expirée ou non initialisée", {
+              userId: decoded.id,
+            });
             return res.status(401).json({
               message: "Session expirée. Veuillez rafraîchir votre token.",
               code: "SESSION_EXPIRED",
@@ -222,9 +232,10 @@ export const authMiddleware = async (
         "web",
       );
       if (!isValidJti) {
-        console.warn(
-          `🚫 [AUTH] JTI invalide ou token obsolète pour userId: ${decoded.id} - JTI: ${decoded.jti}`,
-        );
+        authLogger.warn("JTI invalide ou token obsolète", {
+          userId: decoded.id,
+          jti: decoded.jti,
+        });
         return res.status(401).json({
           message:
             "Token invalide ou session expirée. Veuillez vous reconnecter.",
@@ -244,16 +255,16 @@ export const authMiddleware = async (
         .select("is_admin is_blocked")
         .lean();
       if (!user) {
-        console.warn(`🚫 [AUTH] Utilisateur non trouvé en DB: ${decoded.id}`);
+        authLogger.warn("Utilisateur non trouvé en DB", { userId: decoded.id });
         return res.status(401).json({
           message: "Utilisateur non trouvé.",
           code: "USER_NOT_FOUND",
         });
       }
       if (user.is_blocked) {
-        console.warn(
-          `🚫 [AUTH] Utilisateur bloqué tente d'accéder: ${decoded.id}`,
-        );
+        authLogger.warn("Utilisateur bloqué tente d'accéder", {
+          userId: decoded.id,
+        });
         return res.status(403).json({
           message: "Votre compte a été suspendu.",
           code: "ACCOUNT_BLOCKED",
@@ -268,9 +279,10 @@ export const authMiddleware = async (
       // Si le token prétend être admin mais la DB dit non, c'est une tentative d'attaque
       // Rejeter immédiatement au lieu de simplement corriger silencieusement
       if (decoded.isAdmin && !verifiedIsAdmin) {
-        console.error(
-          `🚨 [SECURITY] TENTATIVE D'ESCALADE DE PRIVILÈGES BLOQUÉE! userId: ${decoded.id} - IP: ${req.ip}`,
-        );
+        authLogger.error("TENTATIVE D'ESCALADE DE PRIVILÈGES BLOQUÉE", {
+          userId: decoded.id,
+          ip: anonymizeIp(req.ip || ""),
+        });
 
         // Logger l'incident de sécurité pour investigation
         try {
@@ -290,10 +302,12 @@ export const authMiddleware = async (
             },
           });
         } catch (auditError) {
-          console.error(
-            "❌ [AUDIT] Erreur lors du log de la tentative d'escalade:",
-            auditError,
-          );
+          authLogger.error("Erreur lors du log de la tentative d'escalade", {
+            error:
+              auditError instanceof Error
+                ? auditError.message
+                : String(auditError),
+          });
         }
 
         // Blacklister le token pour empêcher toute réutilisation
@@ -310,10 +324,12 @@ export const authMiddleware = async (
             24 * 60 * 60,
           );
         } catch (blacklistError) {
-          console.error(
-            "❌ [SECURITY] Erreur blacklist token compromis:",
-            blacklistError,
-          );
+          authLogger.error("Erreur blacklist token compromis", {
+            error:
+              blacklistError instanceof Error
+                ? blacklistError.message
+                : String(blacklistError),
+          });
         }
 
         return res.status(403).json({
@@ -352,9 +368,12 @@ export const authMiddleware = async (
     // Log des accès authentifiés en mode debug
     if (process.env.LOG_AUTH_ACCESS === "true") {
       const authType = isMobileToken ? "MOBILE" : "WEB";
-      console.log(
-        `✅ [AUTH-${authType}] Accès autorisé - userId: ${decoded.id} - ${req.method} ${req.path}`,
-      );
+      authLogger.info("Accès autorisé", {
+        authType,
+        userId: decoded.id,
+        method: req.method,
+        path: req.path,
+      });
     }
 
     next();
@@ -366,10 +385,12 @@ export const authMiddleware = async (
       : isErrorWithName(error, "JsonWebTokenError")
         ? "invalid"
         : "error";
-    console.error(
-      `❌ [AUTH] Erreur d'authentification (${errorType}) - ${req.method} ${req.path}:`,
-      getErrorMessage(error),
-    );
+    authLogger.error("Erreur d'authentification", {
+      errorType,
+      method: req.method,
+      path: req.path,
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     // SÉCURITÉ: Message générique pour ne pas révéler si le token est expiré ou invalide
     return res.status(401).json({

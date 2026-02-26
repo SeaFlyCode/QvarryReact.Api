@@ -11,6 +11,7 @@ declare global {
         tokenId?: string;
         clientType?: "web" | "mobile";
       };
+      correlationId?: string;
     }
   }
 }

@@ -31,6 +31,9 @@ import {
 import { associateDeviceWithUser } from "../middlewares/mobileSecurityMiddleware";
 import { getErrorMessage } from "../utils/errorUtils";
 import { maskEmail } from "../utils/logUtils";
+import { logger } from "../services/loggerService";
+
+const mobileAuthLogger = logger.child({ service: "mobile-auth" });
 
 // MEDIUM-7: Import des helpers partagés depuis authHelpers au lieu de dupliquer
 import {
@@ -230,9 +233,11 @@ export async function handleMobileLogin(req: Request, res: Response) {
     });
 
     const loginDuration = Date.now() - startTime;
-    console.log(
-      `✅ [MOBILE-AUTH] Connexion réussie: ${maskEmail(email)} (${mobileContext?.platform}) en ${loginDuration}ms`,
-    );
+    mobileAuthLogger.info("Connexion réussie", {
+      email: maskEmail(email),
+      platform: mobileContext?.platform,
+      duration: loginDuration,
+    });
 
     // 11. RÉPONSE (tokens dans le body, pas de cookies)
     const jwtMaxAge =
@@ -251,7 +256,9 @@ export async function handleMobileLogin(req: Request, res: Response) {
       refreshTokenExpiresIn: refreshMaxAge,
     });
   } catch (error) {
-    console.error(`❌ [MOBILE-AUTH] Erreur login:`, error);
+    mobileAuthLogger.error("Erreur login", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la connexion.",
       code: "INTERNAL_ERROR",
@@ -365,7 +372,12 @@ export async function handleMobileRegister(req: Request, res: Response) {
       name,
       verificationLink,
       emailVerificationCode,
-    ).catch((err) => console.error("Erreur envoi email bienvenue:", err));
+    ).catch((err) =>
+      mobileAuthLogger.error("Erreur envoi email bienvenue", {
+        error: err.message,
+        stack: err.stack,
+      }),
+    );
 
     // 7. AUDIT
     await auditService.log({
@@ -380,9 +392,10 @@ export async function handleMobileRegister(req: Request, res: Response) {
       },
     });
 
-    console.log(
-      `✅ [MOBILE-AUTH] Inscription réussie: ${maskEmail(email)} (${mobileContext?.platform})`,
-    );
+    mobileAuthLogger.info("Inscription réussie", {
+      email: maskEmail(email),
+      platform: mobileContext?.platform,
+    });
 
     res.status(201).json({
       success: true,
@@ -392,7 +405,9 @@ export async function handleMobileRegister(req: Request, res: Response) {
       requiresEmailVerification: true,
     });
   } catch (error) {
-    console.error(`❌ [MOBILE-AUTH] Erreur register:`, error);
+    mobileAuthLogger.error("Erreur register", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la création du compte.",
       code: "INTERNAL_ERROR",
@@ -427,9 +442,9 @@ export async function handleMobileForgotPassword(req: Request, res: Response) {
     const user = await getUserByEmail(email);
     if (!user) {
       // Log mais retourne succès
-      console.log(
-        `[MOBILE-AUTH] Forgot password pour email inexistant: ${maskEmail(email)}`,
-      );
+      mobileAuthLogger.info("Forgot password pour email inexistant", {
+        email: maskEmail(email),
+      });
       return res.status(200).json(genericResponse);
     }
 
@@ -474,13 +489,15 @@ export async function handleMobileForgotPassword(req: Request, res: Response) {
       },
     });
 
-    console.log(
-      `📧 [MOBILE-AUTH] Email reset password envoyé: ${maskEmail(email)}`,
-    );
+    mobileAuthLogger.info("Email reset password envoyé", {
+      email: maskEmail(email),
+    });
 
     res.status(200).json(genericResponse);
   } catch (error) {
-    console.error(`❌ [MOBILE-AUTH] Erreur forgot-password:`, error);
+    mobileAuthLogger.error("Erreur forgot-password", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     // Toujours retourner succès même en cas d'erreur
     res.status(200).json({
       success: true,
@@ -529,9 +546,7 @@ export async function handleMobileRefreshToken(req: Request, res: Response) {
         ipAddress,
       );
       if (isStolen) {
-        console.error(
-          `🚨 [MOBILE-SECURITY] Vol de token détecté pour userId: ${userId}`,
-        );
+        mobileAuthLogger.error("Vol de token détecté", { userId });
         return res.status(401).json({
           error: "Activité suspecte détectée. Reconnectez-vous.",
           code: "TOKEN_THEFT_DETECTED",
@@ -565,7 +580,7 @@ export async function handleMobileRefreshToken(req: Request, res: Response) {
       "mobile",
     );
 
-    console.log(`🔄 [MOBILE-AUTH] Token rafraîchi pour userId: ${userId}`);
+    mobileAuthLogger.info("Token rafraîchi", { userId });
 
     const jwtMaxAge =
       parseInt(process.env.JWT_EXPIRES_IN?.replace(/[^0-9]/g, "") || "15") * 60;
@@ -580,7 +595,9 @@ export async function handleMobileRefreshToken(req: Request, res: Response) {
       refreshTokenExpiresIn: refreshMaxAge,
     });
   } catch (error) {
-    console.error(`❌ [MOBILE-AUTH] Erreur refresh:`, error);
+    mobileAuthLogger.error("Erreur refresh", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     res.status(500).json({
       error: "Erreur lors du rafraîchissement.",
       code: "INTERNAL_ERROR",

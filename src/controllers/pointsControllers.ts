@@ -4,6 +4,9 @@ import mongoose from "mongoose";
 import { memoryStorage } from "../services/memoryStorageService";
 import { syncService } from "../services/syncService";
 import FicheModel from "../models/fiches";
+import { logger } from "../services/loggerService";
+
+const pointsLogger = logger.child({ service: "points" });
 
 // typescript
 export async function handleCreatePoint(req: Request, res: Response) {
@@ -70,7 +73,7 @@ export async function handleCreatePoint(req: Request, res: Response) {
         // Limite de taille pour prévenir les DoS via JSON bombs
         const MAX_JSON_SIZE = 10000; // 10KB max
         if (input.length > MAX_JSON_SIZE) {
-          console.warn("[SECURITY] JSON input trop volumineux, rejeté");
+          pointsLogger.warn("JSON input trop volumineux, rejeté");
           return null;
         }
 
@@ -227,10 +230,9 @@ export async function handleCreatePoint(req: Request, res: Response) {
         }
       } catch (err) {
         assocSuccess = false;
-        console.error(
-          "[handleCreatePoint] Erreur lors de l'association point -> fiche :",
-          err,
-        );
+        pointsLogger.error("Erreur lors de l'association point -> fiche", {
+          error: getErrorMessage(err),
+        });
       }
     }
 
@@ -253,7 +255,9 @@ export async function handleCreatePoint(req: Request, res: Response) {
         }
       } catch (err) {
         assocSuccess = false;
-        console.error("Erreur lors de l'association point -> liste :", err);
+        pointsLogger.error("Erreur lors de l'association point -> liste", {
+          error: getErrorMessage(err),
+        });
       }
     }
 
@@ -279,7 +283,9 @@ export async function handleCreatePoint(req: Request, res: Response) {
       assocSuccess,
     });
   } catch (error: unknown) {
-    console.error("Erreur création point:", error);
+    pointsLogger.error("Erreur création point", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       success: false,
       message: getErrorMessage(error),
@@ -346,10 +352,10 @@ export async function handleGetAllPointsByUserId(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error("[handleGetAllPointsByUserId] ❌ Erreur:", error);
-    if (error instanceof Error && error.stack) {
-      console.error("[handleGetAllPointsByUserId] Stack:", error.stack);
-    }
+    pointsLogger.error("Erreur récupération points", {
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     return res.status(500).json({
       message: "Erreur lors de la récupération des points",
       error: getErrorMessage(error),
@@ -394,7 +400,9 @@ export async function handleSearchPoints(req: Request, res: Response) {
       points,
     });
   } catch (error: unknown) {
-    console.error("Erreur recherche points:", error);
+    pointsLogger.error("Erreur recherche points", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       success: false,
       message: "Erreur lors de la recherche de points",
@@ -484,7 +492,9 @@ export async function handleDeletePoint(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur suppression point:", error);
+    pointsLogger.error("Erreur suppression point", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       success: false,
       message: "Erreur lors de la suppression du point",
@@ -579,9 +589,10 @@ export async function handleUpdatePoint(req: Request, res: Response) {
         for (const fid of ficheIds) {
           const addResult = memoryStorage.addPointToFiche(userId, fid, id);
           if (!addResult) {
-            console.warn(
-              `Impossible d'ajouter le point ${id} à la fiche ${fid}`,
-            );
+            pointsLogger.warn("Impossible d'ajouter le point à la fiche", {
+              pointId: id,
+              ficheId: fid,
+            });
           }
         }
       }
@@ -619,7 +630,9 @@ export async function handleUpdatePoint(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur mise à jour point:", error);
+    pointsLogger.error("Erreur mise à jour point", {
+      error: getErrorMessage(error),
+    });
     return res.status(400).json({
       success: false,
       message: getErrorMessage(error),
@@ -671,7 +684,9 @@ export async function handleLinkPointToFiche(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur association point-fiche:", error);
+    pointsLogger.error("Erreur association point-fiche", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       success: false,
       message: getErrorMessage(error),
@@ -723,7 +738,9 @@ export async function handleUnlinkPointFromFiche(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur dissociation point-fiche:", error);
+    pointsLogger.error("Erreur dissociation point-fiche", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       success: false,
       message: getErrorMessage(error),

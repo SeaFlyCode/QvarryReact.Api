@@ -10,6 +10,9 @@ import { createNotification } from "../services/notificationService";
 import { webSocketService } from "../services/webSocketService";
 import { memoryStorage } from "../services/memoryStorageService";
 import User from "../models/users";
+import { logger } from "../services/loggerService";
+
+const messagesLogger = logger.child({ service: "messages" });
 
 /**
  * Fonction utilitaire pour obtenir le nom d'affichage d'un utilisateur
@@ -146,9 +149,10 @@ export async function sendMessage(req: Request, res: Response) {
           const userIdStr = reactivatedUserId.toString();
           reactivatedUserIds.push(userIdStr);
 
-          console.log(
-            `🔄 [MESSAGES] Réactivation conversation ${conversation._id} pour l'utilisateur ${userIdStr}`,
-          );
+          messagesLogger.info("Conversation reactivated", {
+            conversationId: conversation._id.toString(),
+            userId: userIdStr,
+          });
 
           // Envoyer un événement new_conversation pour que la conv réapparaisse
           webSocketService.notifyNewConversation(
@@ -175,7 +179,9 @@ export async function sendMessage(req: Request, res: Response) {
       try {
         conversationName = decryptCommunication(conversation.name);
       } catch (e) {
-        console.error("[MESSAGES] Erreur déchiffrement nom conversation:", e);
+        messagesLogger.error("Decrypt conversation name error", {
+          error: e instanceof Error ? e.message : String(e),
+        });
         conversationName = "un groupe";
       }
     }
@@ -497,9 +503,9 @@ export async function markMessagesAsRead(req: Request, res: Response) {
     );
 
     if (notifResult.modifiedCount > 0) {
-      console.log(
-        `✅ [MESSAGES] ${notifResult.modifiedCount} notification(s) marquée(s) comme lue(s)`,
-      );
+      messagesLogger.info("Notifications marked as read", {
+        count: notifResult.modifiedCount,
+      });
     }
 
     // Si des messages ont été marqués comme lus, notifier les participants
@@ -515,15 +521,19 @@ export async function markMessagesAsRead(req: Request, res: Response) {
           messageIds,
           participantIds,
         );
-        console.log(
-          `✅ [MESSAGES] ${result.modifiedCount} message(s) marqué(s) comme lu(s) par ${userId}`,
-        );
+        messagesLogger.info("Messages marked as read", {
+          count: result.modifiedCount,
+          userId,
+        });
       }
     }
 
     res.json({ success: true, markedAsRead: result.modifiedCount });
   } catch (err) {
-    console.error("[MESSAGES] Erreur lors du marquage batch comme lu:", err);
+    messagesLogger.error("Mark messages as read batch error", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
     return res
       .status(500)
       .json({ error: "Erreur lors du marquage comme lu", details: err });

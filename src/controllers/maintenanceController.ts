@@ -2,6 +2,11 @@
 import { Request, Response } from "express";
 import MaintenanceModel from "../models/maintenance";
 import { Types } from "mongoose";
+import { logger } from "../services/loggerService";
+
+const maintenanceCtrlLogger = logger.child({
+  service: "maintenance-controller",
+});
 
 /**
  * Activer le mode maintenance
@@ -54,7 +59,10 @@ export async function activateMaintenance(req: Request, res: Response) {
 
     await maintenance.save();
 
-    console.log(`🔧 [MAINTENANCE] Mode maintenance ACTIVÉ par admin ${userId}`);
+    maintenanceCtrlLogger.info("Maintenance mode activated", {
+      userId,
+      estimatedEndTime: maintenance.estimatedEndTime,
+    });
 
     res.json({
       success: true,
@@ -66,7 +74,10 @@ export async function activateMaintenance(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("[MAINTENANCE] Erreur activation:", error);
+    maintenanceCtrlLogger.error("Maintenance activation error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de l'activation du mode maintenance" });
@@ -92,16 +103,17 @@ export async function deactivateMaintenance(req: Request, res: Response) {
       await maintenance.save();
     }
 
-    console.log(
-      `✅ [MAINTENANCE] Mode maintenance DÉSACTIVÉ par admin ${userId}`,
-    );
+    maintenanceCtrlLogger.info("Maintenance mode deactivated", { userId });
 
     res.json({
       success: true,
       message: "Mode maintenance désactivé",
     });
   } catch (error) {
-    console.error("[MAINTENANCE] Erreur désactivation:", error);
+    maintenanceCtrlLogger.error("Maintenance deactivation error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la désactivation du mode maintenance",
     });
@@ -156,7 +168,10 @@ export async function updateMaintenanceMessage(req: Request, res: Response) {
       message: "Message de maintenance mis à jour",
     });
   } catch (error) {
-    console.error("[MAINTENANCE] Erreur mise à jour message:", error);
+    maintenanceCtrlLogger.error("Maintenance message update error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ error: "Erreur lors de la mise à jour du message" });
   }
 }

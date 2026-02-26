@@ -65,6 +65,7 @@ LABEL security.obfuscation="enabled" \
       security.source-code="removed" \
       security.source-maps="removed" \
       security.dev-dependencies="removed" \
+      security.logging="structured-winston" \
       org.opencontainers.image.title="QvarryReact API" \
       org.opencontainers.image.description="QvarryReact API Production - Obfuscated" \
       org.opencontainers.image.vendor="QvarryReact Security Team"
@@ -74,6 +75,9 @@ WORKDIR /app
 # Sécurité: Créer un utilisateur non-root avec UID/GID fixes
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 --ingroup nodejs appuser
+
+# Dossier de logs avec permissions pour appuser
+RUN mkdir -p /app/logs && chown -R appuser:nodejs /app/logs && chmod -R 770 /app/logs
 
 # =============================================================================
 # API: Code obfusqué + dépendances de production
@@ -107,7 +111,8 @@ RUN chown -R appuser:nodejs /app && \
 # Sécurité: Variables d'environnement de production
 ENV NODE_ENV=production \
     NODE_OPTIONS="--no-deprecation" \
-    HOSTNAME="0.0.0.0"
+    HOSTNAME="0.0.0.0" \
+    LOG_DIR="/app/logs"
 
 # Basculer vers l'utilisateur non-root
 USER appuser

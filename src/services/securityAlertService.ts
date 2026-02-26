@@ -6,6 +6,9 @@ import AuditLogModel from "../models/auditLogs";
 import { sendEmail, EmailTemplate } from "./emailService";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import { maskEmail, anonymizeIp } from "../utils/logUtils";
+import { logger } from "./loggerService";
+
+const securityLogger = logger.child({ service: "security-alert" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SERVICE D'ALERTES DE SÉCURITÉ - QVARRY
@@ -59,16 +62,16 @@ function cleanupThreatScoreCache(): void {
   }
 
   if (threatScoreCache.size > 0) {
-    console.log(
-      `🧹 [SECURITY CLEANUP] threatScoreCache: ${threatScoreCache.size} entrées restantes`,
-    );
+    securityLogger.info("Threat score cache cleanup", {
+      entriesRemaining: threatScoreCache.size,
+    });
   }
 }
 
 setInterval(cleanupThreatScoreCache, THREAT_CACHE_CLEANUP_INTERVAL_MS);
-console.log(
-  `✅ [SECURITY CLEANUP] Nettoyage automatique du cache threat score démarré (intervalle: ${THREAT_CACHE_CLEANUP_INTERVAL_MS / 1000}s)`,
-);
+securityLogger.info("Nettoyage automatique du cache threat score démarré", {
+  intervalSeconds: THREAT_CACHE_CLEANUP_INTERVAL_MS / 1000,
+});
 
 const CONFIG = {
   AUTO_BLOCK_THRESHOLD: parseInt(
@@ -94,9 +97,10 @@ const CONFIG = {
 class SecurityAlertService {
   async processSecurityEvent(alert: SecurityAlert): Promise<void> {
     try {
-      console.log(
-        `🔒 [SECURITY] Processing event: ${alert.type} (${alert.level})`,
-      );
+      securityLogger.info("Processing security event", {
+        type: alert.type,
+        level: alert.level,
+      });
 
       if (alert.ipAddress) {
         await this.updateThreatScore(alert.ipAddress, alert.type);
@@ -114,7 +118,7 @@ class SecurityAlertService {
         await this.detectAttackPatterns(alert.ipAddress);
       }
     } catch (error) {
-      console.error("❌ [SECURITY] Erreur traitement événement:", error);
+      securityLogger.error("Erreur traitement événement", { error });
     }
   }
 
@@ -147,9 +151,10 @@ class SecurityAlertService {
     threatData.lastUpdated = new Date();
     threatScoreCache.set(ipAddress, threatData);
 
-    console.log(
-      `📊 [SECURITY] Threat score for ${ipAddress}: ${threatData.score}`,
-    );
+    securityLogger.info("Threat score updated", {
+      ip: anonymizeIp(ipAddress),
+      score: threatData.score,
+    });
     return threatData.score;
   }
 
@@ -189,7 +194,7 @@ class SecurityAlertService {
     });
 
     await blockedIp.save();
-    console.log(`🚫 [SECURITY] IP auto-blocked: ${ipAddress}`);
+    securityLogger.warn("IP auto-blocked", { ip: anonymizeIp(ipAddress) });
 
     await this.notifyAdmins({
       type: "AUTO_IP_BLOCKED",
@@ -215,9 +220,9 @@ class SecurityAlertService {
     });
 
     if (recentEvents > 20) {
-      console.warn(
-        `⚠️ [SECURITY] Possible attack pattern detected: ${recentEvents} events`,
-      );
+      securityLogger.warn("Possible attack pattern detected", {
+        events: recentEvents,
+      });
       await this.notifyAdmins({
         type: "ATTACK_PATTERN_DETECTED",
         level: "critical",
@@ -238,24 +243,22 @@ class SecurityAlertService {
         is_blocked: { $ne: true },
       }).lean();
 
-      console.log(
-        `📧 [SECURITY] Recherche d'admins pour alerte ${alert.type}...`,
-      );
-      console.log(`📧 [SECURITY] Nombre d'admins trouvés: ${admins.length}`);
+      securityLogger.info("Recherche admins pour alerte", { type: alert.type });
+      securityLogger.info("Admins trouvés", { count: admins.length });
 
       if (admins.length === 0) {
         // Debug: compter tous les utilisateurs admin
         const allAdmins = await UserModel.find({ is_admin: true }).lean();
-        console.warn(
-          `⚠️ [SECURITY] Aucun admin actif trouvé. Total admins: ${allAdmins.length}`,
-        );
+        securityLogger.warn("Aucun admin actif trouvé", {
+          totalAdmins: allAdmins.length,
+        });
 
         // Si aucun admin du tout, chercher dans toute la base
         if (allAdmins.length === 0) {
           const totalUsers = await UserModel.countDocuments();
-          console.warn(
-            `⚠️ [SECURITY] Total utilisateurs dans la base: ${totalUsers}`,
-          );
+          securityLogger.warn("Total utilisateurs dans la base", {
+            totalUsers,
+          });
 
           // Vérifier si des utilisateurs ont un champ is_admin
           const usersWithAdminField = await UserModel.find({
@@ -263,22 +266,20 @@ class SecurityAlertService {
           })
             .limit(5)
             .lean();
-          console.log(
-            `📧 [SECURITY] Exemples de valeurs is_admin:`,
-            usersWithAdminField.map((u) => ({
+          securityLogger.info("Exemples de valeurs is_admin", {
+            users: usersWithAdminField.map((u) => ({
               id: u._id,
               is_admin: u.is_admin,
             })),
-          );
+          });
         } else {
-          console.log(
-            `📧 [SECURITY] Admins trouvés mais probablement bloqués:`,
-            allAdmins.map((a) => ({
+          securityLogger.info("Admins trouvés mais probablement bloqués", {
+            admins: allAdmins.map((a) => ({
               id: a._id,
               is_blocked: a.is_blocked,
               is_admin: a.is_admin,
             })),
-          );
+          });
         }
         return;
       }
@@ -314,7 +315,9 @@ class SecurityAlertService {
           adminName = admin.name;
         }
 
-        console.log(`📧 [SECURITY] Envoi d'alerte à: ${maskEmail(adminEmail)}`);
+        securityLogger.info("Envoi alerte admin", {
+          email: maskEmail(adminEmail),
+        });
 
         await sendEmail({
           to: adminEmail,
@@ -334,12 +337,12 @@ class SecurityAlertService {
             ADMIN_PANEL_LINK: `${process.env.FRONTEND_URL || "https://qvarry.com"}/admin/audit`,
           },
         });
-        console.log(
-          `✅ [SECURITY] Alert email sent to admin: ${maskEmail(adminEmail)}`,
-        );
+        securityLogger.info("Alert email sent to admin", {
+          email: maskEmail(adminEmail),
+        });
       }
     } catch (error) {
-      console.error("❌ [SECURITY] Erreur notification admins:", error);
+      securityLogger.error("Erreur notification admins", { error });
     }
   }
 
@@ -386,7 +389,7 @@ class SecurityAlertService {
       relatedUserId: adminId ? new mongoose.Types.ObjectId(adminId) : undefined,
     });
     await blockedIp.save();
-    console.log(`🚫 [ADMIN] IP blocked: ${ipAddress}`);
+    securityLogger.warn("IP blocked by admin", { ip: anonymizeIp(ipAddress) });
     return blockedIp;
   }
 
@@ -396,7 +399,9 @@ class SecurityAlertService {
       { isActive: false },
     );
     threatScoreCache.delete(ipAddress);
-    console.log(`✅ [ADMIN] IP unblocked: ${ipAddress}`);
+    securityLogger.info("IP unblocked by admin", {
+      ip: anonymizeIp(ipAddress),
+    });
     return (result.modifiedCount || 0) > 0;
   }
 

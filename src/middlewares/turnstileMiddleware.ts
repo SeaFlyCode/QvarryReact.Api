@@ -5,6 +5,10 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { Request, Response, NextFunction } from "express";
+import { anonymizeIp } from "../utils/logUtils";
+import { logger } from "../services/loggerService";
+
+const turnstileLogger = logger.child({ service: "turnstile" });
 
 interface TurnstileResponse {
   success: boolean;
@@ -33,12 +37,12 @@ export const verifyTurnstile = async (
   if (!secretKey) {
     // En développement, on peut bypasser si pas de clé configurée
     if (process.env.NODE_ENV !== "production") {
-      console.warn(
-        "⚠️ [TURNSTILE] Clé secrète non configurée - bypass en développement",
+      turnstileLogger.warn(
+        "Clé secrète non configurée - bypass en développement",
       );
       return next();
     }
-    console.error("❌ [TURNSTILE] TURNSTILE_SECRET_KEY non définie");
+    turnstileLogger.error("TURNSTILE_SECRET_KEY non définie");
     return res.status(500).json({
       error: "Configuration du serveur incomplète",
       code: "CAPTCHA_CONFIG_ERROR",
@@ -52,7 +56,9 @@ export const verifyTurnstile = async (
     req.body.captchaToken;
 
   if (!token) {
-    console.warn(`⚠️ [TURNSTILE] Token manquant depuis ${req.ip}`);
+    turnstileLogger.warn("Token manquant", {
+      ip: anonymizeIp(req.ip || ""),
+    });
     return res.status(400).json({
       error: "Veuillez compléter la vérification anti-robot",
       code: "CAPTCHA_MISSING",
@@ -84,14 +90,17 @@ export const verifyTurnstile = async (
 
     if (result.success) {
       // Token valide, continuer
-      console.log(`✅ [TURNSTILE] Vérification réussie pour ${req.ip}`);
+      turnstileLogger.info("Vérification réussie", {
+        ip: anonymizeIp(req.ip || ""),
+      });
       return next();
     } else {
       // Token invalide
       const errorCodes = result["error-codes"] || ["unknown-error"];
-      console.warn(
-        `⚠️ [TURNSTILE] Vérification échouée pour ${req.ip}: ${errorCodes.join(", ")}`,
-      );
+      turnstileLogger.warn("Vérification échouée", {
+        ip: anonymizeIp(req.ip || ""),
+        errorCodes,
+      });
 
       // Mapper les codes d'erreur Cloudflare vers des messages utilisateur
       const errorMessage = mapTurnstileError(errorCodes);
@@ -104,7 +113,9 @@ export const verifyTurnstile = async (
       });
     }
   } catch (error) {
-    console.error("❌ [TURNSTILE] Erreur lors de la vérification:", error);
+    turnstileLogger.error("Erreur lors de la vérification", {
+      error: error instanceof Error ? error.message : String(error),
+    });
 
     // En cas d'erreur réseau, on peut choisir de laisser passer ou bloquer
     // Ici on bloque par sécurité
@@ -159,7 +170,7 @@ export const verifyTurnstileOptional = async (
     process.env.BYPASS_CAPTCHA === "true" &&
     process.env.NODE_ENV !== "production";
   if (shouldBypass) {
-    console.warn("⚠️ [TURNSTILE] CAPTCHA bypassed (dev/test mode only)");
+    turnstileLogger.warn("CAPTCHA bypassed (dev/test mode only)");
     return next();
   }
 

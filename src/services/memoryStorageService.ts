@@ -1,10 +1,14 @@
 import { getErrorMessage } from "../utils/errorUtils";
+import { logger } from "./loggerService";
 import { IPoint } from "../models/points";
 import { IFiche } from "../models/fiches";
 import { IList } from "../models/lists";
 import mongoose from "mongoose";
 import { IConversation } from "../models/conversations";
 import { IContact } from "../models/contacts";
+
+// Create child logger for memory-storage service
+const memoryLogger = logger.child({ service: "memory-storage" });
 
 const MAX_ITEMS_PER_SESSION = {
   points: 5000,
@@ -93,10 +97,10 @@ export class MemoryStorageService {
 
       return true;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de l'initialisation de la session pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to initialize session", {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -104,7 +108,7 @@ export class MemoryStorageService {
   // Vérifier si une session existe pour un utilisateur
   hasSession(userId: string): boolean {
     if (!userId) {
-      console.warn("⚠️ [MemoryStorage] hasSession appelé sans userId");
+      memoryLogger.warn("hasSession called without userId");
       return false;
     }
     this.logAccess("hasSession", userId);
@@ -121,7 +125,7 @@ export class MemoryStorageService {
   // Récupérer la session d'un utilisateur
   getSession(userId: string): UserSession {
     if (!userId) {
-      console.error("❌ [MemoryStorage] getSession appelé sans userId");
+      memoryLogger.error("getSession called without userId");
       throw new Error(
         "Session utilisateur non trouvée. Veuillez vous reconnecter.",
       );
@@ -157,10 +161,10 @@ export class MemoryStorageService {
       this.touchSession(userId);
       return true;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors du stockage du point pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to store point", {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -182,10 +186,10 @@ export class MemoryStorageService {
       this.touchSession(userId);
       return true;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors du stockage de la fiche pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to store fiche", {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -207,10 +211,10 @@ export class MemoryStorageService {
       this.touchSession(userId);
       return true;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors du stockage de la liste pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to store list", {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -248,10 +252,11 @@ export class MemoryStorageService {
       this.touchSession(userId);
       return true;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors du stockage de la conversation pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to store conversation", {
+        userId,
+        conversationId: conversation._id?.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -271,10 +276,11 @@ export class MemoryStorageService {
       }
       return deleted;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la suppression de la conversation pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to remove conversation", {
+        userId,
+        conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -300,7 +306,11 @@ export class MemoryStorageService {
         }
       }
     } catch (error) {
-      console.error(`❌ Erreur lors de la mise à jour du lastMessage:`, error);
+      memoryLogger.error("Failed to update conversation lastMessage", {
+        conversationId,
+        participantCount: participantUserIds.length,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -347,10 +357,10 @@ export class MemoryStorageService {
       this.touchSession(userId);
       return Array.from(session.points.values());
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la récupération des points pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to get all points", {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
   }
@@ -410,10 +420,11 @@ export class MemoryStorageService {
 
       return results;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la recherche de points pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to search points", {
+        userId,
+        filters,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
   }
@@ -468,10 +479,12 @@ export class MemoryStorageService {
             session.dirtyFicheIds.add(ficheId);
           }
         } catch (refError) {
-          console.error(
-            `Erreur lors de la suppression de la référence du point ${pointId} dans sa fiche:`,
-            refError,
-          );
+          memoryLogger.error("Failed to remove point reference from fiche", {
+            pointId,
+            ficheId: (point as any).ficheId?.toString(),
+            error:
+              refError instanceof Error ? refError.message : String(refError),
+          });
         }
       }
 
@@ -487,10 +500,11 @@ export class MemoryStorageService {
           }
         }
       } catch (listError) {
-        console.error(
-          `Erreur lors de la suppression du point ${pointId} des listes:`,
-          listError,
-        );
+        memoryLogger.error("Failed to remove point from lists", {
+          pointId,
+          error:
+            listError instanceof Error ? listError.message : String(listError),
+        });
       }
 
       // Supprimer le point
@@ -501,10 +515,11 @@ export class MemoryStorageService {
       }
       return result;
     } catch (error) {
-      console.error(
-        `Erreur lors de la suppression du point ${pointId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to delete point", {
+        userId,
+        pointId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -524,8 +539,8 @@ export class MemoryStorageService {
       // Supprimer les références à cette fiche dans tous les points associés
       if (fiche.points_ids && fiche.points_ids.length > 0) {
         for (const pointIdObj of fiche.points_ids) {
+          const pointId = pointIdObj.toString();
           try {
-            const pointId = pointIdObj.toString();
             const point = session.points.get(pointId);
 
             if (
@@ -537,10 +552,14 @@ export class MemoryStorageService {
               session.dirtyPointIds.add(pointId);
             }
           } catch (pointRefError) {
-            console.error(
-              `Erreur lors de la suppression de la référence à la fiche ${ficheId} dans le point:`,
-              pointRefError,
-            );
+            memoryLogger.error("Failed to remove fiche reference from point", {
+              ficheId,
+              pointId,
+              error:
+                pointRefError instanceof Error
+                  ? pointRefError.message
+                  : String(pointRefError),
+            });
           }
         }
       }
@@ -553,10 +572,11 @@ export class MemoryStorageService {
       }
       return result;
     } catch (error) {
-      console.error(
-        `Erreur lors de la suppression de la fiche ${ficheId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to delete fiche", {
+        userId,
+        ficheId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -581,10 +601,11 @@ export class MemoryStorageService {
       }
       return result;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la suppression de la liste ${listId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to delete list", {
+        userId,
+        listId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -675,10 +696,11 @@ export class MemoryStorageService {
       this.touchSession(userId);
       return true;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors du stockage du contact pour l'utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to store contact", {
+        userId,
+        contactId: contact._id?.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -719,10 +741,11 @@ export class MemoryStorageService {
       }
       return result;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la suppression du contact ${contactId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to delete contact", {
+        userId,
+        contactId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -793,10 +816,12 @@ export class MemoryStorageService {
 
       return false;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de l'ajout du point ${pointId} à la fiche ${ficheId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to add point to fiche", {
+        userId,
+        ficheId,
+        pointId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -856,10 +881,12 @@ export class MemoryStorageService {
 
       return false;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la suppression du point de la fiche:`,
-        error,
-      );
+      memoryLogger.error("Failed to remove point from fiche", {
+        userId,
+        ficheId,
+        pointId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -892,10 +919,12 @@ export class MemoryStorageService {
 
       return false;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de l'ajout du point ${pointId} à la liste ${listId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to add point to list", {
+        userId,
+        listId,
+        pointId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -930,10 +959,12 @@ export class MemoryStorageService {
 
       return false;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la suppression du point ${pointId} de la liste ${listId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to remove point from list", {
+        userId,
+        listId,
+        pointId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -953,10 +984,11 @@ export class MemoryStorageService {
         list.points.map((id) => id.toString()),
       );
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la récupération des points pour la liste ${listId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to get points by list", {
+        userId,
+        listId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
   }
@@ -972,10 +1004,11 @@ export class MemoryStorageService {
           list.points && list.points.some((id) => id.toString() === pointId),
       );
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la récupération des listes contenant le point ${pointId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to get lists by point", {
+        userId,
+        pointId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return [];
     }
   }
@@ -1005,9 +1038,13 @@ export class MemoryStorageService {
 
       // Vérifier que nous avons le même nombre de points
       if (validPointIds.length !== existingPointIds.size) {
-        console.warn(
-          `Certains points dans la liste ne sont pas dans la nouvelle séquence ou des points invalides ont été fournis`,
-        );
+        memoryLogger.warn("Invalid points in list order update", {
+          userId,
+          listId,
+          providedCount: orderedPointIds.length,
+          existingCount: existingPointIds.size,
+          validCount: validPointIds.length,
+        });
         return false;
       }
 
@@ -1018,10 +1055,11 @@ export class MemoryStorageService {
       this.touchSession(userId);
       return true;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la mise à jour de l'ordre des points dans la liste ${listId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to update list points order", {
+        userId,
+        listId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -1039,10 +1077,12 @@ export class MemoryStorageService {
 
       return list.points.some((id) => id.toString() === pointId);
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la vérification si le point ${pointId} est dans la liste ${listId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to check if point is in list", {
+        userId,
+        listId,
+        pointId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -1086,10 +1126,11 @@ export class MemoryStorageService {
       this.touchSession(userId);
       return true;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la mise à jour de la liste ${listId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to update list", {
+        userId,
+        listId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }
@@ -1108,10 +1149,13 @@ export class MemoryStorageService {
       try {
         userData.points = Array.from(session.points.values());
       } catch (pointsError) {
-        console.error(
-          `Erreur lors de la récupération des points:`,
-          pointsError,
-        );
+        memoryLogger.error("Failed to retrieve points for getAllUserData", {
+          userId,
+          error:
+            pointsError instanceof Error
+              ? pointsError.message
+              : String(pointsError),
+        });
         userData.points = [];
         userData.pointsError = "Erreur lors de la récupération des points";
       }
@@ -1119,10 +1163,13 @@ export class MemoryStorageService {
       try {
         userData.fiches = Array.from(session.fiches.values());
       } catch (fichesError) {
-        console.error(
-          `Erreur lors de la récupération des fiches:`,
-          fichesError,
-        );
+        memoryLogger.error("Failed to retrieve fiches for getAllUserData", {
+          userId,
+          error:
+            fichesError instanceof Error
+              ? fichesError.message
+              : String(fichesError),
+        });
         userData.fiches = [];
         userData.fichesError = "Erreur lors de la récupération des fiches";
       }
@@ -1130,7 +1177,13 @@ export class MemoryStorageService {
       try {
         userData.lists = Array.from(session.lists.values());
       } catch (listsError) {
-        console.error(`Erreur lors de la récupération des listes:`, listsError);
+        memoryLogger.error("Failed to retrieve lists for getAllUserData", {
+          userId,
+          error:
+            listsError instanceof Error
+              ? listsError.message
+              : String(listsError),
+        });
         userData.lists = [];
         userData.listsError = "Erreur lors de la récupération des listes";
       }
@@ -1143,10 +1196,10 @@ export class MemoryStorageService {
 
       return userData;
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la récupération des données utilisateur ${userId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to get all user data", {
+        userId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return {
         error: `Impossible de récupérer les données utilisateur: ${error instanceof Error ? getErrorMessage(error) : String(error)}`,
       };
@@ -1174,9 +1227,9 @@ export class MemoryStorageService {
     const previousCount = Object.keys(this.accessCounter).length;
     this.accessCounter = {};
     this.lastStatsReset = new Date();
-    console.log(
-      `♻️ [MemoryStorage] Statistiques d'accès réinitialisées (${previousCount} entrées supprimées)`,
-    );
+    memoryLogger.info("Usage stats reset", {
+      entriesRemoved: previousCount,
+    });
   }
 
   // Trouver une fiche par pointId
@@ -1193,10 +1246,11 @@ export class MemoryStorageService {
       // Récupérer la fiche associée au point
       return session.fiches.get(point.ficheId.toString());
     } catch (error) {
-      console.error(
-        `❌ Erreur lors de la récupération de la fiche pour le point ${pointId}:`,
-        error,
-      );
+      memoryLogger.error("Failed to get fiche by point", {
+        userId,
+        pointId,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return undefined;
     }
   }

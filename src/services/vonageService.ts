@@ -5,6 +5,10 @@
 // Utilisé par le Mode SOS pour envoyer les alertes d'urgence (Stage 2)
 // ═══════════════════════════════════════════════════════════════════════════
 
+import { logger } from "./loggerService";
+
+const vonageLogger = logger.child({ service: "vonage" });
+
 // Configuration du mécanisme de retry
 const SMS_MAX_RETRIES = 3;
 const SMS_RETRY_BASE_DELAY_MS = 2000;
@@ -46,11 +50,11 @@ class VonageService {
     this.smsFrom = process.env.VONAGE_SMS_FROM || "Qvarry";
 
     if (!apiKey || !apiSecret) {
-      console.warn(
-        "⚠️ [VONAGE] Variables VONAGE_API_KEY et/ou VONAGE_API_SECRET manquantes",
+      vonageLogger.warn(
+        "Variables VONAGE_API_KEY et/ou VONAGE_API_SECRET manquantes",
       );
-      console.warn(
-        "⚠️ [VONAGE] Le service SMS est désactivé — les SMS ne seront pas envoyés",
+      vonageLogger.warn(
+        "Le service SMS est désactivé — les SMS ne seront pas envoyés",
       );
       this.isConfigured = false;
       return;
@@ -60,9 +64,12 @@ class VonageService {
       this.apiKey = apiKey;
       this.apiSecret = apiSecret;
       this.isConfigured = true;
-      console.log("✅ [VONAGE] Service SMS initialisé avec succès");
+      vonageLogger.info("Service SMS initialisé avec succès");
     } catch (error) {
-      console.error("❌ [VONAGE] Erreur lors de l'initialisation:", error);
+      vonageLogger.error("Erreur lors de l'initialisation", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       this.isConfigured = false;
     }
   }
@@ -113,9 +120,12 @@ class VonageService {
       // Si échec et qu'il reste des tentatives, on attend avant de retry
       if (attempt < maxRetries) {
         const delay = SMS_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        console.warn(
-          `⏳ [VONAGE] Retry ${attempt}/${maxRetries} pour ${to.substring(0, 6)}*** après ${delay}ms`,
-        );
+        vonageLogger.warn("Retry SMS après délai", {
+          attempt,
+          maxRetries,
+          to: to.substring(0, 6) + "***",
+          delayMs: delay,
+        });
         await this.sleep(delay);
       }
     }
@@ -132,7 +142,9 @@ class VonageService {
    */
   private async sendSmsOnce(to: string, text: string): Promise<SmsSendResult> {
     if (!this.isReady()) {
-      console.warn("⚠️ [VONAGE] Service non configuré — SMS simulé vers:", to);
+      vonageLogger.warn("Service non configuré — SMS simulé", {
+        to: to.substring(0, 6) + "***",
+      });
       return {
         success: false,
         error: "Service Vonage non configuré",
@@ -160,9 +172,10 @@ class VonageService {
 
       if (!response.ok) {
         const errorText = `HTTP ${response.status} ${response.statusText}`;
-        console.error(
-          `❌ [VONAGE] Échec envoi SMS vers ${to.substring(0, 6)}***: ${errorText}`,
-        );
+        vonageLogger.error("Échec envoi SMS", {
+          to: to.substring(0, 6) + "***",
+          error: errorText,
+        });
         return {
           success: false,
           error: errorText,
@@ -174,9 +187,10 @@ class VonageService {
       const message = data.messages?.[0];
 
       if (message?.status === "0") {
-        console.log(
-          `✅ [VONAGE] SMS envoyé avec succès vers ${to.substring(0, 6)}***`,
-        );
+        vonageLogger.info("SMS envoyé avec succès", {
+          to: to.substring(0, 6) + "***",
+          messageId: message["message-id"],
+        });
         return {
           success: true,
           messageId: message["message-id"],
@@ -184,9 +198,10 @@ class VonageService {
         };
       } else {
         const errorText = message?.["error-text"] || "Erreur inconnue";
-        console.error(
-          `❌ [VONAGE] Échec envoi SMS vers ${to.substring(0, 6)}***: ${errorText}`,
-        );
+        vonageLogger.error("Échec envoi SMS", {
+          to: to.substring(0, 6) + "***",
+          error: errorText,
+        });
         return {
           success: false,
           error: errorText,
@@ -196,7 +211,10 @@ class VonageService {
     } catch (error) {
       const errorMessage =
         error instanceof Error ? error.message : String(error);
-      console.error(`❌ [VONAGE] Exception lors de l'envoi SMS:`, errorMessage);
+      vonageLogger.error("Exception lors de l'envoi SMS", {
+        error: errorMessage,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return {
         success: false,
         error: errorMessage,
@@ -241,9 +259,10 @@ class VonageService {
 
     text += ` Essayez de le/la contacter immédiatement. Si impossible, contactez les secours.`;
 
-    console.log(
-      `📱 [VONAGE] Envoi alerte SOS à ${contactName} (${contactPhone.substring(0, 6)}***)`,
-    );
+    vonageLogger.info("Envoi alerte SOS", {
+      contactName,
+      contactPhone: contactPhone.substring(0, 6) + "***",
+    });
 
     return this.sendSms(contactPhone, text);
   }
@@ -262,9 +281,9 @@ class VonageService {
     sessionNote?: string,
     location?: { lat: number; lng: number },
   ): Promise<SmsSendResult[]> {
-    console.log(
-      `📱 [VONAGE] Envoi alerte SOS à ${contacts.length} contact(s) d'urgence`,
-    );
+    vonageLogger.info("Envoi alerte SOS à plusieurs contacts", {
+      contactCount: contacts.length,
+    });
 
     const results = await Promise.allSettled(
       contacts.map((contact) =>

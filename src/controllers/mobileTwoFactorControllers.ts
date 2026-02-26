@@ -22,6 +22,9 @@ import { redisSessionService } from "../services/redisSessionService";
 import { jwtKeyManager } from "../utils/jwtKeyManager";
 import { generateDeviceFingerprint } from "../utils/deviceFingerprint";
 import { associateDeviceWithUser } from "../middlewares/mobileSecurityMiddleware";
+import { logger } from "../services/loggerService";
+
+const mobile2faLogger = logger.child({ service: "mobile-2fa" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -171,7 +174,7 @@ export async function mobileSetupTwoFactor(
     // Générer le QR Code
     const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
 
-    console.log(`🔐 [MOBILE-2FA] Setup initié pour l'utilisateur ${userId}`);
+    mobile2faLogger.info("Setup 2FA initié", { userId });
 
     await auditService.log({
       userId,
@@ -195,7 +198,7 @@ export async function mobileSetupTwoFactor(
         "Scannez le QR code avec votre application d'authentification (Google Authenticator, Authy, etc.)",
     });
   } catch (error) {
-    console.error("❌ [MOBILE-2FA] Erreur setup:", error);
+    mobile2faLogger.error("Erreur setup", { error });
     return res.status(500).json({
       error: "Erreur lors de la configuration de la 2FA",
       code: "INTERNAL_ERROR",
@@ -294,7 +297,7 @@ export async function mobileVerifyAndEnableTwoFactor(
     user.two_factor_recovery_codes = hashedRecoveryCodes;
     await user.save();
 
-    console.log(`✅ [MOBILE-2FA] Activé pour l'utilisateur ${userId}`);
+    mobile2faLogger.info("2FA activé", { userId });
 
     await auditService.log({
       userId,
@@ -316,7 +319,7 @@ export async function mobileVerifyAndEnableTwoFactor(
         "Conservez ces codes de récupération en lieu sûr. Ils ne seront plus affichés.",
     });
   } catch (error) {
-    console.error("❌ [MOBILE-2FA] Erreur vérification:", error);
+    mobile2faLogger.error("Erreur vérification", { error });
     return res.status(500).json({
       error: "Erreur lors de l'activation de la 2FA",
       code: "INTERNAL_ERROR",
@@ -430,7 +433,7 @@ export async function mobileDisableTwoFactor(
     user.two_factor_recovery_codes = [];
     await user.save();
 
-    console.log(`🔓 [MOBILE-2FA] Désactivé pour l'utilisateur ${userId}`);
+    mobile2faLogger.info("2FA désactivé", { userId });
 
     await auditService.log({
       userId,
@@ -449,7 +452,7 @@ export async function mobileDisableTwoFactor(
       message: "Authentification à deux facteurs désactivée",
     });
   } catch (error) {
-    console.error("❌ [MOBILE-2FA] Erreur désactivation:", error);
+    mobile2faLogger.error("Erreur désactivation", { error });
     return res.status(500).json({
       error: "Erreur lors de la désactivation de la 2FA",
       code: "INTERNAL_ERROR",
@@ -500,16 +503,16 @@ function cleanupTwoFactorAttempts(): void {
   }
 
   if (twoFactorAttempts.size > 0) {
-    console.log(
-      `🧹 [2FA CLEANUP] twoFactorAttempts: ${twoFactorAttempts.size} entrées restantes`,
-    );
+    mobile2faLogger.info("Nettoyage 2FA", {
+      remainingEntries: twoFactorAttempts.size,
+    });
   }
 }
 
 setInterval(cleanupTwoFactorAttempts, TWO_FACTOR_CLEANUP_INTERVAL_MS);
-console.log(
-  `✅ [2FA CLEANUP] Nettoyage automatique démarré (intervalle: ${TWO_FACTOR_CLEANUP_INTERVAL_MS / 1000}s)`,
-);
+mobile2faLogger.info("Nettoyage automatique 2FA démarré", {
+  intervalSeconds: TWO_FACTOR_CLEANUP_INTERVAL_MS / 1000,
+});
 
 /**
  * Vérifie les tentatives 2FA pour un userId donné
@@ -649,9 +652,10 @@ export async function mobileVerifyTwoFactorLogin(
         mobileContext?.deviceId &&
         tokenDeviceId !== mobileContext.deviceId
       ) {
-        console.warn(
-          `🚨 [MOBILE-2FA] Device mismatch: token=${tokenDeviceId}, header=${mobileContext.deviceId}`,
-        );
+        mobile2faLogger.warn("Device mismatch détecté", {
+          tokenDeviceId,
+          headerDeviceId: mobileContext.deviceId,
+        });
         await auditService.log({
           userId,
           action: "MOBILE_2FA_DEVICE_MISMATCH",
@@ -667,7 +671,7 @@ export async function mobileVerifyTwoFactorLogin(
       }
     } else if (req.body.userId) {
       // Ancienne méthode (dépréciée mais supportée temporairement)
-      console.warn(`⚠️ [MOBILE-2FA] Utilisation dépréciée de userId direct`);
+      mobile2faLogger.warn("Utilisation dépréciée de userId direct");
       userId = req.body.userId;
     } else {
       return res.status(400).json({
@@ -783,9 +787,10 @@ export async function mobileVerifyTwoFactorLogin(
         },
       });
 
-      console.log(
-        `⚠️ [MOBILE-2FA] Code de récupération utilisé pour ${userId}, ${user.two_factor_recovery_codes!.length} restants`,
-      );
+      mobile2faLogger.info("Code de récupération utilisé", {
+        userId,
+        remainingCodes: user.two_factor_recovery_codes!.length,
+      });
     } else {
       // Vérifier comme code TOTP normal
       const decryptedSecret = decrypt(user.two_factor_secret);
@@ -869,9 +874,10 @@ export async function mobileVerifyTwoFactorLogin(
       },
     });
 
-    console.log(
-      `✅ [MOBILE-2FA] Login complété pour ${userId} (${mobileContext?.platform})`,
-    );
+    mobile2faLogger.info("Login 2FA complété", {
+      userId,
+      platform: mobileContext?.platform,
+    });
 
     const jwtMaxAge =
       parseInt(process.env.JWT_EXPIRES_IN?.replace(/[^0-9]/g, "") || "15") * 60;
@@ -890,7 +896,7 @@ export async function mobileVerifyTwoFactorLogin(
       refreshTokenExpiresIn: refreshMaxAge,
     });
   } catch (error) {
-    console.error("❌ [MOBILE-2FA] Erreur vérification login:", error);
+    mobile2faLogger.error("Erreur vérification login", { error });
     return res.status(500).json({
       error: "Erreur lors de la vérification 2FA",
       code: "INTERNAL_ERROR",
@@ -956,9 +962,7 @@ export async function mobileRegenerateRecoveryCodes(
     user.two_factor_recovery_codes = hashedRecoveryCodes;
     await user.save();
 
-    console.log(
-      `🔄 [MOBILE-2FA] Codes de récupération régénérés pour ${userId}`,
-    );
+    mobile2faLogger.info("Codes de récupération régénérés", { userId });
 
     await auditService.log({
       userId,
@@ -980,7 +984,7 @@ export async function mobileRegenerateRecoveryCodes(
       warning: "Les anciens codes ont été invalidés.",
     });
   } catch (error) {
-    console.error("❌ [MOBILE-2FA] Erreur régénération codes:", error);
+    mobile2faLogger.error("Erreur régénération codes", { error });
     return res.status(500).json({
       error: "Erreur lors de la régénération des codes",
       code: "INTERNAL_ERROR",
@@ -1025,7 +1029,7 @@ export async function mobileGetTwoFactorStatus(
       recoveryCodesRemaining: user.two_factor_recovery_codes?.length || 0,
     });
   } catch (error) {
-    console.error("❌ [MOBILE-2FA] Erreur statut:", error);
+    mobile2faLogger.error("Erreur statut", { error });
     return res.status(500).json({
       error: "Erreur lors de la récupération du statut 2FA",
       code: "INTERNAL_ERROR",

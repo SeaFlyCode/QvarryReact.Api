@@ -24,8 +24,14 @@ if (fs.existsSync(rootEnvLocalPath)) {
 
 dotenv.config({ path: envFile });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// Importer le logger APRÈS dotenv pour accéder à NODE_ENV
+// ═══════════════════════════════════════════════════════════════════════════
+import { logger, httpLogStream } from "./services/loggerService";
+import { correlationMiddleware } from "./middlewares/correlationMiddleware";
+
 // Log du fichier .env utilisé
-console.log(`📝 Environnement chargé : ${envFile}`);
+logger.info("Environnement chargé", { envFile });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // Maintenant on peut importer les autres modules en toute sécurité
@@ -101,7 +107,7 @@ const NODE_ENV = process.env.NODE_ENV || "development";
 if (NODE_ENV === "production") {
   // 1 = faire confiance au premier proxy (nginx, cloudflare, etc.)
   app.set("trust proxy", 1);
-  console.log("🔒 [SECURITY] Trust proxy activé (production)");
+  logger.info("[SECURITY] Trust proxy activé (production)");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -115,6 +121,9 @@ if (NODE_ENV === "production") {
 // Appliquer le rate limiter global EN PREMIER (avant tous les autres middlewares)
 app.use(globalRateLimiter);
 
+// Correlation ID pour tracer les requêtes
+app.use(correlationMiddleware);
+
 // MEDIUM-8: Compteur de requêtes pour le endpoint /metrics
 // Note: Pas de race condition réelle en Node.js car le event loop est single-threaded
 // L'incrémentation est atomique dans le contexte d'une requête synchrone
@@ -124,15 +133,13 @@ app.use((req, res, next) => {
   next();
 });
 
-console.log(
-  `🛡️ [SECURITY] Rate limiter global activé (${NODE_ENV === "production" ? "1000" : "5000"} req/min)`,
-);
+logger.info("[SECURITY] Rate limiter global activé", {
+  limit: NODE_ENV === "production" ? 1000 : 5000,
+});
 
 // Log de l'environnement au démarrage
 const modeIcon = NODE_ENV === "production" ? "🚀" : "🔧";
-console.log(
-  `\n${modeIcon} Express Server | ${NODE_ENV} | Port ${PORT} | ${envType}`,
-);
+logger.info("Express Server démarré", { env: NODE_ENV, port: PORT, envType });
 
 const clientUrl = process.env.CLIENT_URL || "http://localhost:3001";
 
@@ -162,8 +169,8 @@ app.use(
         } else {
           // En production, seules les requêtes mobile natives n'ont pas d'origin
           // Le middleware mobileSecurityMiddleware valide ensuite le header X-Mobile-App
-          console.warn(
-            `⚠️ [CORS] Requête sans origin en production (mobile natif probable)`,
+          logger.warn(
+            "[CORS] Requête sans origin en production (mobile natif probable)",
           );
           callback(null, true);
         }
@@ -173,7 +180,7 @@ app.use(
       if (allowedOrigins.includes(origin)) {
         callback(null, true);
       } else {
-        console.error(`[CORS] Origine refusée: ${origin}`);
+        logger.warn("[CORS] Origine refusée", { origin });
         callback(new Error(`Not allowed by CORS: ${origin}`));
       }
     },
@@ -195,16 +202,29 @@ morgan.token("sanitized-url", (req) => {
   return url.replace(/token=[^&]+/gi, "token=***");
 });
 
+// Token custom pour masquer les adresses IP (RGPD)
+morgan.token("masked-ip", (req) => {
+  const { anonymizeIp } = require("./utils/logUtils");
+  // req est un IncomingMessage ici, pas Express.Request
+  const ip =
+    (req as any).ip ||
+    req.connection?.remoteAddress ||
+    req.socket?.remoteAddress ||
+    "unknown";
+  return anonymizeIp(ip);
+});
+
 // En production, ne pas logger les headers sensibles
 const morganFormat =
   NODE_ENV === "production"
-    ? ':remote-addr - :remote-user [:date[clf]] ":method :sanitized-url HTTP/:http-version" :status :res[content-length]'
+    ? ':masked-ip - :remote-user [:date[clf]] ":method :sanitized-url HTTP/:http-version" :status :res[content-length]'
     : "dev";
 
 app.use(
   morgan(morganFormat, {
     // Ne pas logger les health checks en production
     skip: (req) => NODE_ENV === "production" && req.url === "/health",
+    stream: httpLogStream,
   }),
 );
 
@@ -347,15 +367,16 @@ app.use((req, res, next) => {
   next();
 });
 
-console.log(
-  `🛡️ [SECURITY] Helmet configuré avec CSP stricte${NODE_ENV === "production" ? " + HSTS + Upgrade Insecure Requests" : ""}`,
-);
+logger.info("[SECURITY] Helmet configuré", {
+  csp: true,
+  hsts: NODE_ENV === "production",
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // COMPRESSION GZIP - Réduction de la taille des réponses HTTP
 // ═══════════════════════════════════════════════════════════════════════════
 app.use(compression());
-console.log("📦 [PERF] Compression gzip activée");
+logger.info("[PERF] Compression gzip activée");
 
 // LOW-05: Cache-Control headers pour les réponses API
 app.use("/api", (req, res, next) => {
@@ -447,18 +468,18 @@ app.use("/api", generalLimiter);
     // ═══════════════════════════════════════════════════════════════════════════
     if (NODE_ENV === "production") {
       if (process.env.DB_SSL !== "true") {
-        console.error(
-          "🚨 [SECURITY] FATAL: DB_SSL doit être 'true' en production",
+        logger.critical(
+          "[SECURITY] FATAL: DB_SSL doit être true en production",
         );
         process.exit(1);
       }
       if (process.env.REDIS_TLS !== "true") {
-        console.error(
-          "🚨 [SECURITY] FATAL: REDIS_TLS doit être 'true' en production",
+        logger.critical(
+          "[SECURITY] FATAL: REDIS_TLS doit être true en production",
         );
         process.exit(1);
       }
-      console.log("🔒 [SECURITY] TLS vérifié: DB_SSL=true, REDIS_TLS=true");
+      logger.info("[SECURITY] TLS vérifié", { DB_SSL: true, REDIS_TLS: true });
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -467,7 +488,7 @@ app.use("/api", generalLimiter);
     if (NODE_ENV !== "production" && process.env.ENABLE_SWAGGER === "true") {
       const { setupSwagger } = await import("./config/swagger");
       setupSwagger(app);
-      console.log("[SWAGGER] Documentation API activée");
+      logger.info("[SWAGGER] Documentation API activée");
     }
 
     // Démarrer les jobs cron
@@ -588,7 +609,10 @@ app.use("/api", generalLimiter);
 
     // Gestionnaire 404 - Route non trouvée
     app.use((req: express.Request, res: express.Response) => {
-      console.warn(`⚠️ [404] Route non trouvée: ${req.method} ${req.path}`);
+      logger.warn("[404] Route non trouvée", {
+        method: req.method,
+        path: req.path,
+      });
       res.status(404).json({
         error: "Route non trouvée",
         code: "ROUTE_NOT_FOUND",
@@ -615,7 +639,7 @@ app.use("/api", generalLimiter);
           userId: (req as any).user?.id || "anonymous",
         };
 
-        console.error("❌ [ERROR]", errorLog);
+        logger.error("[ERROR] Erreur globale", errorLog);
 
         // Audit des erreurs critiques
         if (err instanceof AppError && !err.isOperational) {
@@ -663,7 +687,7 @@ app.use("/api", generalLimiter);
 
     // Promesses non gérées
     process.on("unhandledRejection", (reason: any, _promise: Promise<any>) => {
-      console.error("🚨 [UNHANDLED REJECTION]", {
+      logger.critical("[UNHANDLED REJECTION]", {
         timestamp: new Date().toISOString(),
         reason: reason?.message || reason,
         stack: reason?.stack,
@@ -683,7 +707,7 @@ app.use("/api", generalLimiter);
 
     // Exceptions non capturées
     process.on("uncaughtException", (error: Error) => {
-      console.error("🚨 [UNCAUGHT EXCEPTION]", {
+      logger.critical("[UNCAUGHT EXCEPTION]", {
         timestamp: new Date().toISOString(),
         error: getErrorMessage(error),
         stack: error.stack,
@@ -702,8 +726,8 @@ app.use("/api", generalLimiter);
         })
         .finally(() => {
           // Arrêt gracieux après une exception non capturée
-          console.error(
-            "💀 [FATAL] Arrêt du serveur suite à une exception non capturée",
+          logger.critical(
+            "[FATAL] Arrêt du serveur suite à une exception non capturée",
           );
           process.exit(1);
         });
@@ -711,18 +735,18 @@ app.use("/api", generalLimiter);
 
     // Gestion de l'arrêt gracieux
     const gracefulShutdown = (signal: string) => {
-      console.log(`\n⚠️ [${signal}] Signal reçu, arrêt gracieux...`);
+      logger.warn("Signal reçu, arrêt gracieux...", { signal });
 
       server.close(() => {
-        console.log("✅ Serveur HTTP fermé");
+        logger.info("Serveur HTTP fermé");
 
         // Note: WebSocket sera fermé automatiquement avec le serveur HTTP
-        console.log("✅ WebSocket fermé");
+        logger.info("WebSocket fermé");
 
         // Fermer MongoDB
         import("mongoose").then((mongoose) => {
           mongoose.default.connection.close(false).then(() => {
-            console.log("✅ MongoDB déconnecté");
+            logger.info("MongoDB déconnecté");
             process.exit(0);
           });
         });
@@ -730,7 +754,7 @@ app.use("/api", generalLimiter);
 
       // Forcer l'arrêt après 10 secondes
       setTimeout(() => {
-        console.error("⚠️ Arrêt forcé après timeout");
+        logger.error("Arrêt forcé après timeout");
         process.exit(1);
       }, 10000);
     };
@@ -739,16 +763,19 @@ app.use("/api", generalLimiter);
     process.on("SIGINT", () => gracefulShutdown("SIGINT"));
 
     const server = app.listen(PORT, () => {
-      console.log(`✅ Server listening on http://localhost:${PORT}/api`);
+      logger.info("Server listening", { url: `http://localhost:${PORT}/api` });
     });
 
     // Initialiser le WebSocket
     webSocketService.initialize(server);
-    console.log(`🔌 WebSocket available at:`);
-    console.log(`   - ws://localhost:${PORT}/ws/notifications (notifications)`);
-    console.log(`   - ws://localhost:${PORT}/ws/messages (messages)`);
+    logger.info("WebSocket available", {
+      notifications: `ws://localhost:${PORT}/ws/notifications`,
+      messages: `ws://localhost:${PORT}/ws/messages`,
+    });
   } catch (err) {
-    console.error("❌ Impossible de se connecter à la base de données :", err);
+    logger.critical("Impossible de se connecter à la base de données", {
+      error: getErrorMessage(err),
+    });
     process.exit(1); // Arrêt du process si la connexion échoue
   }
 })();

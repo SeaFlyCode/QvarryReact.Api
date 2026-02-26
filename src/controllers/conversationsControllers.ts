@@ -14,6 +14,9 @@ import { createNotification } from "../services/notificationService";
 import { webSocketService } from "../services/webSocketService";
 import User from "../models/users";
 import dataArchiveService from "../services/dataArchiveService";
+import { logger } from "../services/loggerService";
+
+const convoLogger = logger.child({ service: "conversations" });
 
 /**
  * Fonction utilitaire pour obtenir le nom d'affichage d'un utilisateur
@@ -110,18 +113,19 @@ export async function createPrivateConversation(req: Request, res: Response) {
           { $pull: { deletedBy: userObjectId } },
         );
 
-        console.log(
-          `🔄 [CONVERSATIONS] Réactivation de la conversation ${conversation._id} pour l'utilisateur ${userId}`,
-        );
+        convoLogger.info("Réactivation conversation", {
+          conversationId: conversation._id,
+          userId,
+        });
 
         // Recharger la conversation mise à jour
         conversation = await Conversation.findById(conversation._id);
 
         // BUG-007: Null check après refetch - la conversation pourrait avoir été supprimée entre-temps
         if (!conversation) {
-          console.error(
-            `❌ [CONVERSATIONS] Conversation ${conversation} introuvable après réactivation`,
-          );
+          convoLogger.error("Conversation introuvable après réactivation", {
+            conversationId: conversation,
+          });
           return res
             .status(404)
             .json({ error: "Conversation introuvable après réactivation" });
@@ -463,10 +467,9 @@ export async function listConversations(req: Request, res: Response) {
                 lastMessageContent = decryptedContent;
               }
             } catch (e) {
-              console.error(
-                `[CONVERSATIONS] Erreur lors du déchiffrement du dernier message:`,
-                e,
-              );
+              convoLogger.error("Erreur dechiffrement dernier message", {
+                error: e,
+              });
               lastMessageContent = null;
             }
           }
@@ -681,9 +684,11 @@ export async function removeGroupMember(req: Request, res: Response) {
       session.conversations.delete(id);
     }
 
-    console.log(
-      `👋 [GROUPE] Membre ${memberId} retiré du groupe ${id} par ${userId}`,
-    );
+    convoLogger.info("Membre retiré du groupe", {
+      groupId: id,
+      memberId,
+      byUserId: userId,
+    });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({
@@ -826,16 +831,21 @@ export async function deleteGroup(req: Request, res: Response) {
           session.conversations.delete(id);
         }
       } catch (err) {
-        console.error(`Erreur nettoyage mémoire pour ${participantId}:`, err);
+        convoLogger.error("Erreur nettoyage memoire participant", {
+          participantId,
+          error: err,
+        });
       }
     }
 
     // Notifier tous les participants que le groupe a été supprimé
     webSocketService.notifyGroupDeleted(id, participantIds, userId);
 
-    console.log(
-      `🗑️ [GROUPE] Groupe ${id} supprimé par ${userId} (${deletedMessages.deletedCount} messages supprimés)`,
-    );
+    convoLogger.info("Groupe supprime", {
+      groupId: id,
+      byUserId: userId,
+      deletedMessages: deletedMessages.deletedCount,
+    });
 
     res.json({
       success: true,
@@ -843,7 +853,10 @@ export async function deleteGroup(req: Request, res: Response) {
       deletedMessages: deletedMessages.deletedCount,
     });
   } catch (err) {
-    console.error("[GROUPE] Erreur lors de la suppression:", err);
+    convoLogger.error("Erreur suppression groupe", {
+      groupId: req.params.id,
+      error: err,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la suppression du groupe", details: err });
@@ -895,9 +908,10 @@ export async function updateGroupName(req: Request, res: Response) {
       memoryStorage,
     );
 
-    console.log(
-      `✏️ [GROUPE] Nom du groupe ${id} modifié en "${name}" par ${userId}`,
-    );
+    convoLogger.info("Nom du groupe modifie", {
+      groupId: id,
+      byUserId: userId,
+    });
     res.json({ success: true, conversation: conversation.toObject() });
   } catch (err) {
     res
@@ -972,16 +986,16 @@ async function updateMemoryForAllParticipants(
         await memoryStorage.storeConversation(participantId, conversation);
       } else {
         // Log si la session n'existe pas, mais ne lève pas d'erreur
-        console.log(
-          `\u26A0\uFE0F [MemoryStorage] Pas de session en ligne pour l'utilisateur ${participantId}, la mémoire sera mise à jour à la prochaine connexion.`,
-        );
+        convoLogger.debug("Pas de session en ligne pour le participant", {
+          participantId,
+        });
       }
     } catch (err) {
       // Log l'erreur mais ne bloque pas le processus
-      console.error(
-        `\u274C Erreur lors de la mise à jour mémoire pour l'utilisateur ${participantId}:`,
-        err,
-      );
+      convoLogger.error("Erreur mise a jour memoire participant", {
+        participantId,
+        error: err,
+      });
     }
   }
 }
@@ -1059,9 +1073,12 @@ export async function markConversationAsRead(req: Request, res: Response) {
       },
     );
 
-    console.log(
-      `✅ [CONVERSATIONS] ${result.modifiedCount} messages et ${notifResult.modifiedCount} notifications marqués comme lus pour l'utilisateur ${userId} dans la conversation ${id}`,
-    );
+    convoLogger.info("Messages et notifications marques comme lus", {
+      userId,
+      conversationId: id,
+      messagesCount: result.modifiedCount,
+      notificationsCount: notifResult.modifiedCount,
+    });
 
     // Notifier les autres participants via WebSocket que les messages ont été lus
     if (unreadMessageIds.length > 0) {
@@ -1083,7 +1100,10 @@ export async function markConversationAsRead(req: Request, res: Response) {
       markedAsRead: result.modifiedCount,
     });
   } catch (err) {
-    console.error("[CONVERSATIONS] Erreur lors du marquage comme lu:", err);
+    convoLogger.error("Erreur marquage conversation comme lue", {
+      conversationId: req.params.id,
+      error: err,
+    });
     res.status(500).json({
       error: "Erreur lors du marquage de la conversation comme lue",
       details: err,
@@ -1154,9 +1174,7 @@ export async function deleteConversation(req: Request, res: Response) {
     // Supprimer de la mémoire pour cet utilisateur
     memoryStorage.removeConversation?.(userId, id);
 
-    console.log(
-      `✅ [CONVERSATIONS] Conversation ${id} masquée par l'utilisateur ${userId}`,
-    );
+    convoLogger.info("Conversation masquee", { conversationId: id, userId });
 
     // Note: On ne supprime JAMAIS définitivement les conversations privées
     // pour permettre la réactivation et conserver l'historique des messages
@@ -1168,7 +1186,10 @@ export async function deleteConversation(req: Request, res: Response) {
       hidden: true,
     });
   } catch (err) {
-    console.error("[CONVERSATIONS] Erreur lors du masquage:", err);
+    convoLogger.error("Erreur masquage conversation", {
+      conversationId: req.params.id,
+      error: err,
+    });
     res.status(500).json({
       error: "Erreur lors du masquage de la conversation",
       details: err,
@@ -1251,9 +1272,11 @@ export async function adminDeleteConversationPermanent(
       memoryStorage.removeConversation?.(participant.userId.toString(), id);
     }
 
-    console.log(
-      `🗑️ [ADMIN] Conversation ${id} supprimée définitivement par admin ${userId} (${deletedMessages.deletedCount} messages supprimés)`,
-    );
+    convoLogger.info("Conversation supprimee definitivement par admin", {
+      conversationId: id,
+      adminId: userId,
+      deletedMessages: deletedMessages.deletedCount,
+    });
 
     res.json({
       success: true,
@@ -1261,7 +1284,10 @@ export async function adminDeleteConversationPermanent(
       deletedMessages: deletedMessages.deletedCount,
     });
   } catch (err) {
-    console.error("[ADMIN] Erreur lors de la suppression définitive:", err);
+    convoLogger.error("Erreur suppression definitive conversation", {
+      conversationId: req.params.id,
+      error: err,
+    });
     res.status(500).json({
       error: "Erreur lors de la suppression définitive",
       details: err,

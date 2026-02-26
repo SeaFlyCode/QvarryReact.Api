@@ -1,5 +1,8 @@
 import mongoose from "mongoose";
 import PointModel, { IPoint } from "../models/points";
+import { logger } from "./loggerService";
+
+const pointLogger = logger.child({ service: "point" });
 
 // Types pour les paramètres
 interface CreatePointData {
@@ -23,7 +26,10 @@ export const createPoint = async (pointData: CreatePointData) => {
 
     return await newPoint.save();
   } catch (error) {
-    console.error("Erreur lors de la création du point :", error);
+    pointLogger.error("Erreur lors de la création du point", {
+      error: error instanceof Error ? error.message : error,
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     throw error;
   }
 };

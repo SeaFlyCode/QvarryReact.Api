@@ -10,6 +10,8 @@ import SosSessionModel, {
   ISosSession,
   SosSessionStatus,
   SosResolvedBy,
+  ISosParticipant,
+  SosParticipantStatus,
 } from "../models/sosSession";
 import SosContactModel, { ISosContact } from "../models/sosContact";
 import SosEventModel, { SosEventType } from "../models/sosEvent";
@@ -19,6 +21,10 @@ import { webSocketService } from "./webSocketService";
 import { auditService } from "./auditService";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import UserModel from "../models/users";
+import { logger } from "./loggerService";
+
+// Create child logger for sos service
+const sosLogger = logger.child({ service: "sos" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTES
@@ -61,6 +67,7 @@ interface ActivateSessionParams {
   zone?: string;
   depth?: number;
   sessionContacts?: SessionContactOverride; // Override des contacts pour cette session
+  participantIds?: string[]; // Array of user IDs to add as participants (group session)
 }
 
 interface HeartbeatParams {
@@ -113,6 +120,7 @@ class SosService {
   /**
    * Activer une nouvelle session SOS
    * L'utilisateur DOIT avoir une connexion réseau (avant d'aller sous terre)
+   * Support des sessions de groupe avec participantIds
    */
   async activateSession(params: ActivateSessionParams): Promise<ISosSession> {
     const {
@@ -126,17 +134,42 @@ class SosService {
       zone,
       depth,
       sessionContacts,
+      participantIds,
     } = params;
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
-    // Vérifier qu'il n'y a pas déjà une session active
-    const existingSession = await SosSessionModel.findOne({
-      userId: userObjectId,
+    // Collecter tous les IDs de participants (créateur + participants ajoutés)
+    const allParticipantIds = [userId];
+    if (participantIds && participantIds.length > 0) {
+      allParticipantIds.push(...participantIds);
+    }
+
+    // Vérifier qu'aucun des participants n'a déjà une session active
+    const participantObjectIds = allParticipantIds.map(
+      (id) => new mongoose.Types.ObjectId(id),
+    );
+
+    const existingSessions = await SosSessionModel.find({
       status: { $in: ["ACTIVE", "ESCALATING"] },
+      "participants.userId": { $in: participantObjectIds },
+      "participants.status": { $ne: "LEFT" },
     });
 
-    if (existingSession) {
+    if (existingSessions.length > 0) {
       throw new Error("SESSION_ALREADY_ACTIVE");
+    }
+
+    // Vérifier que les participants existent dans la base de données
+    if (participantIds && participantIds.length > 0) {
+      const participantUsers = await UserModel.find({
+        _id: {
+          $in: participantIds.map((id) => new mongoose.Types.ObjectId(id)),
+        },
+      }).select("_id");
+
+      if (participantUsers.length !== participantIds.length) {
+        throw new Error("INVALID_PARTICIPANT_IDS");
+      }
     }
 
     // Gérer les contacts de session (override)
@@ -195,12 +228,21 @@ class SosService {
         }
       }
     } else {
-      // Mode par défaut : vérifier qu'il y a au moins un contact permanent
-      const contactCount = await SosContactModel.countDocuments({
-        userId: userObjectId,
-        sessionId: { $exists: false },
-      });
-      if (contactCount === 0) {
+      // Mode par défaut : vérifier qu'au moins UN participant a des contacts d'urgence
+      let hasEmergencyContacts = false;
+
+      for (const participantId of allParticipantIds) {
+        const contactCount = await SosContactModel.countDocuments({
+          userId: new mongoose.Types.ObjectId(participantId),
+          sessionId: { $exists: false },
+        });
+        if (contactCount > 0) {
+          hasEmergencyContacts = true;
+          break;
+        }
+      }
+
+      if (!hasEmergencyContacts) {
         throw new Error("NO_EMERGENCY_CONTACTS");
       }
     }
@@ -216,6 +258,28 @@ class SosService {
     // Calculer la date d'expiration
     const now = new Date();
     const expiresAt = new Date(now.getTime() + expectedDuration * 60 * 1000);
+
+    // Créer les participants
+    const participants: ISosParticipant[] = allParticipantIds.map(
+      (participantId) => ({
+        userId: new mongoose.Types.ObjectId(participantId),
+        joinedAt: now,
+        leftAt: null,
+        status: "ACTIVE" as SosParticipantStatus,
+        currentStage: -1,
+        stage0TriggeredAt: null,
+        stage1TriggeredAt: null,
+        stage2TriggeredAt: null,
+        lastHeartbeatAt: null,
+        lastKnownLat: lat,
+        lastKnownLng: lng,
+        lastKnownAccuracy: accuracy,
+        consecutiveHeartbeats: 0,
+        firstReconnectionAt: null,
+        surfaceDetectionSent: false,
+        reconnectionDetectionSent: false,
+      }),
+    );
 
     // Créer la session
     const session = new SosSessionModel({
@@ -242,6 +306,7 @@ class SosService {
       useDefaultContacts,
       sessionContactIds:
         sessionContactIds.length > 0 ? sessionContactIds : undefined,
+      participants,
     });
     await session.save();
 
@@ -267,6 +332,60 @@ class SosService {
       // Mettre à jour la session avec tous les IDs de contacts
       session.sessionContactIds = sessionContactIds;
       await session.save();
+    }
+
+    // Récupérer le nom du créateur pour les notifications
+    const creator = await UserModel.findById(userObjectId).lean();
+    const creatorName = creator ? decrypt(creator.name) : "Un utilisateur";
+
+    // Notifier les participants ajoutés (tous sauf le créateur)
+    if (participantIds && participantIds.length > 0) {
+      for (const participantId of participantIds) {
+        try {
+          // Push notification
+          await createNotification(
+            new mongoose.Types.ObjectId(participantId),
+            "sos_alert",
+            "🆘 Tu as été ajouté à une session SOS",
+            `${creatorName} t'a ajouté à une session SOS de groupe.`,
+            {
+              sosSessionId: session._id,
+            },
+          );
+
+          // WebSocket notification
+          webSocketService.sendNotificationToUser(participantId, {
+            type: "sos_participant_added",
+            sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+            creatorName,
+            creatorId: userId,
+            message: `Tu as été ajouté à une session SOS par ${creatorName}`,
+          });
+
+          // Logger l'événement
+          await this.logEvent(
+            session._id as mongoose.Types.ObjectId,
+            participantId,
+            "PARTICIPANT_ADDED",
+            {
+              addedBy: userId,
+              creatorName,
+            },
+          );
+
+          sosLogger.info("Participant added to SOS session", {
+            participantId,
+            sessionId: session._id?.toString(),
+            addedBy: userId,
+          });
+        } catch (error) {
+          sosLogger.error("Failed to notify participant", {
+            participantId,
+            sessionId: session._id?.toString(),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
     }
 
     // Logger l'événement
@@ -295,9 +414,15 @@ class SosService {
       },
     });
 
-    console.log(
-      `🆘 [SOS] Session activée pour userId: ${userId} — Expire à: ${expiresAt.toISOString()} — Contacts: ${useDefaultContacts ? "défaut" : `override (${sessionContactIds.length})`}`,
-    );
+    sosLogger.info("SOS session activated", {
+      userId,
+      sessionId: session._id?.toString(),
+      expectedDuration,
+      expiresAt,
+      useDefaultContacts,
+      contactCount: sessionContactIds.length || undefined,
+      participantCount: participants.length,
+    });
 
     return session;
   }
@@ -307,60 +432,67 @@ class SosService {
   /**
    * Recevoir un signe de vie (heartbeat)
    * Prolonge le timer de +15 minutes
+   * Support des sessions de groupe - met à jour uniquement le participant appelant
    */
   async heartbeat(params: HeartbeatParams): Promise<ISosSession> {
     const { userId, sessionId, lat, lng, accuracy } = params;
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
-    // Trouver la session active
+    // Trouver la session active où l'utilisateur est participant
     const session = sessionId
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
-          userId: userObjectId,
           status: { $in: ["ACTIVE", "ESCALATING"] },
+          "participants.userId": userObjectId,
+          "participants.status": { $ne: "LEFT" },
         })
       : await SosSessionModel.findOne({
-          userId: userObjectId,
           status: { $in: ["ACTIVE", "ESCALATING"] },
+          "participants.userId": userObjectId,
+          "participants.status": { $ne: "LEFT" },
         });
 
     if (!session) {
       throw new Error("NO_ACTIVE_SESSION");
     }
 
-    // Prolonger le timer
-    const now = new Date();
-    const newExpiresAt = new Date(
-      Math.max(session.expiresAt.getTime(), now.getTime()) +
-        HEARTBEAT_EXTENSION_MINUTES * 60 * 1000,
+    // Trouver le participant dans le tableau
+    const participant = session.participants.find(
+      (p) => p.userId.toString() === userId && p.status !== "LEFT",
     );
 
-    // Mettre à jour la session
-    session.lastHeartbeatAt = now;
-    session.expiresAt = newExpiresAt;
-    session.heartbeatCount += 1;
-
-    // Mettre à jour la localisation si fournie
-    if (lat !== undefined) session.lastKnownLat = lat;
-    if (lng !== undefined) session.lastKnownLng = lng;
-    if (accuracy !== undefined) session.lastKnownAccuracy = accuracy;
-
-    // Si la session était en escalade, la remettre en ACTIVE
-    if (session.status === "ESCALATING") {
-      session.status = "ACTIVE";
-      session.currentStage = -1;
-      console.log(
-        `✅ [SOS] Session ${session._id} remise en ACTIVE après heartbeat`,
-      );
+    if (!participant) {
+      throw new Error("NO_ACTIVE_SESSION");
     }
 
-    // ─── DÉTECTION GPS DE SURFACE ───
+    const now = new Date();
+
+    // Mettre à jour les données du participant
+    participant.lastHeartbeatAt = now;
+    if (lat !== undefined) participant.lastKnownLat = lat;
+    if (lng !== undefined) participant.lastKnownLng = lng;
+    if (accuracy !== undefined) participant.lastKnownAccuracy = accuracy;
+
+    // Si le participant était en escalade, le remettre en ACTIVE
+    if (
+      participant.status === "ESCALATING" ||
+      participant.status === "DISCONNECTED"
+    ) {
+      participant.status = "ACTIVE";
+      participant.currentStage = -1;
+      sosLogger.info("Participant reactivated after heartbeat", {
+        userId,
+        sessionId: session._id?.toString(),
+      });
+    }
+
+    // ─── DÉTECTION GPS DE SURFACE (par participant) ───
     if (
       lat !== undefined &&
       lng !== undefined &&
       session.entryLat &&
       session.entryLng &&
-      !session.surfaceDetectionSent
+      !participant.surfaceDetectionSent
     ) {
       const distance = this.calculateDistance(
         session.entryLat,
@@ -369,10 +501,10 @@ class SosService {
         lng,
       );
       if (distance > SURFACE_DISTANCE_THRESHOLD_METERS) {
-        session.surfaceDetectionSent = true;
+        participant.surfaceDetectionSent = true;
 
         // Envoyer suggestion via WebSocket
-        webSocketService.sendNotificationToUser(session.userId.toString(), {
+        webSocketService.sendNotificationToUser(userId, {
           type: "sos_surface_detected",
           sessionId: (session._id as mongoose.Types.ObjectId).toString(),
           message:
@@ -393,35 +525,37 @@ class SosService {
           },
         );
 
-        console.log(
-          `📍 [SOS] Déplacement détecté: ${Math.round(distance)}m pour session ${session._id}`,
-        );
+        sosLogger.info("Surface detected for participant", {
+          userId,
+          sessionId: session._id?.toString(),
+          distance: Math.round(distance),
+        });
       }
     }
 
-    // ─── DÉTECTION DE RECONNEXION PROLONGÉE ───
-    session.consecutiveHeartbeats += 1;
+    // ─── DÉTECTION DE RECONNEXION PROLONGÉE (par participant) ───
+    participant.consecutiveHeartbeats += 1;
 
-    if (!session.firstReconnectionAt) {
-      session.firstReconnectionAt = now;
+    if (!participant.firstReconnectionAt) {
+      participant.firstReconnectionAt = now;
     }
 
-    if (!session.reconnectionDetectionSent) {
+    if (!participant.reconnectionDetectionSent) {
       const timeSinceFirstReconnection =
-        now.getTime() - session.firstReconnectionAt.getTime();
+        now.getTime() - participant.firstReconnectionAt.getTime();
       if (
         timeSinceFirstReconnection >= RECONNECTION_THRESHOLD_MS &&
-        session.consecutiveHeartbeats >= MIN_HEARTBEATS_FOR_RECONNECTION
+        participant.consecutiveHeartbeats >= MIN_HEARTBEATS_FOR_RECONNECTION
       ) {
-        session.reconnectionDetectionSent = true;
+        participant.reconnectionDetectionSent = true;
 
-        webSocketService.sendNotificationToUser(session.userId.toString(), {
+        webSocketService.sendNotificationToUser(userId, {
           type: "sos_reconnection_detected",
           sessionId: (session._id as mongoose.Types.ObjectId).toString(),
           message:
             "Tu sembles avoir une connexion stable depuis plus de 5 minutes. Désactiver le Mode SOS ?",
-          connectedSince: session.firstReconnectionAt,
-          heartbeatCount: session.consecutiveHeartbeats,
+          connectedSince: participant.firstReconnectionAt,
+          heartbeatCount: participant.consecutiveHeartbeats,
         });
 
         await this.logEvent(
@@ -429,16 +563,41 @@ class SosService {
           userId,
           "RECONNECTION_DETECTED",
           {
-            connectedSince: session.firstReconnectionAt,
-            consecutiveHeartbeats: session.consecutiveHeartbeats,
+            connectedSince: participant.firstReconnectionAt,
+            consecutiveHeartbeats: participant.consecutiveHeartbeats,
           },
         );
 
-        console.log(
-          `📶 [SOS] Reconnexion prolongée détectée pour session ${session._id}`,
-        );
+        sosLogger.info("Reconnection detected for participant", {
+          userId,
+          sessionId: session._id?.toString(),
+          connectedSince: participant.firstReconnectionAt,
+          heartbeatCount: participant.consecutiveHeartbeats,
+        });
       }
     }
+
+    // Calculer le nouveau expiresAt basé sur le participant avec le dernier heartbeat le plus récent
+    const activeParticipants = session.participants.filter(
+      (p) => p.status === "ACTIVE" && p.lastHeartbeatAt,
+    );
+
+    if (activeParticipants.length > 0) {
+      const mostRecentHeartbeat = Math.max(
+        ...activeParticipants.map((p) => p.lastHeartbeatAt!.getTime()),
+      );
+      const newExpiresAt = new Date(
+        mostRecentHeartbeat + HEARTBEAT_EXTENSION_MINUTES * 60 * 1000,
+      );
+      session.expiresAt = newExpiresAt;
+    }
+
+    // Session-level fields (backward compat)
+    session.lastHeartbeatAt = now;
+    session.heartbeatCount += 1;
+    if (lat !== undefined) session.lastKnownLat = lat;
+    if (lng !== undefined) session.lastKnownLng = lng;
+    if (accuracy !== undefined) session.lastKnownAccuracy = accuracy;
 
     await session.save();
 
@@ -448,16 +607,19 @@ class SosService {
       userId,
       "HEARTBEAT",
       {
-        newExpiresAt,
+        newExpiresAt: session.expiresAt,
         heartbeatCount: session.heartbeatCount,
         lat,
         lng,
       },
     );
 
-    console.log(
-      `💓 [SOS] Heartbeat reçu pour session ${session._id} — Nouvelle expiration: ${newExpiresAt.toISOString()}`,
-    );
+    sosLogger.info("Heartbeat received", {
+      userId,
+      sessionId: session._id?.toString(),
+      newExpiresAt: session.expiresAt,
+      heartbeatCount: session.heartbeatCount,
+    });
 
     return session;
   }
@@ -466,6 +628,7 @@ class SosService {
 
   /**
    * Prolonger manuellement le timer
+   * Tout participant peut prolonger pour l'ensemble de la session
    */
   async extendSession(params: ExtendParams): Promise<ISosSession> {
     const { userId, sessionId, additionalMinutes } = params;
@@ -475,15 +638,18 @@ class SosService {
       throw new Error("INVALID_EXTENSION_DURATION");
     }
 
+    // Trouver la session où l'utilisateur est participant
     const session = sessionId
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
-          userId: userObjectId,
           status: { $in: ["ACTIVE", "ESCALATING"] },
+          "participants.userId": userObjectId,
+          "participants.status": { $ne: "LEFT" },
         })
       : await SosSessionModel.findOne({
-          userId: userObjectId,
           status: { $in: ["ACTIVE", "ESCALATING"] },
+          "participants.userId": userObjectId,
+          "participants.status": { $ne: "LEFT" },
         });
 
     if (!session) {
@@ -499,10 +665,17 @@ class SosService {
     session.expiresAt = newExpiresAt;
     session.extensionCount += 1;
 
-    // Si la session était en escalade, la remettre en ACTIVE
+    // Si la session était en escalade, remettre tous les participants ESCALATING en ACTIVE
     if (session.status === "ESCALATING") {
       session.status = "ACTIVE";
       session.currentStage = -1;
+
+      session.participants.forEach((p) => {
+        if (p.status === "ESCALATING" || p.status === "DISCONNECTED") {
+          p.status = "ACTIVE";
+          p.currentStage = -1;
+        }
+      });
     }
 
     await session.save();
@@ -519,9 +692,13 @@ class SosService {
       },
     );
 
-    console.log(
-      `⏱️ [SOS] Session ${session._id} prolongée de ${additionalMinutes}min — Nouvelle expiration: ${newExpiresAt.toISOString()}`,
-    );
+    sosLogger.info("SOS session extended", {
+      userId,
+      sessionId: session._id?.toString(),
+      additionalMinutes,
+      newExpiresAt,
+      extensionCount: session.extensionCount,
+    });
 
     return session;
   }
@@ -530,62 +707,188 @@ class SosService {
 
   /**
    * Désactiver une session SOS (l'utilisateur est en sécurité)
+   * Scope "self": quitte uniquement le participant appelant
+   * Scope "all": désactive pour tous les participants
    */
   async deactivateSession(
     userId: string,
     sessionId?: string,
+    scope: "self" | "all" = "all",
   ): Promise<ISosSession> {
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
+    // Trouver la session où l'utilisateur est participant
     const session = sessionId
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
-          userId: userObjectId,
           status: { $in: ["ACTIVE", "ESCALATING"] },
+          "participants.userId": userObjectId,
+          "participants.status": { $ne: "LEFT" },
         })
       : await SosSessionModel.findOne({
-          userId: userObjectId,
           status: { $in: ["ACTIVE", "ESCALATING"] },
+          "participants.userId": userObjectId,
+          "participants.status": { $ne: "LEFT" },
         });
 
     if (!session) {
       throw new Error("NO_ACTIVE_SESSION");
     }
 
-    session.status = "RESOLVED";
-    session.resolvedAt = new Date();
-    session.resolvedBy = "USER";
+    const now = new Date();
 
-    await session.save();
+    // Récupérer les infos de l'utilisateur pour les notifications
+    const user = await UserModel.findById(userObjectId).lean();
+    const userName = user ? decrypt(user.name) : "Un utilisateur";
 
-    // Nettoyer les contacts temporaires
-    await this.cleanupSessionContacts(session._id.toString());
+    if (scope === "self") {
+      // ─── SCOPE "SELF" : Quitter uniquement soi-même ───
 
-    // Logger l'événement
-    await this.logEvent(
-      session._id as mongoose.Types.ObjectId,
-      userId,
-      "RESOLVED",
-      {
-        resolvedBy: "USER",
-        duration: Math.round(
-          (Date.now() - session.activatedAt.getTime()) / 60000,
-        ),
-      },
-    );
+      const participant = session.participants.find(
+        (p) => p.userId.toString() === userId && p.status !== "LEFT",
+      );
 
-    // Audit
-    await auditService.log({
-      userId,
-      action: "SOS_SESSION_DEACTIVATED",
-      level: "info",
-      details: {
-        sessionId: session._id,
-        resolvedBy: "USER",
-      },
-    });
+      if (!participant) {
+        throw new Error("NO_ACTIVE_SESSION");
+      }
 
-    console.log(`✅ [SOS] Session ${session._id} désactivée par l'utilisateur`);
+      // Marquer le participant comme LEFT
+      participant.status = "LEFT";
+      participant.leftAt = now;
+
+      // Logger l'événement
+      await this.logEvent(
+        session._id as mongoose.Types.ObjectId,
+        userId,
+        "PARTICIPANT_LEFT",
+        {
+          userName,
+          leftAt: now,
+        },
+      );
+
+      // Vérifier s'il reste des participants actifs
+      const remainingActiveParticipants = session.participants.filter(
+        (p) => p.status !== "LEFT",
+      );
+
+      if (remainingActiveParticipants.length === 0) {
+        // C'était le dernier participant → résoudre la session
+        session.status = "RESOLVED";
+        session.resolvedAt = now;
+        session.resolvedBy = "USER";
+        session.resolvedByUserId = userObjectId;
+
+        await session.save();
+
+        // Nettoyer les contacts temporaires
+        await this.cleanupSessionContacts(session._id.toString());
+
+        sosLogger.info("Session resolved - last participant left", {
+          sessionId: session._id?.toString(),
+          userId,
+        });
+      } else {
+        // Il reste des participants → session continue
+        await session.save();
+
+        // Notifier les autres participants
+        for (const otherParticipant of remainingActiveParticipants) {
+          const otherUserId = otherParticipant.userId.toString();
+          webSocketService.sendNotificationToUser(otherUserId, {
+            type: "sos_participant_left",
+            sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+            userName,
+            userId,
+            message: `${userName} a quitté la session SOS`,
+          });
+        }
+
+        sosLogger.info("Participant left SOS session", {
+          sessionId: session._id?.toString(),
+          userId,
+          remainingParticipants: remainingActiveParticipants.length,
+        });
+      }
+
+      // Audit
+      await auditService.log({
+        userId,
+        action: "SOS_SESSION_PARTICIPANT_LEFT",
+        level: "info",
+        details: {
+          sessionId: session._id,
+          scope: "self",
+          remainingParticipants: remainingActiveParticipants.length,
+        },
+      });
+    } else {
+      // ─── SCOPE "ALL" : Désactiver pour tous ───
+
+      // Marquer tous les participants comme LEFT
+      session.participants.forEach((p) => {
+        if (p.status !== "LEFT") {
+          p.status = "LEFT";
+          p.leftAt = now;
+        }
+      });
+
+      // Marquer la session comme résolue
+      session.status = "RESOLVED";
+      session.resolvedAt = now;
+      session.resolvedBy = "USER";
+      session.resolvedByUserId = userObjectId;
+
+      await session.save();
+
+      // Nettoyer les contacts temporaires
+      await this.cleanupSessionContacts(session._id.toString());
+
+      // Logger l'événement
+      await this.logEvent(
+        session._id as mongoose.Types.ObjectId,
+        userId,
+        "SESSION_DEACTIVATED_ALL",
+        {
+          resolvedBy: "USER",
+          userName,
+          participantCount: session.participants.length,
+        },
+      );
+
+      // Notifier tous les autres participants
+      for (const participant of session.participants) {
+        const participantId = participant.userId.toString();
+        if (participantId !== userId) {
+          webSocketService.sendNotificationToUser(participantId, {
+            type: "sos_session_deactivated_all",
+            sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+            userName,
+            userId,
+            message: `La session SOS a été désactivée par ${userName}`,
+          });
+        }
+      }
+
+      // Audit
+      await auditService.log({
+        userId,
+        action: "SOS_SESSION_DEACTIVATED",
+        level: "info",
+        details: {
+          sessionId: session._id,
+          resolvedBy: "USER",
+          scope: "all",
+          participantCount: session.participants.length,
+        },
+      });
+
+      sosLogger.info("SOS session deactivated for all participants", {
+        sessionId: session._id?.toString(),
+        deactivatedBy: userId,
+        participantCount: session.participants.length,
+      });
+    }
 
     return session;
   }
@@ -594,6 +897,7 @@ class SosService {
 
   /**
    * Un autre utilisateur Qvarry confirme que la personne est en sécurité
+   * Résout la session pour TOUS les participants (scope "all")
    */
   async confirmSafe(
     sessionId: string,
@@ -608,9 +912,20 @@ class SosService {
       throw new Error("SESSION_NOT_FOUND_OR_NOT_ESCALATING");
     }
 
+    const now = new Date();
+
+    // Marquer tous les participants comme LEFT
+    session.participants.forEach((p) => {
+      if (p.status !== "LEFT") {
+        p.status = "LEFT";
+        p.leftAt = now;
+      }
+    });
+
     session.status = "RESOLVED";
-    session.resolvedAt = new Date();
+    session.resolvedAt = now;
     session.resolvedBy = "CONTACT_CONFIRM";
+    session.resolvedByUserId = new mongoose.Types.ObjectId(confirmerId);
 
     await session.save();
 
@@ -625,6 +940,7 @@ class SosService {
       {
         confirmerId,
         resolvedBy: "CONTACT_CONFIRM",
+        participantCount: session.participants.length,
       },
     );
 
@@ -636,12 +952,15 @@ class SosService {
       details: {
         sessionId: session._id,
         sessionUserId: session.userId,
+        participantCount: session.participants.length,
       },
     });
 
-    console.log(
-      `✅ [SOS] Session ${session._id} confirmée safe par userId: ${confirmerId}`,
-    );
+    sosLogger.info("SOS session confirmed safe by contact", {
+      sessionId: session._id?.toString(),
+      confirmerId,
+      participantCount: session.participants.length,
+    });
 
     return session;
   }
@@ -650,16 +969,19 @@ class SosService {
 
   /**
    * Obtenir la session active d'un utilisateur
+   * Cherche où l'utilisateur est participant et n'a pas LEFT
    */
   async getActiveSession(userId: string): Promise<ISosSession | null> {
     return SosSessionModel.findOne({
-      userId: new mongoose.Types.ObjectId(userId),
       status: { $in: ["ACTIVE", "ESCALATING"] },
+      "participants.userId": new mongoose.Types.ObjectId(userId),
+      "participants.status": { $ne: "LEFT" },
     });
   }
 
   /**
    * Obtenir l'historique des sessions d'un utilisateur avec statistiques enrichies
+   * Inclut les sessions où l'utilisateur est créateur OU participant
    */
   async getSessionHistory(
     userId: string,
@@ -677,9 +999,12 @@ class SosService {
       lastSessionDate: Date | null;
     };
   }> {
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
     // Récupérer les sessions (limitées pour l'affichage)
+    // Sessions où l'utilisateur est créateur OU participant
     const sessions = await SosSessionModel.find({
-      userId: new mongoose.Types.ObjectId(userId),
+      $or: [{ userId: userObjectId }, { "participants.userId": userObjectId }],
     })
       .sort({ createdAt: -1 })
       .limit(limit)
@@ -687,7 +1012,7 @@ class SosService {
 
     // Calculer les stats sur TOUTES les sessions de l'utilisateur (pas juste la page courante)
     const allSessions = await SosSessionModel.find({
-      userId: new mongoose.Types.ObjectId(userId),
+      $or: [{ userId: userObjectId }, { "participants.userId": userObjectId }],
     })
       .select(
         "expectedDuration heartbeatCount status currentStage siteName activatedAt resolvedAt",
@@ -777,13 +1102,17 @@ class SosService {
   /**
    * Obtenir les sessions actives visibles par un utilisateur
    * (sessions en escalade visibles par tous les utilisateurs)
+   * Exclut les sessions où l'utilisateur est participant
    */
   async getActiveSessions(userId: string): Promise<any[]> {
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
     // Pour le MVP, on retourne toutes les sessions en escalade (stage 1+)
+    // Exclut les sessions où l'utilisateur est participant
     return SosSessionModel.find({
       status: "ESCALATING",
       currentStage: { $gte: 1 },
-      userId: { $ne: new mongoose.Types.ObjectId(userId) }, // Pas ses propres sessions
+      "participants.userId": { $ne: userObjectId },
     })
       .populate("userId", "name surname")
       .sort({ createdAt: -1 })
@@ -793,67 +1122,135 @@ class SosService {
   // ─── ESCALADE (appelé par le cron job) ─────────────────────────────
 
   /**
-   * Traiter les sessions expirées et déclencher l'escalade
+   * Traiter les sessions expirées et déclencher l'escalade (par participant)
    * Appelé toutes les 60 secondes par le cron job
    */
   async processExpiredSessions(): Promise<void> {
     const now = new Date();
 
-    // 1. Trouver les sessions ACTIVE dont le timer a expiré → passer en ESCALATING stage 0
-    const newlyExpired = await SosSessionModel.find({
-      status: "ACTIVE",
-      expiresAt: { $lte: now },
+    // Trouver toutes les sessions ACTIVE ou ESCALATING
+    const activeSessions = await SosSessionModel.find({
+      status: { $in: ["ACTIVE", "ESCALATING"] },
     });
 
-    for (const session of newlyExpired) {
-      await this.triggerStage0(session);
-    }
+    for (const session of activeSessions) {
+      let sessionModified = false;
 
-    // 2. Trouver les sessions ESCALATING stage 0 depuis >= 15 min → passer stage 1
-    const stage0Threshold = new Date(
-      now.getTime() - STAGE_1_DELAY_MINUTES * 60 * 1000,
-    );
-    const readyForStage1 = await SosSessionModel.find({
-      status: "ESCALATING",
-      currentStage: 0,
-      stage0TriggeredAt: { $lte: stage0Threshold },
-    });
+      // Parcourir tous les participants actifs
+      for (const participant of session.participants) {
+        if (participant.status === "LEFT") {
+          continue; // Ignorer les participants qui ont quitté
+        }
 
-    for (const session of readyForStage1) {
-      await this.triggerStage1(session);
-    }
+        // Vérifier si le heartbeat du participant a expiré
+        const heartbeatExpired = participant.lastHeartbeatAt
+          ? participant.lastHeartbeatAt.getTime() +
+              HEARTBEAT_EXTENSION_MINUTES * 60 * 1000 <
+            now.getTime()
+          : session.expiresAt.getTime() < now.getTime();
 
-    // 3. Trouver les sessions ESCALATING stage 1 depuis le début de l'escalade >= 30 min → stage 2
-    const stage2Threshold = new Date(
-      now.getTime() - STAGE_2_DELAY_MINUTES * 60 * 1000,
-    );
-    const readyForStage2 = await SosSessionModel.find({
-      status: "ESCALATING",
-      currentStage: 1,
-      stage0TriggeredAt: { $lte: stage2Threshold },
-    });
+        if (!heartbeatExpired) {
+          continue; // Ce participant est encore dans les temps
+        }
 
-    for (const session of readyForStage2) {
-      await this.triggerStage2(session);
+        // Le heartbeat de ce participant a expiré, vérifier les stages
+        if (participant.currentStage === -1) {
+          // Stage 0: première expiration
+          await this.triggerStage0(session, participant);
+          sessionModified = true;
+        } else if (participant.currentStage === 0) {
+          // Vérifier si 15 minutes se sont écoulées depuis stage 0
+          const stage0Threshold = new Date(
+            now.getTime() - STAGE_1_DELAY_MINUTES * 60 * 1000,
+          );
+          if (
+            participant.stage0TriggeredAt &&
+            participant.stage0TriggeredAt <= stage0Threshold
+          ) {
+            await this.triggerStage1(session, participant);
+            sessionModified = true;
+          }
+        } else if (participant.currentStage === 1) {
+          // Vérifier si 30 minutes se sont écoulées depuis le début de l'escalade (stage 0)
+          const stage2Threshold = new Date(
+            now.getTime() - STAGE_2_DELAY_MINUTES * 60 * 1000,
+          );
+          if (
+            participant.stage0TriggeredAt &&
+            participant.stage0TriggeredAt <= stage2Threshold
+          ) {
+            await this.triggerStage2(session, participant);
+            sessionModified = true;
+          }
+        }
+      }
+
+      // Après avoir traité tous les participants, mettre à jour le statut de la session
+      if (sessionModified) {
+        const activeParticipants = session.participants.filter(
+          (p) => p.status !== "LEFT",
+        );
+        const escalatingParticipants = activeParticipants.filter(
+          (p) => p.status === "ESCALATING" || p.status === "DISCONNECTED",
+        );
+
+        if (escalatingParticipants.length > 0) {
+          session.status = "ESCALATING";
+
+          // Définir le currentStage de la session au maximum des stages des participants
+          const maxStage = Math.max(
+            ...activeParticipants.map((p) => p.currentStage),
+          );
+          session.currentStage = maxStage;
+
+          // Mettre à jour les timestamps de session avec les plus anciennes dates des participants
+          const stage0Dates = activeParticipants
+            .filter((p) => p.stage0TriggeredAt)
+            .map((p) => p.stage0TriggeredAt!.getTime());
+          if (stage0Dates.length > 0) {
+            session.stage0TriggeredAt = new Date(Math.min(...stage0Dates));
+          }
+
+          const stage1Dates = activeParticipants
+            .filter((p) => p.stage1TriggeredAt)
+            .map((p) => p.stage1TriggeredAt!.getTime());
+          if (stage1Dates.length > 0) {
+            session.stage1TriggeredAt = new Date(Math.min(...stage1Dates));
+          }
+
+          const stage2Dates = activeParticipants
+            .filter((p) => p.stage2TriggeredAt)
+            .map((p) => p.stage2TriggeredAt!.getTime());
+          if (stage2Dates.length > 0) {
+            session.stage2TriggeredAt = new Date(Math.min(...stage2Dates));
+          }
+        }
+
+        await session.save();
+      }
     }
   }
 
   // ─── STAGES D'ESCALADE ─────────────────────────────────────────────
 
   /**
-   * Stage 0: Push notification à l'utilisateur + alarme locale
+   * Stage 0: Push notification au participant + alarme locale
    */
-  private async triggerStage0(session: ISosSession): Promise<void> {
+  private async triggerStage0(
+    session: ISosSession,
+    participant: ISosParticipant,
+  ): Promise<void> {
     const sessionId = session._id as mongoose.Types.ObjectId;
+    const participantUserId = participant.userId.toString();
 
-    session.status = "ESCALATING";
-    session.currentStage = 0;
-    session.stage0TriggeredAt = new Date();
-    await session.save();
+    // Marquer le participant comme DISCONNECTED
+    participant.status = "DISCONNECTED";
+    participant.currentStage = 0;
+    participant.stage0TriggeredAt = new Date();
 
-    // Envoyer notification push à l'utilisateur
+    // Envoyer notification push au participant
     await createNotification(
-      session.userId,
+      participant.userId,
       "sos_alert",
       "🆘 Alerte SOS - Timer expiré",
       "Votre timer SOS a expiré ! Donnez un signe de vie ou l'escalade va se déclencher.",
@@ -863,56 +1260,70 @@ class SosService {
     );
 
     // Envoyer via WebSocket pour alarme immédiate
-    webSocketService.sendNotificationToUser(session.userId.toString(), {
+    webSocketService.sendNotificationToUser(participantUserId, {
       type: "sos_alarm",
       stage: 0,
       sessionId: sessionId.toString(),
       message: "Timer SOS expiré — Donnez un signe de vie !",
     });
 
-    await this.logEvent(sessionId, session.userId.toString(), "STAGE_CHANGE", {
+    await this.logEvent(sessionId, participantUserId, "STAGE_CHANGE", {
       stage: 0,
       previousStage: -1,
+      participantId: participantUserId,
     });
 
-    console.log(
-      `🚨 [SOS] Stage 0 déclenché pour session ${sessionId} (userId: ${session.userId})`,
-    );
+    sosLogger.info("Stage 0 triggered for participant", {
+      sessionId: sessionId.toString(),
+      participantId: participantUserId,
+    });
   }
 
   /**
-   * Stage 1: Notifier TOUS les utilisateurs Qvarry
+   * Stage 1: Notifier TOUS les utilisateurs Qvarry (sauf tous les participants de la session)
    */
-  private async triggerStage1(session: ISosSession): Promise<void> {
+  private async triggerStage1(
+    session: ISosSession,
+    participant: ISosParticipant,
+  ): Promise<void> {
     const sessionId = session._id as mongoose.Types.ObjectId;
+    const participantUserId = participant.userId.toString();
 
-    session.currentStage = 1;
-    session.stage1TriggeredAt = new Date();
-    await session.save();
+    // Marquer le participant comme ESCALATING
+    participant.status = "ESCALATING";
+    participant.currentStage = 1;
+    participant.stage1TriggeredAt = new Date();
 
-    // Récupérer le nom de l'utilisateur en danger
-    const user = await UserModel.findById(session.userId).lean();
+    // Récupérer le nom du participant en danger
+    const user = await UserModel.findById(participant.userId).lean();
     const userName = user ? decrypt(user.name) : "Un utilisateur";
 
-    // Envoyer notification push à l'utilisateur (rappel)
-    webSocketService.sendNotificationToUser(session.userId.toString(), {
+    // Envoyer notification WebSocket au participant (rappel)
+    webSocketService.sendNotificationToUser(participantUserId, {
       type: "sos_alarm",
       stage: 1,
       sessionId: sessionId.toString(),
       message: "Escalade Stage 1 — D'autres utilisateurs sont notifiés !",
     });
 
-    // Notifier TOUS les utilisateurs Qvarry vérifiés (sauf le propriétaire de la session)
+    // Récupérer tous les IDs des participants de la session (pour les exclure)
+    const participantIds = session.participants.map((p) => p.userId.toString());
+
+    // Notifier TOUS les utilisateurs Qvarry vérifiés (sauf TOUS les participants de la session)
     const allVerifiedUsers = await UserModel.find({
-      _id: { $ne: session.userId },
+      _id: {
+        $nin: session.participants.map((p) => p.userId),
+      },
       isVerified: true,
     })
       .select("_id name")
       .lean();
 
-    console.log(
-      `📣 [SOS] Notification de ${allVerifiedUsers.length} utilisateurs pour session ${sessionId}`,
-    );
+    sosLogger.info("Stage 1 triggered - notifying all users", {
+      sessionId: sessionId.toString(),
+      participantId: participantUserId,
+      notifiedCount: allVerifiedUsers.length,
+    });
 
     // Envoyer les notifications à chaque utilisateur
     for (const targetUser of allVerifiedUsers) {
@@ -934,86 +1345,106 @@ class SosService {
           stage: 1,
           sessionId: sessionId.toString(),
           userName,
+          participantId: participantUserId,
           message: `${userName} a besoin d'aide ! Consultez la carte SOS.`,
         });
       } catch (error) {
-        console.error(
-          `⚠️ [SOS] Erreur notification userId ${targetUser._id}:`,
-          error,
-        );
+        sosLogger.error("Failed to notify user for stage 1", {
+          targetUserId: targetUser._id.toString(),
+          sessionId: sessionId.toString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
         // On continue même si une notification échoue
       }
     }
 
-    await this.logEvent(sessionId, session.userId.toString(), "STAGE_CHANGE", {
+    await this.logEvent(sessionId, participantUserId, "STAGE_CHANGE", {
       stage: 1,
       previousStage: 0,
       userName,
+      participantId: participantUserId,
     });
 
-    await this.logEvent(
-      sessionId,
-      session.userId.toString(),
-      "NOTIFICATION_SENT",
-      {
-        stage: 1,
-        target: "all_users",
-        notifiedCount: allVerifiedUsers.length,
-      },
-    );
+    await this.logEvent(sessionId, participantUserId, "NOTIFICATION_SENT", {
+      stage: 1,
+      target: "all_users",
+      notifiedCount: allVerifiedUsers.length,
+      participantId: participantUserId,
+    });
 
-    console.log(
-      `🚨🚨 [SOS] Stage 1 déclenché pour session ${sessionId} — Notification à TOUS les utilisateurs (${allVerifiedUsers.length} notifiés)`,
-    );
+    sosLogger.info("Stage 1 completed", {
+      sessionId: sessionId.toString(),
+      participantId: participantUserId,
+      notifiedCount: allVerifiedUsers.length,
+    });
   }
 
   /**
-   * Stage 2: Envoyer SMS aux contacts d'urgence via Vonage
+   * Stage 2: Envoyer SMS aux contacts d'urgence de TOUS les participants via Vonage
    */
-  private async triggerStage2(session: ISosSession): Promise<void> {
+  private async triggerStage2(
+    session: ISosSession,
+    participant: ISosParticipant,
+  ): Promise<void> {
     const sessionId = session._id as mongoose.Types.ObjectId;
+    const participantUserId = participant.userId.toString();
 
-    session.currentStage = 2;
-    session.stage2TriggeredAt = new Date();
-    await session.save();
+    // Marquer le participant en stage 2
+    participant.currentStage = 2;
+    participant.stage2TriggeredAt = new Date();
 
-    // Récupérer le nom de l'utilisateur
-    const user = await UserModel.findById(session.userId).lean();
+    // Récupérer le nom du participant en danger
+    const user = await UserModel.findById(participant.userId).lean();
     const userName = user
       ? `${decrypt(user.name)} ${decrypt(user.surname)}`
       : "Un utilisateur Qvarry";
 
-    // Récupérer les contacts d'urgence
-    let contacts;
+    // Récupérer les contacts d'urgence de TOUS les participants de la session
+    let allContacts: any[] = [];
+
     if (session.useDefaultContacts) {
-      // Utiliser tous les contacts permanents
-      contacts = await SosContactModel.find({
-        userId: session.userId,
+      // Utiliser les contacts permanents de TOUS les participants
+      const participantUserIds = session.participants.map((p) => p.userId);
+      allContacts = await SosContactModel.find({
+        userId: { $in: participantUserIds },
         sessionId: { $exists: false },
       }).lean();
     } else {
       // Utiliser les contacts sélectionnés pour cette session
-      contacts = await SosContactModel.find({
+      allContacts = await SosContactModel.find({
         _id: { $in: session.sessionContactIds },
       }).lean();
     }
 
-    if (contacts.length === 0) {
-      console.error(
-        `❌ [SOS] Aucun contact d'urgence pour userId: ${session.userId}`,
-      );
-      await this.logEvent(sessionId, session.userId.toString(), "SMS_FAILED", {
+    if (allContacts.length === 0) {
+      sosLogger.error("No emergency contacts for stage 2", {
+        sessionId: sessionId.toString(),
+        participantId: participantUserId,
+      });
+      await this.logEvent(sessionId, participantUserId, "SMS_FAILED", {
         stage: 2,
         reason: "NO_CONTACTS",
+        participantId: participantUserId,
       });
       return;
     }
 
-    // Préparer la localisation
+    // Dédupliquer les contacts par numéro de téléphone
+    const uniqueContactsMap = new Map();
+    allContacts.forEach((contact) => {
+      if (!uniqueContactsMap.has(contact.phone)) {
+        uniqueContactsMap.set(contact.phone, contact);
+      }
+    });
+    const contacts = Array.from(uniqueContactsMap.values());
+
+    // Préparer la localisation depuis le participant
     const location =
-      session.lastKnownLat && session.lastKnownLng
-        ? { lat: session.lastKnownLat, lng: session.lastKnownLng }
-        : undefined;
+      participant.lastKnownLat && participant.lastKnownLng
+        ? { lat: participant.lastKnownLat, lng: participant.lastKnownLng }
+        : session.lastKnownLat && session.lastKnownLng
+          ? { lat: session.lastKnownLat, lng: session.lastKnownLng }
+          : undefined;
 
     // Envoyer les SMS via Vonage
     const smsContacts = contacts.map((c) => ({ name: c.name, phone: c.phone }));
@@ -1030,10 +1461,11 @@ class SosService {
       const contact = contacts[i];
 
       if (result.success) {
-        await this.logEvent(sessionId, session.userId.toString(), "SMS_SENT", {
+        await this.logEvent(sessionId, participantUserId, "SMS_SENT", {
           contactId: contact._id,
           contactName: contact.name,
           messageId: result.messageId,
+          participantId: participantUserId,
         });
 
         // Mettre à jour la date du dernier SMS envoyé
@@ -1041,43 +1473,44 @@ class SosService {
           lastSmsSentAt: new Date(),
         });
       } else {
-        await this.logEvent(
-          sessionId,
-          session.userId.toString(),
-          "SMS_FAILED",
-          {
-            contactId: contact._id,
-            contactName: contact.name,
-            error: result.error,
-          },
-        );
+        await this.logEvent(sessionId, participantUserId, "SMS_FAILED", {
+          contactId: contact._id,
+          contactName: contact.name,
+          error: result.error,
+          participantId: participantUserId,
+        });
       }
     }
 
     // Alarme WebSocket
-    webSocketService.sendNotificationToUser(session.userId.toString(), {
+    webSocketService.sendNotificationToUser(participantUserId, {
       type: "sos_alarm",
       stage: 2,
       sessionId: sessionId.toString(),
-      message: "Escalade Stage 2 — SMS envoyés à vos contacts d'urgence !",
+      message: "Escalade Stage 2 — SMS envoyés aux contacts d'urgence !",
     });
 
     // Audit critique
     await auditService.log({
-      userId: session.userId.toString(),
+      userId: participantUserId,
       action: "SOS_STAGE_2_SMS_SENT",
       level: "critical",
       details: {
         sessionId: sessionId,
+        participantId: participantUserId,
         contactCount: contacts.length,
         successCount: results.filter((r) => r.success).length,
         failCount: results.filter((r) => !r.success).length,
       },
     });
 
-    console.log(
-      `🚨🚨🚨 [SOS] Stage 2 déclenché pour session ${sessionId} — ${results.filter((r) => r.success).length}/${contacts.length} SMS envoyés`,
-    );
+    sosLogger.info("Stage 2 completed - SMS sent to emergency contacts", {
+      sessionId: sessionId.toString(),
+      participantId: participantUserId,
+      contactCount: contacts.length,
+      successCount: results.filter((r) => r.success).length,
+      failCount: results.filter((r) => !r.success).length,
+    });
   }
 
   // ─── CONTACTS D'URGENCE ────────────────────────────────────────────
@@ -1114,9 +1547,10 @@ class SosService {
 
     await contact.save();
 
-    console.log(
-      `📞 [SOS] Contact d'urgence ajouté: ${data.name} pour userId: ${userId}`,
-    );
+    sosLogger.info("Emergency contact added", {
+      userId,
+      contactName: data.name,
+    });
 
     return contact;
   }
@@ -1170,11 +1604,86 @@ class SosService {
   // ─── MÉTHODES ADMIN ────────────────────────────────────────────────
 
   /**
+   * Helper: enrichir une session avec les infos participants pour l'admin
+   * Décrypte les noms, calcule urgence basée sur le pire participant
+   */
+  private enrichSessionForAdmin(session: any): any {
+    const now = new Date();
+    const expiresAt = new Date(session.expiresAt);
+    const timeRemaining = Math.floor(
+      (expiresAt.getTime() - now.getTime()) / 1000,
+    );
+    const timeSinceExpired = timeRemaining < 0 ? Math.abs(timeRemaining) : null;
+
+    // Calculer le niveau d'urgence basé sur le PIRE participant
+    let urgencyLevel = "low";
+    const participants = session.participants || [];
+    const activeParticipants = participants.filter(
+      (p: any) => p.status !== "LEFT",
+    );
+
+    if (activeParticipants.length > 0) {
+      const worstStage = Math.max(
+        ...activeParticipants.map((p: any) => p.currentStage ?? -1),
+      );
+      const hasEscalating = activeParticipants.some(
+        (p: any) => p.status === "ESCALATING" || p.status === "DISCONNECTED",
+      );
+
+      if (worstStage >= 2) urgencyLevel = "critical";
+      else if (worstStage === 1) urgencyLevel = "high";
+      else if (worstStage === 0 || hasEscalating) urgencyLevel = "medium";
+    } else if (session.status === "ESCALATING") {
+      // Fallback session-level
+      if (session.currentStage >= 2) urgencyLevel = "critical";
+      else if (session.currentStage === 1) urgencyLevel = "high";
+      else urgencyLevel = "medium";
+    }
+
+    // Construire l'aperçu des participants avec noms décryptés
+    const participantsOverview = participants.map((p: any) => {
+      const userInfo =
+        p.userId && typeof p.userId === "object" ? p.userId : null;
+      return {
+        userId: userInfo ? userInfo._id?.toString() : p.userId?.toString(),
+        name: userInfo?.name ? decrypt(userInfo.name) : null,
+        surname: userInfo?.surname ? decrypt(userInfo.surname) : null,
+        status: p.status,
+        currentStage: p.currentStage,
+        lastHeartbeatAt: p.lastHeartbeatAt,
+        joinedAt: p.joinedAt,
+        leftAt: p.leftAt,
+      };
+    });
+
+    return {
+      ...session,
+      user:
+        session.userId && typeof session.userId === "object"
+          ? {
+              id: session.userId._id,
+              name: decrypt(session.userId.name),
+              surname: decrypt(session.userId.surname),
+            }
+          : null,
+      participantCount: participants.length,
+      isGroupSession: participants.length > 1,
+      participantsOverview,
+      timeRemaining: Math.max(0, timeRemaining),
+      timeSinceExpired,
+      urgencyLevel,
+    };
+  }
+
+  /**
    * Dashboard admin - Vue d'ensemble des sessions SOS
+   * Inclut les infos de groupe et les compteurs de participants à risque
    */
   async getAdminDashboard(): Promise<{
     activeSessions: number;
     escalatingSessions: number;
+    groupSessions: number;
+    totalParticipantsAtRisk: number;
     resolvedToday: number;
     totalSessions24h: number;
     sessions: any[];
@@ -1208,45 +1717,34 @@ class SosService {
       status: { $in: ["ACTIVE", "ESCALATING"] },
     })
       .populate("userId", "name surname")
+      .populate("participants.userId", "name surname")
       .sort({ status: -1, currentStage: -1, activatedAt: 1 })
       .lean();
 
+    // Compteurs de groupe
+    let groupSessions = 0;
+    let totalParticipantsAtRisk = 0;
+
     // Décrypter les noms et enrichir les données
     const enrichedSessions = sessions.map((session: any) => {
-      const now = new Date();
-      const expiresAt = new Date(session.expiresAt);
-      const timeRemaining = Math.floor(
-        (expiresAt.getTime() - now.getTime()) / 1000,
-      );
-      const timeSinceExpired =
-        timeRemaining < 0 ? Math.abs(timeRemaining) : null;
+      const participants = session.participants || [];
+      if (participants.length > 1) groupSessions++;
 
-      // Calculer le niveau d'urgence
-      let urgencyLevel = "low";
-      if (session.status === "ESCALATING") {
-        if (session.currentStage >= 2) urgencyLevel = "critical";
-        else if (session.currentStage === 1) urgencyLevel = "high";
-        else urgencyLevel = "medium";
-      }
+      // Compter les participants à risque (DISCONNECTED ou ESCALATING)
+      participants.forEach((p: any) => {
+        if (p.status === "DISCONNECTED" || p.status === "ESCALATING") {
+          totalParticipantsAtRisk++;
+        }
+      });
 
-      return {
-        ...session,
-        user: session.userId
-          ? {
-              id: session.userId._id,
-              name: decrypt(session.userId.name),
-              surname: decrypt(session.userId.surname),
-            }
-          : null,
-        timeRemaining: Math.max(0, timeRemaining),
-        timeSinceExpired,
-        urgencyLevel,
-      };
+      return this.enrichSessionForAdmin(session);
     });
 
     return {
       activeSessions,
       escalatingSessions,
+      groupSessions,
+      totalParticipantsAtRisk,
       resolvedToday,
       totalSessions24h,
       sessions: enrichedSessions,
@@ -1255,6 +1753,7 @@ class SosService {
 
   /**
    * Récupérer toutes les sessions actives (admin)
+   * Inclut les infos de participants pour chaque session
    */
   async getAllActiveSessions(): Promise<any[]> {
     // Récupérer TOUTES les sessions ACTIVE + ESCALATING
@@ -1262,41 +1761,14 @@ class SosService {
       status: { $in: ["ACTIVE", "ESCALATING"] },
     })
       .populate("userId", "name surname")
+      .populate("participants.userId", "name surname")
       .sort({ status: -1, currentStage: -1, activatedAt: 1 })
       .lean();
 
     // Décrypter les noms et enrichir les données
-    const enrichedSessions = sessions.map((session: any) => {
-      const now = new Date();
-      const expiresAt = new Date(session.expiresAt);
-      const timeRemaining = Math.floor(
-        (expiresAt.getTime() - now.getTime()) / 1000,
-      );
-      const timeSinceExpired =
-        timeRemaining < 0 ? Math.abs(timeRemaining) : null;
-
-      // Calculer le niveau d'urgence
-      let urgencyLevel = "low";
-      if (session.status === "ESCALATING") {
-        if (session.currentStage >= 2) urgencyLevel = "critical";
-        else if (session.currentStage === 1) urgencyLevel = "high";
-        else urgencyLevel = "medium";
-      }
-
-      return {
-        ...session,
-        user: session.userId
-          ? {
-              id: session.userId._id,
-              name: decrypt(session.userId.name),
-              surname: decrypt(session.userId.surname),
-            }
-          : null,
-        timeRemaining: Math.max(0, timeRemaining),
-        timeSinceExpired,
-        urgencyLevel,
-      };
-    });
+    const enrichedSessions = sessions.map((session: any) =>
+      this.enrichSessionForAdmin(session),
+    );
 
     return enrichedSessions;
   }
@@ -1318,11 +1790,38 @@ class SosService {
       throw new Error("SESSION_NOT_FOUND");
     }
 
+    const now = new Date();
     session.status = "RESOLVED";
-    session.resolvedAt = new Date();
+    session.resolvedAt = now;
     session.resolvedBy = "ADMIN";
 
+    // Marquer tous les participants comme LEFT
+    session.participants.forEach((p) => {
+      if (p.status !== "LEFT") {
+        p.status = "LEFT";
+        p.leftAt = now;
+      }
+    });
+
     await session.save();
+
+    // Notifier tous les participants que la session a été annulée par un admin
+    for (const participant of session.participants) {
+      try {
+        webSocketService.sendNotificationToUser(participant.userId.toString(), {
+          type: "sos_session_cancelled_admin",
+          sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+          message: "Votre session SOS a été annulée par un administrateur.",
+          reason,
+        });
+      } catch (error) {
+        sosLogger.error("Failed to notify participant of admin cancellation", {
+          participantId: participant.userId.toString(),
+          sessionId: session._id?.toString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
     // Nettoyer les contacts temporaires
     await this.cleanupSessionContacts(session._id.toString());
@@ -1351,21 +1850,25 @@ class SosService {
       },
     });
 
-    console.log(
-      `🛑 [SOS-ADMIN] Session ${sessionId} annulée par admin ${adminId}`,
-    );
+    sosLogger.info("Admin cancelled SOS session", {
+      sessionId,
+      adminId,
+      reason,
+    });
 
     return session;
   }
 
   /**
    * Récupérer les détails complets d'une session (admin)
+   * Inclut les participants détaillés, contacts de tous les participants, events
    */
   async getSessionDetails(sessionId: string): Promise<any> {
     const session = await SosSessionModel.findById(
       new mongoose.Types.ObjectId(sessionId),
     )
       .populate("userId", "name surname email")
+      .populate("participants.userId", "name surname email")
       .lean();
 
     if (!session) {
@@ -1379,12 +1882,66 @@ class SosService {
       .sort({ createdAt: -1 })
       .lean();
 
-    // Récupérer les contacts d'urgence de l'utilisateur
-    const contacts = await SosContactModel.find({
-      userId: session.userId,
+    const participants = (session as any).participants || [];
+    const participantUserIds = participants
+      .map((p: any) => {
+        if (p.userId && typeof p.userId === "object") return p.userId._id;
+        return p.userId;
+      })
+      .filter(Boolean);
+
+    // Récupérer les contacts d'urgence de TOUS les participants
+    const allContacts = await SosContactModel.find({
+      userId: { $in: participantUserIds },
     })
       .sort({ isDefault: -1, createdAt: -1 })
       .lean();
+
+    // Grouper les contacts par participant userId
+    const contactsByParticipant: Record<string, any[]> = {};
+    const phonesSeen = new Set<string>();
+    const deduplicatedContacts: any[] = [];
+
+    allContacts.forEach((contact: any) => {
+      const uid = contact.userId?.toString();
+      if (!contactsByParticipant[uid]) contactsByParticipant[uid] = [];
+      contactsByParticipant[uid].push(contact);
+
+      // Déduplication par téléphone
+      const phone = contact.phone?.toString()?.trim();
+      if (phone && !phonesSeen.has(phone)) {
+        phonesSeen.add(phone);
+        deduplicatedContacts.push(contact);
+      }
+    });
+
+    // Construire les détails de chaque participant
+    const participantsDetails = participants.map((p: any) => {
+      const userInfo =
+        p.userId && typeof p.userId === "object" ? p.userId : null;
+      const uid = userInfo ? userInfo._id?.toString() : p.userId?.toString();
+      return {
+        userId: uid,
+        name: userInfo?.name ? decrypt(userInfo.name) : null,
+        surname: userInfo?.surname ? decrypt(userInfo.surname) : null,
+        email: userInfo?.email ? decrypt(userInfo.email) : null,
+        status: p.status,
+        currentStage: p.currentStage,
+        joinedAt: p.joinedAt,
+        leftAt: p.leftAt,
+        lastHeartbeatAt: p.lastHeartbeatAt,
+        lastKnownLat: p.lastKnownLat,
+        lastKnownLng: p.lastKnownLng,
+        lastKnownAccuracy: p.lastKnownAccuracy,
+        stage0TriggeredAt: p.stage0TriggeredAt,
+        stage1TriggeredAt: p.stage1TriggeredAt,
+        stage2TriggeredAt: p.stage2TriggeredAt,
+        consecutiveHeartbeats: p.consecutiveHeartbeats,
+        surfaceDetectionSent: p.surfaceDetectionSent,
+        reconnectionDetectionSent: p.reconnectionDetectionSent,
+        contacts: contactsByParticipant[uid || ""] || [],
+      };
+    });
 
     // Calculer des métriques utiles
     const now = new Date();
@@ -1394,9 +1951,22 @@ class SosService {
     );
     const timeSinceExpired = timeRemaining < 0 ? Math.abs(timeRemaining) : null;
 
-    // Calculer le niveau d'urgence
+    // Calculer le niveau d'urgence basé sur le pire participant
     let urgencyLevel = "low";
-    if (session.status === "ESCALATING") {
+    const activeParticipants = participants.filter(
+      (p: any) => p.status !== "LEFT",
+    );
+    if (activeParticipants.length > 0) {
+      const worstStage = Math.max(
+        ...activeParticipants.map((p: any) => p.currentStage ?? -1),
+      );
+      const hasEscalating = activeParticipants.some(
+        (p: any) => p.status === "ESCALATING" || p.status === "DISCONNECTED",
+      );
+      if (worstStage >= 2) urgencyLevel = "critical";
+      else if (worstStage === 1) urgencyLevel = "high";
+      else if (worstStage === 0 || hasEscalating) urgencyLevel = "medium";
+    } else if (session.status === "ESCALATING") {
       if (session.currentStage >= 2) urgencyLevel = "critical";
       else if (session.currentStage === 1) urgencyLevel = "high";
       else urgencyLevel = "medium";
@@ -1405,25 +1975,32 @@ class SosService {
     return {
       session: {
         ...session,
-        user: (session as any).userId
-          ? {
-              id: (session as any).userId._id,
-              name: decrypt((session as any).userId.name),
-              surname: decrypt((session as any).userId.surname),
-              email: decrypt((session as any).userId.email),
-            }
-          : null,
+        user:
+          (session as any).userId && typeof (session as any).userId === "object"
+            ? {
+                id: (session as any).userId._id,
+                name: decrypt((session as any).userId.name),
+                surname: decrypt((session as any).userId.surname),
+                email: decrypt((session as any).userId.email),
+              }
+            : null,
+        participantCount: participants.length,
+        isGroupSession: participants.length > 1,
         timeRemaining: Math.max(0, timeRemaining),
         timeSinceExpired,
         urgencyLevel,
       },
+      participantsDetails,
       events,
-      contacts,
+      contacts: allContacts,
+      deduplicatedContacts,
+      contactsByParticipant,
     };
   }
 
   /**
    * Récupérer l'historique de toutes les sessions (admin)
+   * Supporte la recherche par userId comme créateur OU participant
    */
   async getAdminSessionHistory(
     limit: number = 50,
@@ -1437,26 +2014,50 @@ class SosService {
     }
 
     if (userId) {
-      query.userId = new mongoose.Types.ObjectId(userId);
+      const userObjectId = new mongoose.Types.ObjectId(userId);
+      // Chercher dans userId (créateur) OU dans participants.userId
+      query.$or = [
+        { userId: userObjectId },
+        { "participants.userId": userObjectId },
+      ];
     }
 
     const sessions = await SosSessionModel.find(query)
       .populate("userId", "name surname")
+      .populate("participants.userId", "name surname")
       .sort({ createdAt: -1 })
       .limit(Math.min(limit, 100))
       .lean();
 
-    // Décrypter les noms
-    const enrichedSessions = sessions.map((session: any) => ({
-      ...session,
-      user: session.userId
-        ? {
-            id: session.userId._id,
-            name: decrypt(session.userId.name),
-            surname: decrypt(session.userId.surname),
-          }
-        : null,
-    }));
+    // Décrypter les noms et enrichir avec infos participants
+    const enrichedSessions = sessions.map((session: any) => {
+      const participants = session.participants || [];
+      const participantsOverview = participants.map((p: any) => {
+        const userInfo =
+          p.userId && typeof p.userId === "object" ? p.userId : null;
+        return {
+          userId: userInfo ? userInfo._id?.toString() : p.userId?.toString(),
+          name: userInfo?.name ? decrypt(userInfo.name) : null,
+          surname: userInfo?.surname ? decrypt(userInfo.surname) : null,
+          status: p.status,
+        };
+      });
+
+      return {
+        ...session,
+        user:
+          session.userId && typeof session.userId === "object"
+            ? {
+                id: session.userId._id,
+                name: decrypt(session.userId.name),
+                surname: decrypt(session.userId.surname),
+              }
+            : null,
+        participantCount: participants.length,
+        isGroupSession: participants.length > 1,
+        participantsOverview,
+      };
+    });
 
     return enrichedSessions;
   }
@@ -1513,18 +2114,61 @@ class SosService {
               $cond: [{ $eq: ["$status", "RESOLVED"] }, 1, 0],
             },
           },
+          groupSessions: {
+            $sum: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ["$participants", []] } }, 1] },
+                1,
+                0,
+              ],
+            },
+          },
+          soloSessions: {
+            $sum: {
+              $cond: [
+                { $lte: [{ $size: { $ifNull: ["$participants", []] } }, 1] },
+                1,
+                0,
+              ],
+            },
+          },
+          totalParticipants: {
+            $sum: { $size: { $ifNull: ["$participants", []] } },
+          },
+          groupParticipantsTotal: {
+            $sum: {
+              $cond: [
+                { $gt: [{ $size: { $ifNull: ["$participants", []] } }, 1] },
+                { $size: { $ifNull: ["$participants", []] } },
+                0,
+              ],
+            },
+          },
         },
       },
     ];
 
     const overviewResult = await SosSessionModel.aggregate(overviewPipeline);
-    const overview = overviewResult[0] || {
+    const overviewRaw = overviewResult[0] || {
       totalSessions: 0,
       activeSessions: 0,
       escalatingSessions: 0,
       resolvedSessions: 0,
+      groupSessions: 0,
+      soloSessions: 0,
+      totalParticipants: 0,
+      groupParticipantsTotal: 0,
     };
-    delete overview._id;
+    delete overviewRaw._id;
+
+    const overview = {
+      totalSessions: overviewRaw.totalSessions,
+      activeSessions: overviewRaw.activeSessions,
+      escalatingSessions: overviewRaw.escalatingSessions,
+      resolvedSessions: overviewRaw.resolvedSessions,
+      groupSessions: overviewRaw.groupSessions,
+      soloSessions: overviewRaw.soloSessions,
+    };
 
     // ─── DURÉES (sessions résolues uniquement) ────────────────────────
     const durationsPipeline: any[] = [
@@ -1853,12 +2497,22 @@ class SosService {
     };
 
     // ─── UTILISATEURS ──────────────────────────────────────────────────
+    // Compter les sessions par participant (via $unwind sur participants)
+    // pour inclure les participations (pas juste les sessions créées)
     const usersPipeline: any[] = [
       { $match: dateFilter },
+      { $unwind: { path: "$participants", preserveNullAndEmptyArrays: true } },
       {
         $group: {
-          _id: "$userId",
+          _id: {
+            $ifNull: ["$participants.userId", "$userId"],
+          },
           sessionCount: { $sum: 1 },
+          asCreator: {
+            $sum: {
+              $cond: [{ $eq: ["$participants.userId", "$userId"] }, 1, 0],
+            },
+          },
           totalDuration: {
             $sum: {
               $cond: [
@@ -1885,6 +2539,7 @@ class SosService {
           _id: 0,
           userId: { $toString: "$_id" },
           sessionCount: 1,
+          asCreator: 1,
           totalDuration: { $round: ["$totalDuration", 0] },
         },
       },
@@ -1938,9 +2593,87 @@ class SosService {
       averagePerSession,
     };
 
+    // ─── STATISTIQUES DE GROUPE ───────────────────────────────────────
+    const groupStatsPipeline: any[] = [
+      { $match: dateFilter },
+      {
+        $addFields: {
+          participantCount: { $size: { $ifNull: ["$participants", []] } },
+        },
+      },
+      {
+        $match: { participantCount: { $gt: 1 } },
+      },
+      {
+        $group: {
+          _id: null,
+          totalGroupSessions: { $sum: 1 },
+          avgGroupSize: { $avg: "$participantCount" },
+          maxGroupSize: { $max: "$participantCount" },
+          totalGroupParticipants: { $sum: "$participantCount" },
+        },
+      },
+    ];
+
+    const groupStatsResult =
+      await SosSessionModel.aggregate(groupStatsPipeline);
+
+    // Compter le taux d'escalation par participant
+    const participantEscalationPipeline: any[] = [
+      { $match: dateFilter },
+      { $unwind: "$participants" },
+      {
+        $group: {
+          _id: null,
+          totalParticipants: { $sum: 1 },
+          escalatedParticipants: {
+            $sum: {
+              $cond: [{ $gte: ["$participants.currentStage", 0] }, 1, 0],
+            },
+          },
+        },
+      },
+    ];
+
+    const participantEscResult = await SosSessionModel.aggregate(
+      participantEscalationPipeline,
+    );
+
+    const groupStatsData = groupStatsResult[0] || {
+      totalGroupSessions: 0,
+      avgGroupSize: 0,
+      maxGroupSize: 0,
+      totalGroupParticipants: 0,
+    };
+
+    const partEscData = participantEscResult[0] || {
+      totalParticipants: 0,
+      escalatedParticipants: 0,
+    };
+
+    const groupStats = {
+      totalGroupSessions: groupStatsData.totalGroupSessions,
+      totalSoloSessions: overviewRaw.soloSessions,
+      averageGroupSize:
+        Math.round((groupStatsData.avgGroupSize || 0) * 10) / 10,
+      maxGroupSize: groupStatsData.maxGroupSize || 0,
+      participantEscalationRate:
+        partEscData.totalParticipants > 0
+          ? Math.round(
+              (partEscData.escalatedParticipants /
+                partEscData.totalParticipants) *
+                100 *
+                10,
+            ) / 10
+          : 0,
+    };
+
     // ─── RÉSULTAT FINAL ────────────────────────────────────────────────
     const duration = Date.now() - startTime;
-    console.log(`📈 [SOS-ADMIN] Stats calculées en ${duration}ms`);
+    sosLogger.info("Admin SOS stats calculated", {
+      durationMs: duration,
+      totalSessions: overview.totalSessions,
+    });
 
     return {
       period,
@@ -1953,6 +2686,7 @@ class SosService {
       patterns,
       users,
       heartbeats,
+      groupStats,
     };
   }
 
@@ -1969,15 +2703,16 @@ class SosService {
       });
 
       if (result.deletedCount > 0) {
-        console.log(
-          `🧹 [SOS] ${result.deletedCount} contact(s) temporaire(s) supprimé(s) pour session ${sessionId}`,
-        );
+        sosLogger.info("Session contacts cleaned up", {
+          sessionId,
+          deletedCount: result.deletedCount,
+        });
       }
     } catch (error) {
-      console.error(
-        `❌ [SOS] Erreur nettoyage contacts session ${sessionId}:`,
-        error,
-      );
+      sosLogger.error("Failed to cleanup session contacts", {
+        sessionId,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -1999,7 +2734,12 @@ class SosService {
         createdAt: new Date(),
       }).save();
     } catch (error) {
-      console.error(`❌ [SOS] Erreur log événement ${type}:`, error);
+      sosLogger.error("Failed to log SOS event", {
+        sessionId: sessionId.toString(),
+        userId,
+        type,
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 }

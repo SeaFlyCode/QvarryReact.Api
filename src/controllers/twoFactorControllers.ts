@@ -7,6 +7,9 @@ import jwt from "jsonwebtoken";
 import UserModel from "../models/users";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
 import { auditService } from "../services/auditService";
+import { logger } from "../services/loggerService";
+
+const twoFactorLogger = logger.child({ service: "two-factor" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // AUTHENTIFICATION À DEUX FACTEURS (2FA/TOTP)
@@ -104,7 +107,7 @@ export async function setupTwoFactor(
     // Générer le QR Code
     const qrCodeDataUrl = await QRCode.toDataURL(otpauthUrl);
 
-    console.log(`🔐 [2FA] Setup initié pour l'utilisateur ${userId}`);
+    twoFactorLogger.info("Setup initié pour l'utilisateur", { userId });
 
     await auditService.log({
       userId,
@@ -122,7 +125,9 @@ export async function setupTwoFactor(
       message: "Scannez le QR code avec votre application d'authentification",
     });
   } catch (error) {
-    console.error("❌ [2FA] Erreur setup:", error);
+    twoFactorLogger.error("Erreur setup", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return res
       .status(500)
       .json({ error: "Erreur lors de la configuration de la 2FA" });
@@ -202,7 +207,7 @@ export async function verifyAndEnableTwoFactor(
     user.two_factor_recovery_codes = hashedRecoveryCodes;
     await user.save();
 
-    console.log(`✅ [2FA] Activé pour l'utilisateur ${userId}`);
+    twoFactorLogger.info("Activé pour l'utilisateur", { userId });
 
     await auditService.log({
       userId,
@@ -219,7 +224,9 @@ export async function verifyAndEnableTwoFactor(
       recoveryCodes, // Les afficher une seule fois !
     });
   } catch (error) {
-    console.error("❌ [2FA] Erreur vérification:", error);
+    twoFactorLogger.error("Erreur vérification", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return res
       .status(500)
       .json({ error: "Erreur lors de l'activation de la 2FA" });
@@ -314,7 +321,7 @@ export async function disableTwoFactor(
     user.two_factor_recovery_codes = [];
     await user.save();
 
-    console.log(`🔓 [2FA] Désactivé pour l'utilisateur ${userId}`);
+    twoFactorLogger.info("Désactivé pour l'utilisateur", { userId });
 
     await auditService.log({
       userId,
@@ -330,7 +337,9 @@ export async function disableTwoFactor(
       message: "Authentification à deux facteurs désactivée",
     });
   } catch (error) {
-    console.error("❌ [2FA] Erreur désactivation:", error);
+    twoFactorLogger.error("Erreur désactivation", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return res
       .status(500)
       .json({ error: "Erreur lors de la désactivation de la 2FA" });
@@ -420,9 +429,10 @@ export async function verifyTwoFactorLogin(
         details: { remainingCodes: user.two_factor_recovery_codes!.length },
       });
 
-      console.log(
-        `⚠️ [2FA] Code de récupération utilisé pour ${userId}, ${user.two_factor_recovery_codes!.length} restants`,
-      );
+      twoFactorLogger.warn("Code de récupération utilisé", {
+        userId,
+        remainingCodes: user.two_factor_recovery_codes!.length,
+      });
     } else {
       // Vérifier comme code TOTP normal
       const decryptedSecret = decrypt(user.two_factor_secret);
@@ -462,7 +472,9 @@ export async function verifyTwoFactorLogin(
       verified: true,
     });
   } catch (error) {
-    console.error("❌ [2FA] Erreur vérification login:", error);
+    twoFactorLogger.error("Erreur vérification login", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return res
       .status(500)
       .json({ error: "Erreur lors de la vérification 2FA" });
@@ -510,7 +522,7 @@ export async function regenerateRecoveryCodes(
     user.two_factor_recovery_codes = hashedRecoveryCodes;
     await user.save();
 
-    console.log(`🔄 [2FA] Codes de récupération régénérés pour ${userId}`);
+    twoFactorLogger.info("Codes de récupération régénérés", { userId });
 
     await auditService.log({
       userId,
@@ -528,7 +540,9 @@ export async function regenerateRecoveryCodes(
         "Nouveaux codes de récupération générés. Conservez-les en lieu sûr.",
     });
   } catch (error) {
-    console.error("❌ [2FA] Erreur régénération codes:", error);
+    twoFactorLogger.error("Erreur régénération codes", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return res
       .status(500)
       .json({ error: "Erreur lors de la régénération des codes" });
@@ -564,7 +578,9 @@ export async function getTwoFactorStatus(
       recoveryCodesRemaining: user.two_factor_recovery_codes?.length || 0,
     });
   } catch (error) {
-    console.error("❌ [2FA] Erreur statut:", error);
+    twoFactorLogger.error("Erreur statut", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return res
       .status(500)
       .json({ error: "Erreur lors de la récupération du statut 2FA" });

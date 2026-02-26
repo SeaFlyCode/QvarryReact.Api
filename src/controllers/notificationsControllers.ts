@@ -2,6 +2,9 @@ import { Request, Response } from "express";
 import NotificationModel from "../models/notifications";
 import mongoose from "mongoose";
 import { createNotification } from "../services/notificationService";
+import { logger } from "../services/loggerService";
+
+const notifCtrlLogger = logger.child({ service: "notifications-controller" });
 
 /**
  * Récupère toutes les notifications de l'utilisateur connecté
@@ -54,7 +57,10 @@ export const getNotifications = async (req: Request, res: Response) => {
       unreadCount,
     });
   } catch (error) {
-    console.error("[getNotifications] Erreur:", error);
+    notifCtrlLogger.error("Get notifications error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ message: "Erreur serveur" });
   }
 };
@@ -76,7 +82,10 @@ export const getUnreadCount = async (req: Request, res: Response) => {
 
     res.json({ unreadCount });
   } catch (error) {
-    console.error("[getUnreadCount] Erreur:", error);
+    notifCtrlLogger.error("Get unread count error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ message: "Erreur serveur" });
   }
 };
@@ -111,7 +120,10 @@ export const markAsRead = async (req: Request, res: Response) => {
 
     res.json({ message: "Notification marquée comme lue" });
   } catch (error) {
-    console.error("[markAsRead] Erreur:", error);
+    notifCtrlLogger.error("Mark as read error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ message: "Erreur serveur" });
   }
 };
@@ -141,7 +153,10 @@ export const markAllAsRead = async (req: Request, res: Response) => {
       message: "Toutes les notifications ont été marquées comme lues",
     });
   } catch (error) {
-    console.error("[markAllAsRead] Erreur:", error);
+    notifCtrlLogger.error("Mark all as read error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ message: "Erreur serveur" });
   }
 };
@@ -169,7 +184,10 @@ export const deleteNotification = async (req: Request, res: Response) => {
 
     res.json({ message: "Notification supprimée" });
   } catch (error) {
-    console.error("[deleteNotification] Erreur:", error);
+    notifCtrlLogger.error("Delete notification error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ message: "Erreur serveur" });
   }
 };
@@ -191,7 +209,10 @@ export const deleteAllRead = async (req: Request, res: Response) => {
 
     res.json({ message: "Toutes les notifications lues ont été supprimées" });
   } catch (error) {
-    console.error("[deleteAllRead] Erreur:", error);
+    notifCtrlLogger.error("Delete all read error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ message: "Erreur serveur" });
   }
 };
@@ -238,7 +259,10 @@ export const createNotificationUtil = async (
     await notification.save();
     return notification;
   } catch (error) {
-    console.error("[createNotification] Erreur:", error);
+    notifCtrlLogger.error("Create notification error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     throw error;
   }
 };
@@ -275,7 +299,10 @@ export const createTestNotification = async (req: Request, res: Response) => {
       notification,
     });
   } catch (error) {
-    console.error("[createTestNotification] Erreur:", error);
+    notifCtrlLogger.error("Create test notification error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ message: "Erreur serveur" });
   }
 };

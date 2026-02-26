@@ -29,6 +29,9 @@ import {
 import { refreshTokenService } from "../services/refreshTokenService";
 import { redisSessionService } from "../services/redisSessionService";
 import { auditService } from "../services/auditService";
+import { logger } from "../services/loggerService";
+
+const userLogger = logger.child({ service: "users" });
 
 function decryptUser(user: IUser): IUser {
   return {
@@ -129,12 +132,12 @@ export async function handleCreateUser(req: Request, res: Response) {
     const emailVerificationExpires = new Date(Date.now() + 24 * 60 * 60 * 1000); // 24 heures
 
     // Log sécurisé sans exposer les valeurs sensibles
-    console.log(
-      `📧 [CREATE USER] Token de vérification généré (longueur: ${emailVerificationToken.length})`,
-    );
-    console.log(
-      `📧 [CREATE USER] Code de vérification envoyé (longueur: ${emailVerificationCode.length})`,
-    );
+    userLogger.info("Token de verification genere", {
+      tokenLength: emailVerificationToken.length,
+    });
+    userLogger.info("Code de verification envoye", {
+      codeLength: emailVerificationCode.length,
+    });
 
     const passwordHash = await bcrypt.hash(password, 12);
     const newUser: IUserBase = {
@@ -187,7 +190,11 @@ export async function handleCreateUser(req: Request, res: Response) {
       name,
       verificationLink,
       emailVerificationCode,
-    ).catch((err) => console.error("Erreur envoi email bienvenue:", err));
+    ).catch((err) =>
+      userLogger.error("Erreur envoi email bienvenue", {
+        error: err instanceof Error ? err.message : String(err),
+      }),
+    );
 
     // SEC-043: Ne pas exposer contact_code dans la réponse (donnée sensible)
     res.status(201).json({
@@ -197,7 +204,9 @@ export async function handleCreateUser(req: Request, res: Response) {
       requiresEmailVerification: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur création utilisateur:", error);
+    userLogger.error("Erreur creation utilisateur", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de la création de l'utilisateur.",
       error: getErrorMessage(error),
@@ -231,7 +240,9 @@ export async function handleGetAllUsers(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error("Erreur récupération utilisateurs:", error);
+    userLogger.error("Erreur recuperation utilisateurs", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de la récupération des utilisateurs.",
       error: getErrorMessage(error),
@@ -266,7 +277,10 @@ export async function handleGetUserById(req: Request, res: Response) {
 
     res.status(200).json(decryptUser(user));
   } catch (error: unknown) {
-    console.error("Erreur récupération utilisateur:", error);
+    userLogger.error("Erreur recuperation utilisateur", {
+      userId: req.params.id,
+      error: getErrorMessage(error),
+    });
     return res.status(400).json({ message: getErrorMessage(error) });
   }
 }
@@ -294,7 +308,10 @@ export async function handleDeleteUser(req: Request, res: Response) {
     await deleteUserById(userId);
     res.status(200).json({ message: "Utilisateur supprimé avec succès." });
   } catch (error: unknown) {
-    console.error("Erreur suppression utilisateur:", error);
+    userLogger.error("Erreur suppression utilisateur", {
+      userId: req.params.id,
+      error: getErrorMessage(error),
+    });
     return res.status(400).json({ message: getErrorMessage(error) });
   }
 }
@@ -392,9 +409,9 @@ export async function handleUpdateUser(req: Request, res: Response) {
         allPasswordsToCheck,
       );
       if (isInHistory) {
-        console.warn(
-          `⚠️ [UPDATE-USER] Tentative de réutilisation d'un ancien mot de passe pour userId: ${userId}`,
-        );
+        userLogger.warn("Tentative reutilisation ancien mot de passe", {
+          userId,
+        });
         return res.status(400).json({
           message:
             "Ce mot de passe a déjà été utilisé récemment. Veuillez en choisir un nouveau.",
@@ -426,9 +443,10 @@ export async function handleUpdateUser(req: Request, res: Response) {
       );
       await redisSessionService.deleteSession(userId);
 
-      console.log(
-        `🔐 [UPDATE-USER] Mot de passe changé pour userId: ${userId}, ${revokedCount} tokens révoqués`,
-      );
+      userLogger.info("Mot de passe change", {
+        userId,
+        tokensRevoked: revokedCount,
+      });
 
       // Audit de la révocation
       await auditService.log({
@@ -469,7 +487,10 @@ export async function handleUpdateUser(req: Request, res: Response) {
 
     res.status(200).json({ message: "Profil mis à jour avec succès." });
   } catch (error: unknown) {
-    console.error("Erreur mise à jour utilisateur:", error);
+    userLogger.error("Erreur mise a jour utilisateur", {
+      userId: req.params.id,
+      error: getErrorMessage(error),
+    });
     return res.status(400).json({ message: getErrorMessage(error) });
   }
 }
@@ -545,16 +566,13 @@ export async function handleVerifyEmailByCode(req: Request, res: Response) {
         decryptedUserEmail,
         registrationDate,
       ).catch((err) => {
-        console.error(
-          `❌ [EMAIL] Erreur envoi notification admin ${adminEmail}:`,
-          err,
-        );
+        userLogger.error("Erreur envoi notification admin", {
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
     }
 
-    console.log(
-      `✅ [AUTH] Email vérifié pour ${decryptedUserEmail}. ${admins.length} admin(s) notifié(s).`,
-    );
+    userLogger.info("Email verifie", { adminsNotified: admins.length });
 
     res.status(200).json({
       message:
@@ -563,7 +581,9 @@ export async function handleVerifyEmailByCode(req: Request, res: Response) {
       pendingAdminValidation: true,
     });
   } catch (error: unknown) {
-    console.error("Erreur vérification email par code:", error);
+    userLogger.error("Erreur verification email par code", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de la vérification de l'email.",
       error: getErrorMessage(error),
@@ -634,7 +654,9 @@ export async function handleResendVerificationEmail(
         "Si cet email est associé à un compte, un nouveau code de vérification sera envoyé.",
     });
   } catch (error: unknown) {
-    console.error("Erreur renvoi email vérification:", error);
+    userLogger.error("Erreur renvoi email verification", {
+      error: getErrorMessage(error),
+    });
     return res.status(500).json({
       message: "Erreur lors de l'envoi du code de vérification.",
       error: getErrorMessage(error),

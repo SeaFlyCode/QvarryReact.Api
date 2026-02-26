@@ -10,6 +10,11 @@ import { getErrorMessage } from "../utils/errorUtils";
 import { webSocketService } from "../services/webSocketService";
 import { refreshFromDB } from "./auth";
 import { memoryStorage } from "../services/memoryStorageService";
+import { logger } from "../services/loggerService";
+
+const mobileSyncCtrlLogger = logger.child({
+  service: "mobile-sync-controller",
+});
 
 // ═══════════════════════════════════════════════════════════════════════════
 // GET /api/mobile/sync - Synchronisation incrémentale
@@ -61,9 +66,11 @@ export async function handleMobileSync(req: Request, res: Response) {
     }
 
     const duration = Date.now() - startTime;
-    console.log(
-      `📱 [MOBILE-SYNC] GET sync pour ${userId} - ${result.totalChanges} éléments en ${duration}ms`,
-    );
+    mobileSyncCtrlLogger.info("GET sync completed", {
+      userId,
+      totalChanges: result.totalChanges,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
@@ -71,7 +78,10 @@ export async function handleMobileSync(req: Request, res: Response) {
       syncDuration: duration,
     });
   } catch (error) {
-    console.error(`❌ [MOBILE-SYNC] Erreur GET sync:`, getErrorMessage(error));
+    mobileSyncCtrlLogger.error("GET sync error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la synchronisation",
       code: "SYNC_ERROR",
@@ -193,9 +203,14 @@ export async function handleMobileSyncPush(req: Request, res: Response) {
         memoryStorage.setLastRefreshedAt(userId, previousRefreshedAt);
       } catch (refreshError) {
         // Non bloquant : le PC pourra toujours refresh manuellement
-        console.warn(
-          "⚠️ [MOBILE-SYNC] Erreur refreshFromDB après sync (non bloquant):",
-          getErrorMessage(refreshError),
+        mobileSyncCtrlLogger.warn(
+          "refreshFromDB after sync failed (non-blocking)",
+          {
+            error:
+              refreshError instanceof Error
+                ? refreshError.message
+                : String(refreshError),
+          },
         );
       }
     }
@@ -218,9 +233,11 @@ export async function handleMobileSyncPush(req: Request, res: Response) {
           lists: syncedLists,
         });
       } catch (wsError) {
-        console.warn(
-          "⚠️ [MOBILE-SYNC] Erreur notification WebSocket (non bloquant):",
-          getErrorMessage(wsError),
+        mobileSyncCtrlLogger.warn(
+          "WebSocket notification failed (non-blocking)",
+          {
+            error: wsError instanceof Error ? wsError.message : String(wsError),
+          },
         );
       }
     }
@@ -234,9 +251,12 @@ export async function handleMobileSyncPush(req: Request, res: Response) {
     }
 
     const duration = Date.now() - startTime;
-    console.log(
-      `📱 [MOBILE-SYNC] POST sync pour ${userId} - ${result.synced.length}/${changes.length} appliqués en ${duration}ms`,
-    );
+    mobileSyncCtrlLogger.info("POST sync completed", {
+      userId,
+      syncedCount: result.synced.length,
+      totalChanges: changes.length,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
@@ -247,7 +267,10 @@ export async function handleMobileSyncPush(req: Request, res: Response) {
       syncDuration: duration,
     });
   } catch (error) {
-    console.error(`❌ [MOBILE-SYNC] Erreur POST sync:`, getErrorMessage(error));
+    mobileSyncCtrlLogger.error("POST sync error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de l'application des changements",
       code: "SYNC_PUSH_ERROR",
@@ -283,9 +306,11 @@ export async function handleMobileFullData(req: Request, res: Response) {
     const result = await mobileSyncService.getFullData(userId);
 
     const duration = Date.now() - startTime;
-    console.log(
-      `📱 [MOBILE-SYNC] Full data pour ${userId} - ${result.totalChanges} éléments en ${duration}ms`,
-    );
+    mobileSyncCtrlLogger.info("Full data completed", {
+      userId,
+      totalChanges: result.totalChanges,
+      duration,
+    });
 
     res.status(200).json({
       success: true,
@@ -293,7 +318,10 @@ export async function handleMobileFullData(req: Request, res: Response) {
       syncDuration: duration,
     });
   } catch (error) {
-    console.error(`❌ [MOBILE-SYNC] Erreur full data:`, getErrorMessage(error));
+    mobileSyncCtrlLogger.error("Full data error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des données",
       code: "FULL_DATA_ERROR",
@@ -377,10 +405,10 @@ export async function handleMobileSyncStatus(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error(
-      `❌ [MOBILE-SYNC] Erreur sync status:`,
-      getErrorMessage(error),
-    );
+    mobileSyncCtrlLogger.error("Sync status error", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la vérification",
       code: "SYNC_STATUS_ERROR",

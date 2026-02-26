@@ -1,0 +1,376 @@
+// ════════════════════════════════════════════════════════
+// 📚 EXEMPLES D'UTILISATION DU SYSTÈME DE LOGGING
+// ════════════════════════════════════════════════════════
+// Ce fichier n'est pas exécuté - il sert de documentation
+// ════════════════════════════════════════════════════════
+
+import { logger } from "./services/loggerService";
+import { correlationMiddleware } from "./middlewares/correlationMiddleware";
+import express from "express";
+
+// ════════════════════════════════════════════════════════
+// 🚀 1. Configuration du middleware dans Express
+// ════════════════════════════════════════════════════════
+
+const app = express();
+
+// IMPORTANT: Ajouter le middleware de corrélation AVANT les autres middlewares
+// pour que tous les logs incluent le correlation ID
+app.use(correlationMiddleware);
+
+// ════════════════════════════════════════════════════════
+// 📝 2. Utilisation basique du logger
+// ════════════════════════════════════════════════════════
+
+// Log debug (uniquement en développement par défaut)
+logger.debug("Détails de debug", { userId: "123", action: "test" });
+
+// Log info (niveau par défaut en production)
+logger.info("Serveur démarré avec succès", {
+  port: 3000,
+  env: process.env.NODE_ENV,
+});
+
+// Log HTTP (pour les requêtes HTTP)
+logger.http("GET /api/users - 200 OK", {
+  method: "GET",
+  path: "/api/users",
+  status: 200,
+  responseTime: 45,
+});
+
+// Log warning
+logger.warn("Tentative de connexion échouée", {
+  userId: "123",
+  reason: "Mot de passe incorrect",
+  attempts: 3,
+});
+
+// Log error
+logger.error("Erreur de connexion à MongoDB", {
+  error: "Connection timeout",
+  host: "localhost:27017",
+});
+
+// Log critical (niveau le plus élevé)
+logger.critical("Exception non gérée détectée", {
+  error: "TypeError: Cannot read property x of undefined",
+  stack: "Stack trace...",
+  service: "auth",
+});
+
+// ════════════════════════════════════════════════════════
+// 🔗 3. Utilisation avec Morgan pour les logs HTTP
+// ════════════════════════════════════════════════════════
+
+import morgan from "morgan";
+import { httpLogFormat, httpLogStream } from "./services/loggerService";
+
+// Remplacer morgan standard par notre format
+app.use(morgan(httpLogFormat, { stream: httpLogStream }));
+
+// ════════════════════════════════════════════════════════
+// 👶 4. Child Logger - Logger avec contexte
+// ════════════════════════════════════════════════════════
+
+// Créer un child logger pour un service spécifique
+const authLogger = logger.child({ service: "auth" });
+
+// Tous les logs avec authLogger incluront { service: 'auth' }
+authLogger.info("Utilisateur authentifié", { userId: "123" });
+// Résultat: { service: 'auth', userId: '123', message: 'Utilisateur authentifié', ... }
+
+authLogger.error("Échec de l'authentification", {
+  userId: "123",
+  reason: "Token expiré",
+});
+// Résultat: { service: 'auth', userId: '123', reason: 'Token expiré', ... }
+
+// Child logger dans un contrôleur
+const userLogger = logger.child({ controller: "UserController" });
+userLogger.info("Création d'utilisateur", { email: "user@example.com" });
+
+// ════════════════════════════════════════════════════════
+// 🔒 5. Sanitisation automatique des données sensibles
+// ════════════════════════════════════════════════════════
+
+// Ces données sensibles seront automatiquement masquées
+logger.info("Login attempt", {
+  email: "user@example.com",
+  password: "super-secret-123", // Sera [REDACTED]
+  token: "jwt-token-here", // Sera [REDACTED]
+  apiKey: "secret-api-key", // Sera [REDACTED]
+});
+
+// Résultat dans les logs:
+// {
+//   email: 'user@example.com',
+//   password: '[REDACTED]',
+//   token: '[REDACTED]',
+//   apiKey: '[REDACTED]'
+// }
+
+// ════════════════════════════════════════════════════════
+// 🆔 6. Correlation ID automatique
+// ════════════════════════════════════════════════════════
+
+// Avec le middleware de corrélation actif, tous les logs
+// incluront automatiquement le correlation ID de la requête
+
+app.get("/api/example", async (req, res) => {
+  // Ce log inclura automatiquement req.correlationId
+  logger.info("Traitement de la requête", {
+    endpoint: "/api/example",
+  });
+
+  // Même dans des fonctions asynchrones profondes
+  await someAsyncFunction();
+
+  // Le correlation ID sera toujours présent
+  logger.info("Requête terminée");
+
+  res.json({ success: true });
+});
+
+async function someAsyncFunction() {
+  // Même ici, le correlation ID est disponible via AsyncLocalStorage
+  logger.debug("Fonction async appelée");
+}
+
+// ════════════════════════════════════════════════════════
+// 🎯 7. Utilisation dans un middleware Express
+// ════════════════════════════════════════════════════════
+
+import { Request, Response, NextFunction } from "express";
+
+function authMiddleware(req: Request, res: Response, next: NextFunction) {
+  const authLogger = logger.child({ middleware: "auth" });
+
+  const token = req.headers.authorization;
+
+  if (!token) {
+    authLogger.warn("Requête sans token", {
+      path: req.path,
+      ip: req.ip,
+    });
+    return res.status(401).json({ error: "Unauthorized" });
+  }
+
+  try {
+    // Vérifier le token...
+    authLogger.info("Token validé", { userId: "extracted-user-id" });
+    next();
+  } catch (error) {
+    authLogger.error("Erreur de validation du token", {
+      error: error.message,
+    });
+    res.status(401).json({ error: "Invalid token" });
+  }
+}
+
+// ════════════════════════════════════════════════════════
+// 🐛 8. Logging d'erreurs avec stack trace
+// ════════════════════════════════════════════════════════
+
+try {
+  // Code qui peut échouer
+  throw new Error("Une erreur est survenue");
+} catch (error) {
+  logger.error("Erreur attrapée", {
+    error: error.message,
+    stack: error.stack,
+    context: "additional-context",
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// 🌐 9. Utilisation dans différents services
+// ════════════════════════════════════════════════════════
+
+// Service de base de données
+const dbLogger = logger.child({ service: "database" });
+
+async function connectToDatabase() {
+  dbLogger.info("Tentative de connexion à MongoDB");
+  try {
+    // Connexion...
+    dbLogger.info("Connexion réussie", {
+      host: "localhost",
+      port: 27017,
+    });
+  } catch (error) {
+    dbLogger.error("Échec de connexion", {
+      error: error.message,
+    });
+    throw error;
+  }
+}
+
+// Service Redis
+const redisLogger = logger.child({ service: "redis" });
+
+async function cacheData(key: string, value: any) {
+  redisLogger.debug("Mise en cache des données", { key });
+  try {
+    // Mise en cache...
+    redisLogger.info("Données mises en cache", {
+      key,
+      ttl: 3600,
+    });
+  } catch (error) {
+    redisLogger.error("Erreur de mise en cache", {
+      key,
+      error: error.message,
+    });
+  }
+}
+
+// Service WebSocket
+const wsLogger = logger.child({ service: "websocket" });
+
+function onWebSocketConnection(socket: any) {
+  wsLogger.info("Nouvelle connexion WebSocket", {
+    socketId: socket.id,
+  });
+
+  socket.on("disconnect", () => {
+    wsLogger.info("Déconnexion WebSocket", {
+      socketId: socket.id,
+    });
+  });
+}
+
+// ════════════════════════════════════════════════════════
+// 📊 10. Monitoring et métriques
+// ════════════════════════════════════════════════════════
+
+// Logger les performances
+function logPerformance(operation: string, duration: number) {
+  logger.info("Métrique de performance", {
+    operation,
+    duration,
+    unit: "ms",
+    type: "performance",
+  });
+}
+
+// Exemple avec mesure de temps
+async function performExpensiveOperation() {
+  const start = Date.now();
+
+  logger.debug("Début de l'opération coûteuse");
+
+  // Opération...
+  await new Promise((resolve) => setTimeout(resolve, 1000));
+
+  const duration = Date.now() - start;
+  logPerformance("expensive-operation", duration);
+
+  logger.debug("Fin de l'opération coûteuse", { duration });
+}
+
+// ════════════════════════════════════════════════════════
+// 🚨 11. Gestion des erreurs non gérées
+// ════════════════════════════════════════════════════════
+
+process.on("uncaughtException", (error: Error) => {
+  logger.critical("Exception non capturée", {
+    error: error.message,
+    stack: error.stack,
+    type: "uncaughtException",
+  });
+
+  // Laisser le temps au logger d'écrire avant de quitter
+  setTimeout(() => process.exit(1), 1000);
+});
+
+process.on("unhandledRejection", (reason: any) => {
+  logger.critical("Promise rejection non gérée", {
+    reason: reason?.message || reason,
+    stack: reason?.stack,
+    type: "unhandledRejection",
+  });
+});
+
+// ════════════════════════════════════════════════════════
+// 🔍 12. Utilisation du sanitizeLogData manuellement
+// ════════════════════════════════════════════════════════
+
+import { sanitizeLogData } from "./services/loggerService";
+
+const userData = {
+  id: "123",
+  email: "user@example.com",
+  password: "secret",
+  token: "jwt-token",
+  profile: {
+    name: "John Doe",
+    apiKey: "secret-key",
+  },
+};
+
+// Sanitizer manuellement si nécessaire
+const sanitizedData = sanitizeLogData(userData);
+console.log(sanitizedData);
+// {
+//   id: '123',
+//   email: 'user@example.com',
+//   password: '[REDACTED]',
+//   token: '[REDACTED]',
+//   profile: {
+//     name: 'John Doe',
+//     apiKey: '[REDACTED]'
+//   }
+// }
+
+// ════════════════════════════════════════════════════════
+// 📁 13. Configuration via variables d'environnement
+// ════════════════════════════════════════════════════════
+
+// Dans votre fichier .env :
+// LOG_DIR=logs                 # Dossier des logs (défaut: logs)
+// NODE_ENV=production          # Environment (dev: debug, prod: info)
+
+// Les logs seront créés dans:
+// - logs/app-YYYY-MM-DD.log    (tous les logs info+)
+// - logs/error-YYYY-MM-DD.log  (uniquement error et critical)
+
+// Rotation automatique:
+// - Nouvelle fichier chaque jour
+// - Compression des anciens fichiers
+// - Rétention: 14 jours (app), 30 jours (error)
+// - Taille max: 100MB (app), 50MB (error)
+
+// ════════════════════════════════════════════════════════
+// ✅ Bonnes pratiques
+// ════════════════════════════════════════════════════════
+
+// ✅ DO: Utiliser le niveau approprié
+logger.info("Utilisateur créé"); // Info: événement important
+logger.debug("Query: SELECT * FROM..."); // Debug: détails techniques
+logger.error("Database error", { error }); // Error: erreur récupérable
+logger.critical("Service down", { error }); // Critical: erreur critique
+
+// ✅ DO: Utiliser child logger pour le contexte
+const serviceLogger = logger.child({ service: "auth", version: "1.0" });
+
+// ✅ DO: Logger des objets structurés
+logger.info("User action", { userId, action, timestamp });
+
+// ✅ DO: Sanitizer les données sensibles (automatique)
+logger.info("Login", { email, password }); // password sera [REDACTED]
+
+// ❌ DON'T: Utiliser console.log/warn/error
+// console.log('Bad practice'); // ❌
+logger.info("Good practice"); // ✅
+
+// ❌ DON'T: Logger trop de détails en production
+if (process.env.NODE_ENV !== "production") {
+  logger.debug("Detailed debug info");
+}
+
+// ❌ DON'T: Logger des données sensibles en clair
+// logger.info('Token:', token); // ❌
+logger.info("Auth success", { userId }); // ✅ (pas le token)
+
+export {};

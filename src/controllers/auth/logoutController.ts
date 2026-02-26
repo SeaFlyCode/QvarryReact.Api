@@ -8,6 +8,9 @@ import { syncService } from "../../services/syncService";
 import { clearCookieOptions } from "../../config/cookieConfig";
 import { blacklistToken } from "./authHelpers";
 import UserModel from "../../models/users";
+import { logger } from "../../services/loggerService";
+
+const logoutLogger = logger.child({ service: "auth-logout" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: LOGOUT UTILISATEUR
@@ -22,7 +25,7 @@ export async function handleLogoutUser(req: Request, res: Response) {
       req.cookies?.token || req.headers.authorization?.split(" ")[1];
 
     if (!token) {
-      console.warn(`⚠️ [AUTH] Tentative de logout sans token`);
+      logoutLogger.warn("[AUTH] Tentative de logout sans token");
       return res.status(400).json({
         success: false,
         message: "Token manquant.",
@@ -44,7 +47,7 @@ export async function handleLogoutUser(req: Request, res: Response) {
 
     try {
       if (!process.env.JWT_SECRET) {
-        console.error("❌ [SECURITY] JWT_SECRET non défini");
+        logoutLogger.error("[SECURITY] JWT_SECRET non défini");
         throw new Error("Configuration de sécurité manquante");
       }
 
@@ -74,20 +77,19 @@ export async function handleLogoutUser(req: Request, res: Response) {
       // Révoquer le refresh token associé
       if (tokenId) {
         await refreshTokenService.revokeToken(tokenId, "logout");
-        console.log(`🚫 [AUTH] Refresh token révoqué (tokenId: ${tokenId})`);
+        logoutLogger.info("[AUTH] Refresh token révoqué", { tokenId });
       }
 
       // Nettoyer la session Redis
       await redisSessionService.deleteSession(userId, tokenId);
-      console.log(
-        `🗑️ [AUTH] Session Redis nettoyée pour userId: ${userId}${tokenId ? `:${tokenId}` : ""}`,
-      );
+      logoutLogger.info("[AUTH] Session Redis nettoyée", {
+        userId,
+        tokenId: tokenId || undefined,
+      });
 
       // Supprimer le JTI du bon client
       await redisSessionService.deleteSessionJti(userId, clientType);
-      console.log(
-        `🗑️ [AUTH] JTI supprimé pour userId: ${userId} (clientType: ${clientType})`,
-      );
+      logoutLogger.info("[AUTH] JTI supprimé", { userId, clientType });
 
       // SEC-040: Invalider le token de reset de mot de passe au logout
       // Empêche un attaquant de réutiliser un code de reset après déconnexion
@@ -100,16 +102,21 @@ export async function handleLogoutUser(req: Request, res: Response) {
           },
         },
       ).catch((err: unknown) => {
-        console.warn(`⚠️ [AUTH] Échec nettoyage reset token au logout:`, err);
+        logoutLogger.warn("[AUTH] Échec nettoyage reset token au logout", {
+          userId,
+          error: err instanceof Error ? err.message : String(err),
+        });
       });
 
-      console.log(
-        `🚫 [AUTH] Token blacklisté lors du logout (userId: ${userId})`,
-      );
+      logoutLogger.info("[AUTH] Token blacklisté lors du logout", { userId });
     } catch (jwtError) {
-      console.error(
-        `❌ [AUTH] Erreur lors du décodage du token pour logout:`,
-        jwtError,
+      logoutLogger.error(
+        "[AUTH] Erreur lors du décodage du token pour logout",
+        {
+          error:
+            jwtError instanceof Error ? jwtError.message : String(jwtError),
+          stack: jwtError instanceof Error ? jwtError.stack : undefined,
+        },
       );
       return res.status(200).json({
         success: true,
@@ -128,9 +135,7 @@ export async function handleLogoutUser(req: Request, res: Response) {
     // 5. SYNCHRONISATION DES DONNÉES SI NÉCESSAIRE
     // ─────────────────────────────────────────────────────────────────────
     if (!memoryStorage.hasSession(userId)) {
-      console.log(
-        `ℹ️ [AUTH] Logout sans session active pour userId: ${userId}`,
-      );
+      logoutLogger.info("[AUTH] Logout sans session active", { userId });
       return res.status(200).json({
         success: true,
         message: "Déconnexion réussie (pas de session active).",
@@ -140,15 +145,19 @@ export async function handleLogoutUser(req: Request, res: Response) {
     // Synchroniser si des modifications sont en attente
     if (memoryStorage.isDirty(userId)) {
       try {
-        console.log(
-          `🔄 [AUTH] Synchronisation des données modifiées avant logout...`,
+        logoutLogger.info(
+          "[AUTH] Synchronisation des données modifiées avant logout",
+          { userId },
         );
         const syncResult = await syncService.syncNow(userId);
 
         if (!syncResult.success) {
-          console.error(
-            `❌ [AUTH] Échec de la synchronisation lors du logout:`,
-            syncResult.error,
+          logoutLogger.error(
+            "[AUTH] Échec de la synchronisation lors du logout",
+            {
+              userId,
+              error: syncResult.error,
+            },
           );
           memoryStorage.endSession(userId);
           return res.status(500).json({
@@ -161,12 +170,16 @@ export async function handleLogoutUser(req: Request, res: Response) {
           });
         }
 
-        console.log(`✅ [AUTH] Synchronisation réussie lors du logout`);
+        logoutLogger.info("[AUTH] Synchronisation réussie lors du logout", {
+          userId,
+        });
       } catch (syncError: any) {
-        console.error(
-          `❌ [AUTH] Erreur lors de la synchronisation:`,
-          syncError,
-        );
+        logoutLogger.error("[AUTH] Erreur lors de la synchronisation", {
+          userId,
+          error:
+            syncError instanceof Error ? syncError.message : String(syncError),
+          stack: syncError instanceof Error ? syncError.stack : undefined,
+        });
         memoryStorage.endSession(userId);
         return res.status(500).json({
           success: false,
@@ -183,7 +196,7 @@ export async function handleLogoutUser(req: Request, res: Response) {
     // 6. FERMETURE DE LA SESSION
     // ─────────────────────────────────────────────────────────────────────
     memoryStorage.endSession(userId);
-    console.log(`✅ [AUTH] Déconnexion réussie pour userId: ${userId}`);
+    logoutLogger.info("[AUTH] Déconnexion réussie", { userId });
 
     return res.status(200).json({
       success: true,
@@ -192,7 +205,10 @@ export async function handleLogoutUser(req: Request, res: Response) {
       syncSuccess: true,
     });
   } catch (error: unknown) {
-    console.error(`❌ [AUTH] Erreur lors de la déconnexion:`, error);
+    logoutLogger.error("[AUTH] Erreur lors de la déconnexion", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
 
     // Note: Le nettoyage de session devrait être fait avant cette erreur
     // Si on arrive ici, on ne peut plus accéder aux données du token

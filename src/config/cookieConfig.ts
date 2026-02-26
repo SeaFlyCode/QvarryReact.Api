@@ -6,6 +6,9 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { CookieOptions } from "express";
+import { logger } from "../services/loggerService";
+
+const cookieLogger = logger.child({ service: "cookie-config" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONFIGURATION
@@ -97,6 +100,7 @@ export function getCookieConfig() {
 }
 
 // Log de la configuration au démarrage
-console.log(
-  `🍪 [COOKIES] secure=${COOKIE_SECURE}, sameSite=${COOKIE_SAMESITE}`,
-);
+cookieLogger.info("Cookie configuration", {
+  secure: COOKIE_SECURE,
+  sameSite: COOKIE_SAMESITE,
+});

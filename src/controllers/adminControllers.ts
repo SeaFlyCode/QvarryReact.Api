@@ -14,6 +14,9 @@ import { refreshTokenService } from "../services/refreshTokenService";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import { maskEmail } from "../utils/logUtils";
 import mongoose from "mongoose";
+import { logger } from "../services/loggerService";
+
+const adminLogger = logger.child({ service: "admin" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CACHE DES STATISTIQUES ADMIN (HIGH-08, MEDIUM-9)
@@ -33,7 +36,9 @@ function safeDecrypt(value: string | undefined): string {
   try {
     return decrypt(value);
   } catch (e) {
-    console.warn("[ADMIN] Erreur déchiffrement:", e);
+    adminLogger.warn("[ADMIN] Erreur déchiffrement", {
+      error: e instanceof Error ? e.message : String(e),
+    });
     return value; // Retourner la valeur originale si erreur
   }
 }
@@ -150,7 +155,10 @@ export async function getGlobalStats(req: Request, res: Response) {
     const stats = await statsCacheLoading;
     res.status(200).json(stats);
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur stats globales:", error);
+    adminLogger.error("[ADMIN] Erreur stats globales", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération des statistiques" });
@@ -321,7 +329,10 @@ export async function getRegistrationStats(req: Request, res: Response) {
 
     res.status(200).json({ registrations: result, days });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur stats inscriptions:", error);
+    adminLogger.error("[ADMIN] Erreur stats inscriptions", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération des statistiques" });
@@ -382,7 +393,10 @@ export async function getActivityStats(req: Request, res: Response) {
 
     res.status(200).json({ activity: result, days });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur stats activité:", error);
+    adminLogger.error("[ADMIN] Erreur stats activité", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération des statistiques" });
@@ -479,7 +493,10 @@ export async function listUsers(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur liste users:", error);
+    adminLogger.error("[ADMIN] Erreur liste users", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération des utilisateurs" });
@@ -543,7 +560,10 @@ export async function getUserDetails(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur détails user:", error);
+    adminLogger.error("[ADMIN] Erreur détails user", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération de l'utilisateur" });
@@ -605,9 +625,10 @@ export async function blockUser(req: Request, res: Response) {
       },
     });
 
-    console.log(
-      `🚫 [ADMIN] Utilisateur bloqué: ${maskEmail(user.email)} par admin ${adminId}`,
-    );
+    adminLogger.info("[ADMIN] Utilisateur bloqué", {
+      email: maskEmail(user.email),
+      adminId,
+    });
 
     res.status(200).json({
       success: true,
@@ -621,7 +642,10 @@ export async function blockUser(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur blocage user:", error);
+    adminLogger.error("[ADMIN] Erreur blocage user", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ error: "Erreur lors du blocage de l'utilisateur" });
   }
 }
@@ -668,9 +692,10 @@ export async function unblockUser(req: Request, res: Response) {
       },
     });
 
-    console.log(
-      `✅ [ADMIN] Utilisateur débloqué: ${maskEmail(user.email)} par admin ${adminId}`,
-    );
+    adminLogger.info("[ADMIN] Utilisateur débloqué", {
+      email: maskEmail(user.email),
+      adminId,
+    });
 
     res.status(200).json({
       success: true,
@@ -682,7 +707,10 @@ export async function unblockUser(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur déblocage user:", error);
+    adminLogger.error("[ADMIN] Erreur déblocage user", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors du déblocage de l'utilisateur" });
@@ -735,9 +763,10 @@ export async function promoteToAdmin(req: Request, res: Response) {
       },
     });
 
-    console.log(
-      `👑 [ADMIN] Utilisateur promu admin: ${maskEmail(user.email)} par admin ${adminId}`,
-    );
+    adminLogger.info("[ADMIN] Utilisateur promu admin", {
+      email: maskEmail(user.email),
+      adminId,
+    });
 
     res.status(200).json({
       success: true,
@@ -749,7 +778,10 @@ export async function promoteToAdmin(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur promotion user:", error);
+    adminLogger.error("[ADMIN] Erreur promotion user", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la promotion de l'utilisateur" });
@@ -813,9 +845,10 @@ export async function demoteFromAdmin(req: Request, res: Response) {
       },
     });
 
-    console.log(
-      `📉 [ADMIN] Admin rétrogradé: ${maskEmail(user.email)} par admin ${adminId}`,
-    );
+    adminLogger.info("[ADMIN] Admin rétrogradé", {
+      email: maskEmail(user.email),
+      adminId,
+    });
 
     res.status(200).json({
       success: true,
@@ -827,7 +860,10 @@ export async function demoteFromAdmin(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur rétrogradation user:", error);
+    adminLogger.error("[ADMIN] Erreur rétrogradation user", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la rétrogradation de l'utilisateur" });
@@ -871,9 +907,11 @@ export async function forceLogoutUser(req: Request, res: Response) {
       },
     });
 
-    console.log(
-      `🔐 [ADMIN] Sessions révoquées pour: ${maskEmail(user.email)} par admin ${adminId}`,
-    );
+    adminLogger.info("[ADMIN] Sessions révoquées", {
+      targetUserEmail: maskEmail(user.email),
+      adminId,
+      revokedCount,
+    });
 
     res.status(200).json({
       success: true,
@@ -881,7 +919,10 @@ export async function forceLogoutUser(req: Request, res: Response) {
       revokedSessions: revokedCount,
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur force logout:", error);
+    adminLogger.error("[ADMIN] Erreur force logout", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ error: "Erreur lors de la déconnexion forcée" });
   }
 }
@@ -955,16 +996,20 @@ export async function resetUserPassword(req: Request, res: Response) {
       },
     });
 
-    console.log(
-      `🔑 [ADMIN] Réinitialisation mot de passe pour: ${maskEmail(userEmail)} par admin ${adminId}`,
-    );
+    adminLogger.info("[ADMIN] Réinitialisation mot de passe", {
+      targetUserEmail: maskEmail(userEmail),
+      adminId,
+    });
 
     res.status(200).json({
       success: true,
       message: `Un email de réinitialisation a été envoyé à ${userEmail}`,
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur reset password:", error);
+    adminLogger.error("[ADMIN] Erreur reset password", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la réinitialisation du mot de passe" });
@@ -1034,7 +1079,10 @@ export async function getAuditLogs(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur logs audit:", error);
+    adminLogger.error("[ADMIN] Erreur logs audit", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ error: "Erreur lors de la récupération des logs" });
   }
 }
@@ -1086,7 +1134,10 @@ export async function getAuditStats(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur stats audit:", error);
+    adminLogger.error("[ADMIN] Erreur stats audit", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération des statistiques" });
@@ -1105,7 +1156,10 @@ export async function getSecurityDashboard(req: Request, res: Response) {
     const stats = await securityAlertService.getSecurityStats();
     res.status(200).json(stats);
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur dashboard sécurité:", error);
+    adminLogger.error("[ADMIN] Erreur dashboard sécurité", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des statistiques de sécurité",
     });
@@ -1132,7 +1186,10 @@ export async function listBlockedIps(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur liste IPs bloquées:", error);
+    adminLogger.error("[ADMIN] Erreur liste IPs bloquées", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération des IPs bloquées" });
@@ -1185,7 +1242,10 @@ export async function blockIp(req: Request, res: Response) {
       blockedIp,
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur blocage IP:", error);
+    adminLogger.error("[ADMIN] Erreur blocage IP", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ error: "Erreur lors du blocage de l'IP" });
   }
 }
@@ -1225,7 +1285,10 @@ export async function unblockIp(req: Request, res: Response) {
       message: `IP ${ipAddress} débloquée avec succès`,
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur déblocage IP:", error);
+    adminLogger.error("[ADMIN] Erreur déblocage IP", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ error: "Erreur lors du déblocage de l'IP" });
   }
 }
@@ -1257,7 +1320,10 @@ export async function getIpThreatScore(req: Request, res: Response) {
       blockedUntil: blockStatus.until,
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur threat score:", error);
+    adminLogger.error("[ADMIN] Erreur threat score", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de la récupération du score de menace" });
@@ -1358,7 +1424,10 @@ export async function exportAuditLogs(req: Request, res: Response) {
       res.send(data);
     }
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur export logs:", error);
+    adminLogger.error("[ADMIN] Erreur export logs", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     // Vérifier si les headers n'ont pas déjà été envoyés
     if (!res.headersSent) {
       res.status(500).json({ error: "Erreur lors de l'export des logs" });
@@ -1402,7 +1471,10 @@ export async function sendTestAlert(req: Request, res: Response) {
       message: "Alerte de test envoyée à tous les administrateurs",
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur envoi alerte test:", error);
+    adminLogger.error("[ADMIN] Erreur envoi alerte test", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de l'envoi de l'alerte de test" });
@@ -1465,7 +1537,10 @@ export async function listPendingUsers(req: Request, res: Response) {
       },
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur liste utilisateurs en attente:", error);
+    adminLogger.error("[ADMIN] Erreur liste utilisateurs en attente", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des utilisateurs en attente",
     });
@@ -1507,10 +1582,11 @@ export async function approveUser(req: Request, res: Response) {
     const userName = `${safeDecrypt(user.name)} ${safeDecrypt(user.surname)}`;
 
     sendAccountApprovedEmail(userEmail, userName).catch((err) => {
-      console.error(
-        `❌ [EMAIL] Erreur envoi email approbation à ${maskEmail(userEmail)}:`,
-        err,
-      );
+      adminLogger.error("[EMAIL] Erreur envoi email approbation", {
+        email: maskEmail(userEmail),
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
     });
 
     // Log l'action
@@ -1523,16 +1599,20 @@ export async function approveUser(req: Request, res: Response) {
       details: { approvedUserId: userId, approvedUserEmail: userEmail },
     });
 
-    console.log(
-      `✅ [ADMIN] Utilisateur approuvé: ${maskEmail(userEmail)} par admin ${adminId}`,
-    );
+    adminLogger.info("[ADMIN] Utilisateur approuvé", {
+      approvedUserEmail: maskEmail(userEmail),
+      adminId,
+    });
 
     res.status(200).json({
       success: true,
       message: `Le compte de ${userName} a été approuvé. Un email de confirmation a été envoyé.`,
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur approbation utilisateur:", error);
+    adminLogger.error("[ADMIN] Erreur approbation utilisateur", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors de l'approbation de l'utilisateur" });
@@ -1577,10 +1657,11 @@ export async function rejectUser(req: Request, res: Response) {
     const userName = `${safeDecrypt(user.name)} ${safeDecrypt(user.surname)}`;
 
     sendAccountRejectedEmail(userEmail, userName, reason).catch((err) => {
-      console.error(
-        `❌ [EMAIL] Erreur envoi email refus à ${maskEmail(userEmail)}:`,
-        err,
-      );
+      adminLogger.error("[EMAIL] Erreur envoi email refus", {
+        email: maskEmail(userEmail),
+        error: err instanceof Error ? err.message : String(err),
+        stack: err instanceof Error ? err.stack : undefined,
+      });
     });
 
     // Log l'action
@@ -1593,16 +1674,21 @@ export async function rejectUser(req: Request, res: Response) {
       details: { rejectedUserId: userId, rejectedUserEmail: userEmail, reason },
     });
 
-    console.log(
-      `❌ [ADMIN] Utilisateur refusé: ${maskEmail(userEmail)} par admin ${adminId}`,
-    );
+    adminLogger.info("[ADMIN] Utilisateur refusé", {
+      rejectedUserEmail: maskEmail(userEmail),
+      adminId,
+      reason,
+    });
 
     res.status(200).json({
       success: true,
       message: `Le compte de ${userName} a été refusé. Un email a été envoyé.`,
     });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur refus utilisateur:", error);
+    adminLogger.error("[ADMIN] Erreur refus utilisateur", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({ error: "Erreur lors du refus de l'utilisateur" });
   }
 }
@@ -1620,7 +1706,10 @@ export async function getPendingUsersCount(req: Request, res: Response) {
 
     res.status(200).json({ count });
   } catch (error) {
-    console.error("❌ [ADMIN] Erreur comptage utilisateurs en attente:", error);
+    adminLogger.error("[ADMIN] Erreur comptage utilisateurs en attente", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res
       .status(500)
       .json({ error: "Erreur lors du comptage des utilisateurs en attente" });

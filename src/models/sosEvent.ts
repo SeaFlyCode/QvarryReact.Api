@@ -20,13 +20,18 @@ export type SosEventType =
   | "CANCELLED" // Session annulée
   | "CONTACT_CONFIRMED" // Un contact a confirmé la sécurité
   | "SURFACE_DETECTED" // Déplacement GPS significatif détecté
-  | "RECONNECTION_DETECTED"; // Reconnexion prolongée détectée
+  | "RECONNECTION_DETECTED" // Reconnexion prolongée détectée
+  | "PARTICIPANT_ADDED" // Participant ajouté à une session de groupe
+  | "PARTICIPANT_LEFT" // Participant a quitté la session (désactivation scope "self")
+  | "PARTICIPANT_DISCONNECTED" // Participant a perdu la connexion heartbeat
+  | "SESSION_DEACTIVATED_ALL"; // Session désactivée pour tous les participants
 
 // Interface pour les événements SOS
 export interface ISosEvent extends Document {
   sessionId: mongoose.Types.ObjectId; // Session SOS associée
   userId: mongoose.Types.ObjectId; // Utilisateur concerné
   type: SosEventType;
+  participantId?: mongoose.Types.ObjectId; // Participant spécifique concerné (pour sessions de groupe)
   metadata?: Record<string, any>; // Données additionnelles (stage, contactId, smsId, etc.)
   createdAt: Date;
 }
@@ -60,8 +65,18 @@ const sosEventSchema: Schema<ISosEvent> = new Schema(
         "CONTACT_CONFIRMED",
         "SURFACE_DETECTED",
         "RECONNECTION_DETECTED",
+        "PARTICIPANT_ADDED",
+        "PARTICIPANT_LEFT",
+        "PARTICIPANT_DISCONNECTED",
+        "SESSION_DEACTIVATED_ALL",
       ],
       required: true,
+    },
+    participantId: {
+      type: Schema.Types.ObjectId,
+      ref: "User",
+      required: false,
+      index: true,
     },
     metadata: {
       type: Schema.Types.Mixed,

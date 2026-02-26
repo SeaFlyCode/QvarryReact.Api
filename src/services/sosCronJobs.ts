@@ -7,6 +7,9 @@
 
 import cron from "node-cron";
 import { sosService } from "./sosService";
+import { logger } from "./loggerService";
+
+const sosCronLogger = logger.child({ service: "sos-cron" });
 
 // ─── Flag de verrouillage pour empêcher les exécutions simultanées ───
 let isSosEscalationRunning = false;
@@ -25,25 +28,23 @@ export function startSosEscalationJob(): void {
   // Cron expression: "* * * * *" = Toutes les minutes
   cron.schedule("* * * * *", async () => {
     if (isSosEscalationRunning) {
-      console.log("[CRON-SOS] Vérification escalade déjà en cours, skip");
+      sosCronLogger.info("Vérification escalade déjà en cours, skip");
       return;
     }
     isSosEscalationRunning = true;
     try {
       await sosService.processExpiredSessions();
     } catch (error) {
-      console.error(
-        "❌ [CRON-SOS ERROR] Erreur lors de la vérification des sessions SOS:",
-        error,
-      );
+      sosCronLogger.error("Erreur lors de la vérification des sessions SOS", {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     } finally {
       isSosEscalationRunning = false;
     }
   });
 
-  console.log(
-    "⏰ [CRON-SOS] Job d'escalade SOS programmé (toutes les 60 secondes)",
-  );
+  sosCronLogger.info("Job d'escalade SOS programmé (toutes les 60 secondes)");
 }
 
 /**
@@ -55,8 +56,8 @@ export function startSosCleanupJob(): void {
   // Cron expression: "0 2 * * *" = Tous les jours à 2h00
   cron.schedule("0 2 * * *", async () => {
     try {
-      console.log(
-        "🧹 [CRON-SOS] Lancement du nettoyage des anciennes sessions SOS...",
+      sosCronLogger.info(
+        "Lancement du nettoyage des anciennes sessions SOS...",
       );
 
       const ninetyDaysAgo = new Date(Date.now() - 90 * 24 * 60 * 60 * 1000);
@@ -70,21 +71,19 @@ export function startSosCleanupJob(): void {
       });
 
       if (result.deletedCount > 0) {
-        console.log(
-          `✅ [CRON-SOS] ${result.deletedCount} anciennes sessions SOS nettoyées`,
-        );
+        sosCronLogger.info("Anciennes sessions SOS nettoyées", {
+          deletedCount: result.deletedCount,
+        });
       } else {
-        console.log("✅ [CRON-SOS] Aucune ancienne session SOS à nettoyer");
+        sosCronLogger.info("Aucune ancienne session SOS à nettoyer");
       }
     } catch (error) {
-      console.error(
-        "❌ [CRON-SOS ERROR] Erreur lors du nettoyage des sessions SOS:",
-        error,
-      );
+      sosCronLogger.error("Erreur lors du nettoyage des sessions SOS", {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     }
   });
 
-  console.log(
-    "⏰ [CRON-SOS] Job de nettoyage SOS programmé (tous les jours à 2h00)",
-  );
+  sosCronLogger.info("Job de nettoyage SOS programmé (tous les jours à 2h00)");
 }

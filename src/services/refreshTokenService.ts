@@ -4,6 +4,9 @@ import RefreshTokenModel, { IRefreshToken } from "../models/refreshTokens";
 import mongoose from "mongoose";
 import { auditService } from "./auditService";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
+import { logger } from "./loggerService";
+
+const refreshLogger = logger.child({ service: "refresh-token" });
 
 interface CreateRefreshTokenOptions {
   userId: string;
@@ -27,7 +30,10 @@ class RefreshTokenService {
     try {
       return encrypt(value);
     } catch (error) {
-      console.error("❌ [REFRESH_TOKEN] Erreur de chiffrement:", error);
+      refreshLogger.error("Erreur de chiffrement", {
+        error: error instanceof Error ? error.message : error,
+        stack: error instanceof Error ? error.stack : undefined,
+      });
       return undefined;
     }
   }
@@ -41,9 +47,7 @@ class RefreshTokenService {
       return decrypt(value);
     } catch (error) {
       // Peut être une ancienne valeur non chiffrée
-      console.warn(
-        "⚠️ [REFRESH_TOKEN] Valeur non chiffrée détectée, retour en clair",
-      );
+      refreshLogger.warn("Valeur non chiffrée détectée, retour en clair");
       return value;
     }
   }
@@ -106,9 +110,11 @@ class RefreshTokenService {
         },
       });
 
-      console.log(
-        `🔒 [SESSIONS] ${sessionsToRevoke} sessions les plus anciennes révoquées pour userId: ${userId}`,
-      );
+      refreshLogger.info("Sessions les plus anciennes révoquées", {
+        sessionsCount: sessionsToRevoke,
+        userId,
+        maxSessions: this.MAX_SESSIONS_PER_USER,
+      });
     }
   }
 
@@ -298,9 +304,10 @@ class RefreshTokenService {
     });
 
     if (revokedTokenInFamily) {
-      console.error(
-        `🚨 [SECURITY] Vol de refresh token détecté! UserId: ${userId}, TokenFamily: ${tokenFamily}`,
-      );
+      refreshLogger.error("Vol de refresh token détecté", {
+        userId,
+        tokenFamily,
+      });
 
       // Révoquer TOUS les tokens de cet utilisateur
       await this.revokeAllUserTokens(userId, "token_theft_detected");

@@ -10,6 +10,9 @@ import {
   sendContactAcceptedEmail,
 } from "../services/emailService";
 import { decrypt } from "../utils/masterEncryptionUtils";
+import { logger } from "../services/loggerService";
+
+const contactLogger = logger.child({ service: "contacts" });
 
 /**
  * Fonction utilitaire pour obtenir le nom d'affichage d'un utilisateur
@@ -170,7 +173,10 @@ export const addContact = async (
           recipientName,
           senderName,
         ).catch((err) =>
-          console.error("Erreur envoi email contact accepté:", err),
+          contactLogger.error("Erreur envoi email contact accepté", {
+            error: err.message,
+            stack: err.stack,
+          }),
         );
       }
     } else {
@@ -205,7 +211,10 @@ export const addContact = async (
           requesterName,
           acceptLink,
         ).catch((err) =>
-          console.error("Erreur envoi email demande contact:", err),
+          contactLogger.error("Erreur envoi email demande contact", {
+            error: err.message,
+            stack: err.stack,
+          }),
         );
       }
     }
@@ -227,7 +236,9 @@ export const addContact = async (
       },
     });
   } catch (error: unknown) {
-    console.error("❌ Erreur lors de l'ajout du contact:", error);
+    contactLogger.error("Erreur lors de l'ajout du contact", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de l'ajout du contact",
       details: getErrorMessage(error),
@@ -329,10 +340,10 @@ export const listContacts = async (
               };
             }
           } catch (decryptError) {
-            console.error(
-              `[CONTACTS] Erreur déchiffrement pour contact ${otherUser._id}:`,
-              decryptError,
-            );
+            contactLogger.error("Erreur déchiffrement pour contact", {
+              contactId: otherUser._id,
+              error: getErrorMessage(decryptError),
+            });
             contactInfo = {
               _id: otherUser._id,
               name: "Erreur",
@@ -360,10 +371,10 @@ export const listContacts = async (
       }),
     });
   } catch (error: unknown) {
-    console.error("❌ Erreur lors de la récupération des contacts:", error);
-    if (error instanceof Error && error.stack) {
-      console.error("Stack:", error.stack);
-    }
+    contactLogger.error("Erreur lors de la récupération des contacts", {
+      error: getErrorMessage(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des contacts",
       details: getErrorMessage(error),
@@ -422,7 +433,9 @@ export const blockContact = async (
       },
     });
   } catch (error: unknown) {
-    console.error("❌ Erreur lors du blocage/déblocage du contact:", error);
+    contactLogger.error("Erreur lors du blocage/déblocage du contact", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors du blocage/déblocage du contact",
       details: getErrorMessage(error),
@@ -463,7 +476,9 @@ export const deleteContact = async (
 
     res.status(200).json({ success: true });
   } catch (error: unknown) {
-    console.error("❌ Erreur lors de la suppression du contact:", error);
+    contactLogger.error("Erreur lors de la suppression du contact", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la suppression du contact",
       details: getErrorMessage(error),
@@ -540,7 +555,9 @@ export const getContactDetails = async (
           };
         }
       } catch (decryptError) {
-        console.error(`[CONTACTS] Erreur déchiffrement:`, decryptError);
+        contactLogger.error("Erreur déchiffrement", {
+          error: getErrorMessage(decryptError),
+        });
       }
     }
 
@@ -557,7 +574,9 @@ export const getContactDetails = async (
       },
     });
   } catch (error: unknown) {
-    console.error("❌ Erreur lors de la récupération du contact:", error);
+    contactLogger.error("Erreur lors de la récupération du contact", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération du contact",
       details: getErrorMessage(error),
@@ -630,7 +649,10 @@ export const acceptContact = async (
         recipientName,
         accepterName,
       ).catch((err) =>
-        console.error("Erreur envoi email contact accepté:", err),
+        contactLogger.error("Erreur envoi email contact accepté", {
+          error: err.message,
+          stack: err.stack,
+        }),
       );
     }
 
@@ -642,7 +664,9 @@ export const acceptContact = async (
       },
     });
   } catch (error: unknown) {
-    console.error("❌ Erreur lors de l'acceptation du contact:", error);
+    contactLogger.error("Erreur lors de l'acceptation du contact", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de l'acceptation du contact",
       details: getErrorMessage(error),
@@ -690,7 +714,9 @@ export const refuseContact = async (
       message: "Demande de contact refusée",
     });
   } catch (error: unknown) {
-    console.error("❌ Erreur lors du refus du contact:", error);
+    contactLogger.error("Erreur lors du refus du contact", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors du refus du contact",
       details: getErrorMessage(error),

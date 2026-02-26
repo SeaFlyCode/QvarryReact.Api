@@ -15,6 +15,9 @@ import KeysModel from "../models/keys";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import { decryptWithKey, encryptWithKey } from "../utils/userEncryptionUtils";
 import { getErrorMessage } from "../utils/errorUtils";
+import { logger } from "../services/loggerService";
+
+const mobileSyncLogger = logger.child({ service: "mobile-sync" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -202,10 +205,10 @@ class MobileSyncService {
         version: point.version || 1,
       };
     } catch (error) {
-      console.error(
-        `❌ [SYNC] Erreur déchiffrement point ${point._id}:`,
-        getErrorMessage(error),
-      );
+      mobileSyncLogger.error("Erreur déchiffrement point", {
+        pointId: point._id.toString(),
+        error: getErrorMessage(error),
+      });
       throw error;
     }
   }
@@ -295,10 +298,10 @@ class MobileSyncService {
         version: fiche.version || 1,
       };
     } catch (error) {
-      console.error(
-        `❌ [SYNC] Erreur déchiffrement fiche ${fiche._id}:`,
-        getErrorMessage(error),
-      );
+      mobileSyncLogger.error("Erreur déchiffrement fiche", {
+        ficheId: fiche._id.toString(),
+        error: getErrorMessage(error),
+      });
       throw error;
     }
   }
@@ -393,7 +396,7 @@ class MobileSyncService {
    */
   async getFullData(userId: string): Promise<SyncResult> {
     const startTime = Date.now();
-    console.log(`📱 [SYNC] Début sync complète pour userId: ${userId}`);
+    mobileSyncLogger.info("Début sync complète", { userId });
 
     const userKey = await this.getUserKey(userId);
 
@@ -420,7 +423,10 @@ class MobileSyncService {
         try {
           return this.decryptPoint(p, userKey);
         } catch (err) {
-          console.warn(`⚠️ [SYNC] Échec déchiffrement point ${p._id}:`, err);
+          mobileSyncLogger.warn("Échec déchiffrement point", {
+            pointId: p._id.toString(),
+            error: err instanceof Error ? err.message : String(err),
+          });
           return null;
         }
       })
@@ -430,7 +436,10 @@ class MobileSyncService {
         try {
           return this.decryptFiche(f, userKey);
         } catch (err) {
-          console.warn(`⚠️ [SYNC] Échec déchiffrement fiche ${f._id}:`, err);
+          mobileSyncLogger.warn("Échec déchiffrement fiche", {
+            ficheId: f._id.toString(),
+            error: err instanceof Error ? err.message : String(err),
+          });
           return null;
         }
       })
@@ -469,9 +478,10 @@ class MobileSyncService {
         points.length + fiches.length + lists.length + sosContacts.length,
     };
 
-    console.log(
-      `✅ [SYNC] Sync complète terminée en ${Date.now() - startTime}ms - ${result.totalChanges} éléments`,
-    );
+    mobileSyncLogger.info("Sync complète terminée", {
+      duration: Date.now() - startTime,
+      totalChanges: result.totalChanges,
+    });
     return result;
   }
 
@@ -483,9 +493,10 @@ class MobileSyncService {
     since: Date,
   ): Promise<SyncResult> {
     const startTime = Date.now();
-    console.log(
-      `📱 [SYNC] Début sync incrémentale depuis ${since.toISOString()} pour userId: ${userId}`,
-    );
+    mobileSyncLogger.info("Début sync incrémentale", {
+      userId,
+      since: since.toISOString(),
+    });
 
     const userKey = await this.getUserKey(userId);
 
@@ -521,7 +532,10 @@ class MobileSyncService {
         try {
           return this.decryptPoint(p, userKey);
         } catch (err) {
-          console.warn(`⚠️ [SYNC] Échec déchiffrement point ${p._id}:`, err);
+          mobileSyncLogger.warn("Échec déchiffrement point", {
+            pointId: p._id.toString(),
+            error: err instanceof Error ? err.message : String(err),
+          });
           return null;
         }
       })
@@ -533,7 +547,10 @@ class MobileSyncService {
         try {
           return this.decryptPoint(p, userKey);
         } catch (err) {
-          console.warn(`⚠️ [SYNC] Échec déchiffrement point ${p._id}:`, err);
+          mobileSyncLogger.warn("Échec déchiffrement point", {
+            pointId: p._id.toString(),
+            error: err instanceof Error ? err.message : String(err),
+          });
           return null;
         }
       })
@@ -545,7 +562,10 @@ class MobileSyncService {
         try {
           return this.decryptFiche(f, userKey);
         } catch (err) {
-          console.warn(`⚠️ [SYNC] Échec déchiffrement fiche ${f._id}:`, err);
+          mobileSyncLogger.warn("Échec déchiffrement fiche", {
+            ficheId: f._id.toString(),
+            error: err instanceof Error ? err.message : String(err),
+          });
           return null;
         }
       })
@@ -557,7 +577,10 @@ class MobileSyncService {
         try {
           return this.decryptFiche(f, userKey);
         } catch (err) {
-          console.warn(`⚠️ [SYNC] Échec déchiffrement fiche ${f._id}:`, err);
+          mobileSyncLogger.warn("Échec déchiffrement fiche", {
+            ficheId: f._id.toString(),
+            error: err instanceof Error ? err.message : String(err),
+          });
           return null;
         }
       })
@@ -653,9 +676,10 @@ class MobileSyncService {
         modifiedSosContacts.length,
     };
 
-    console.log(
-      `✅ [SYNC] Sync incrémentale terminée en ${Date.now() - startTime}ms - ${result.totalChanges} changements`,
-    );
+    mobileSyncLogger.info("Sync incrémentale terminée", {
+      duration: Date.now() - startTime,
+      totalChanges: result.totalChanges,
+    });
     return result;
   }
 
@@ -671,9 +695,10 @@ class MobileSyncService {
     errors: any[];
   }> {
     const startTime = Date.now();
-    console.log(
-      `📱 [SYNC] Application de ${changes.length} changements locaux pour userId: ${userId}`,
-    );
+    mobileSyncLogger.info("Application de changements locaux", {
+      userId,
+      changeCount: changes.length,
+    });
 
     const userKey = await this.getUserKey(userId);
     const synced: LocalChange[] = [];
@@ -715,10 +740,9 @@ class MobileSyncService {
             break;
         }
       } catch (error) {
-        console.error(
-          `❌ [SYNC] Erreur application changement:`,
-          getErrorMessage(error),
-        );
+        mobileSyncLogger.error("Erreur application changement", {
+          error: getErrorMessage(error),
+        });
         errors.push({
           change,
           error: getErrorMessage(error),
@@ -726,9 +750,12 @@ class MobileSyncService {
       }
     }
 
-    console.log(
-      `✅ [SYNC] Changements appliqués en ${Date.now() - startTime}ms - synced: ${synced.length}, conflicts: ${conflicts.length}, errors: ${errors.length}`,
-    );
+    mobileSyncLogger.info("Changements appliqués", {
+      duration: Date.now() - startTime,
+      synced: synced.length,
+      conflicts: conflicts.length,
+      errors: errors.length,
+    });
     return { synced, conflicts, errors };
   }
 

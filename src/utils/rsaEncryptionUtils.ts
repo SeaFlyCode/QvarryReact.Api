@@ -1,5 +1,8 @@
 import crypto from "crypto";
 import { encrypt, decrypt } from "./masterEncryptionUtils";
+import { logger } from "../services/loggerService";
+
+const rsaLogger = logger.child({ service: "rsa-encryption" });
 
 // Configuration RSA - 4096 bits pour maximum de sécurité
 const RSA_KEY_SIZE = 4096;
@@ -134,7 +137,7 @@ export function decryptWithPrivateKey(
     return decrypted;
   } catch (error) {
     throw new Error(
-      "❌ Déchiffrement échoué : vérification d'intégrité des données échouée (données modifiées ou corrompues)",
+      "Déchiffrement échoué : vérification d'intégrité des données échouée (données modifiées ou corrompues)",
     );
   }
 }
@@ -186,9 +189,7 @@ export function verifySignature(
   try {
     const parts = signatureWithTimestamp.split(":");
     if (parts.length !== 2) {
-      console.error(
-        "❌ Format de signature invalide : attendu signature:timestamp",
-      );
+      rsaLogger.error("Invalid signature format: expected signature:timestamp");
       return false;
     }
 
@@ -197,20 +198,20 @@ export function verifySignature(
 
     // Vérifier que le timestamp est valide
     if (isNaN(signatureTime)) {
-      console.error("❌ Timestamp de signature invalide");
+      rsaLogger.error("Invalid signature timestamp");
       return false;
     }
 
     // Vérifier que la signature n'est pas expirée (anti-replay)
     const now = Date.now();
     if (now - signatureTime > maxAgeMs) {
-      console.error("❌ Signature expirée (replay attack prévenue)");
+      rsaLogger.error("Signature expired (replay attack prevented)");
       return false;
     }
 
     // Vérifier que le timestamp n'est pas dans le futur (tolérance de 30s)
     if (signatureTime > now + 30000) {
-      console.error("❌ Timestamp de signature dans le futur");
+      rsaLogger.error("Signature timestamp in the future");
       return false;
     }
 
@@ -224,7 +225,9 @@ export function verifySignature(
     const signatureBuffer = Buffer.from(signatureHex, "hex");
     return verify.verify(publicKey, signatureBuffer);
   } catch (error) {
-    console.error("❌ Erreur lors de la vérification de signature:", error);
+    rsaLogger.error("Signature verification error", {
+      error: error instanceof Error ? error.message : String(error),
+    });
     return false;
   }
 }
@@ -247,9 +250,10 @@ export function isValidPublicKey(publicKey: string): boolean {
       !keyDetails.modulusLength ||
       keyDetails.modulusLength < RSA_KEY_SIZE
     ) {
-      console.warn(
-        `⚠️ Clé RSA rejetée: taille ${keyDetails?.modulusLength || "inconnue"} bits < ${RSA_KEY_SIZE} bits requis`,
-      );
+      rsaLogger.warn("RSA public key rejected: insufficient size", {
+        modulusLength: keyDetails?.modulusLength || "unknown",
+        required: RSA_KEY_SIZE,
+      });
       return false;
     }
 
@@ -287,9 +291,10 @@ export function isValidPrivateKey(privateKey: string): boolean {
       !keyDetails.modulusLength ||
       keyDetails.modulusLength < RSA_KEY_SIZE
     ) {
-      console.warn(
-        `⚠️ Clé privée RSA rejetée: taille ${keyDetails?.modulusLength || "inconnue"} bits < ${RSA_KEY_SIZE} bits requis`,
-      );
+      rsaLogger.warn("RSA private key rejected: insufficient size", {
+        modulusLength: keyDetails?.modulusLength || "unknown",
+        required: RSA_KEY_SIZE,
+      });
       return false;
     }
 

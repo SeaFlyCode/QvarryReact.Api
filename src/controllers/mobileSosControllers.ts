@@ -8,6 +8,9 @@
 import { Request, Response } from "express";
 import { sosService } from "../services/sosService";
 import { getErrorMessage } from "../utils/errorUtils";
+import { logger } from "../services/loggerService";
+
+const mobileSosLogger = logger.child({ service: "mobile-sos" });
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: ACTIVER UNE SESSION SOS
@@ -36,6 +39,7 @@ export async function handleSosActivate(req: Request, res: Response) {
       zone,
       depth,
       sessionContacts,
+      participantIds,
     } = req.body;
 
     // Validation
@@ -64,12 +68,15 @@ export async function handleSosActivate(req: Request, res: Response) {
       zone,
       depth,
       sessionContacts,
+      participantIds,
     });
 
     const duration = Date.now() - startTime;
-    console.log(
-      `✅ [MOBILE-SOS] Session activée: ${session._id} (${mobileContext?.platform}) en ${duration}ms`,
-    );
+    mobileSosLogger.info("Session activée", {
+      sessionId: session._id,
+      platform: mobileContext?.platform,
+      duration: `${duration}ms`,
+    });
 
     res.status(201).json({
       success: true,
@@ -80,6 +87,11 @@ export async function handleSosActivate(req: Request, res: Response) {
         expiresAt: session.expiresAt,
         expectedDuration: session.expectedDuration,
         currentStage: session.currentStage,
+        participants: session.participants.map((p) => ({
+          userId: p.userId,
+          status: p.status,
+          joinedAt: p.joinedAt,
+        })),
       },
     });
   } catch (error) {
@@ -117,9 +129,15 @@ export async function handleSosActivate(req: Request, res: Response) {
           code: "INVALID_PHONE_FORMAT",
         });
       }
+      if (error.message === "INVALID_PARTICIPANT_IDS") {
+        return res.status(400).json({
+          error: "Un ou plusieurs IDs de participants sont invalides.",
+          code: "INVALID_PARTICIPANT_IDS",
+        });
+      }
     }
 
-    console.error(`❌ [MOBILE-SOS] Erreur activation:`, errorMsg);
+    mobileSosLogger.error("Erreur activation", { error: errorMsg });
     res.status(500).json({
       error: "Erreur lors de l'activation du SOS.",
       code: "INTERNAL_ERROR",
@@ -154,9 +172,10 @@ export async function handleSosHeartbeat(req: Request, res: Response) {
     });
 
     const duration = Date.now() - startTime;
-    console.log(
-      `💓 [MOBILE-SOS] Heartbeat reçu: session ${session._id} en ${duration}ms`,
-    );
+    mobileSosLogger.info("Heartbeat reçu", {
+      sessionId: session._id,
+      duration: `${duration}ms`,
+    });
 
     res.status(200).json({
       success: true,
@@ -176,7 +195,9 @@ export async function handleSosHeartbeat(req: Request, res: Response) {
       });
     }
 
-    console.error(`❌ [MOBILE-SOS] Erreur heartbeat:`, getErrorMessage(error));
+    mobileSosLogger.error("Erreur heartbeat", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors du heartbeat.",
       code: "INTERNAL_ERROR",
@@ -223,9 +244,11 @@ export async function handleSosExtend(req: Request, res: Response) {
     });
 
     const duration = Date.now() - startTime;
-    console.log(
-      `⏱️ [MOBILE-SOS] Timer prolongé: session ${session._id} (+${additionalMinutes}min) en ${duration}ms`,
-    );
+    mobileSosLogger.info("Timer prolongé", {
+      sessionId: session._id,
+      additionalMinutes,
+      duration: `${duration}ms`,
+    });
 
     res.status(200).json({
       success: true,
@@ -253,7 +276,9 @@ export async function handleSosExtend(req: Request, res: Response) {
       }
     }
 
-    console.error(`❌ [MOBILE-SOS] Erreur extension:`, getErrorMessage(error));
+    mobileSosLogger.error("Erreur extension", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la prolongation.",
       code: "INTERNAL_ERROR",
@@ -277,14 +302,20 @@ export async function handleSosDeactivate(req: Request, res: Response) {
       });
     }
 
-    const { sessionId } = req.body;
+    const { sessionId, scope } = req.body;
 
-    const session = await sosService.deactivateSession(userId, sessionId);
+    const session = await sosService.deactivateSession(
+      userId,
+      sessionId,
+      scope || "all",
+    );
 
     const duration = Date.now() - startTime;
-    console.log(
-      `✅ [MOBILE-SOS] Session désactivée: ${session._id} en ${duration}ms`,
-    );
+    mobileSosLogger.info("Session désactivée", {
+      sessionId: session._id,
+      scope: scope || "all",
+      duration: `${duration}ms`,
+    });
 
     res.status(200).json({
       success: true,
@@ -293,6 +324,15 @@ export async function handleSosDeactivate(req: Request, res: Response) {
         status: session.status,
         resolvedAt: session.resolvedAt,
         resolvedBy: session.resolvedBy,
+        ...(scope === "self" &&
+          session.status === "ACTIVE" && {
+            participants: session.participants.map((p) => ({
+              userId: p.userId,
+              status: p.status,
+              joinedAt: p.joinedAt,
+              leftAt: p.leftAt,
+            })),
+          }),
       },
     });
   } catch (error) {
@@ -303,10 +343,9 @@ export async function handleSosDeactivate(req: Request, res: Response) {
       });
     }
 
-    console.error(
-      `❌ [MOBILE-SOS] Erreur désactivation:`,
-      getErrorMessage(error),
-    );
+    mobileSosLogger.error("Erreur désactivation", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la désactivation.",
       code: "INTERNAL_ERROR",
@@ -338,12 +377,19 @@ export async function handleSosDeactivateByParam(req: Request, res: Response) {
       });
     }
 
-    const session = await sosService.deactivateSession(userId, sessionId);
+    const { scope } = req.body;
+
+    const session = await sosService.deactivateSession(
+      userId,
+      sessionId,
+      scope || "all",
+    );
 
     const duration = Date.now() - startTime;
-    console.log(
-      `✅ [MOBILE-SOS] Session désactivée: ${session._id} en ${duration}ms`,
-    );
+    mobileSosLogger.info("Session désactivée", {
+      sessionId: session._id,
+      duration: `${duration}ms`,
+    });
 
     res.status(200).json({
       success: true,
@@ -362,10 +408,9 @@ export async function handleSosDeactivateByParam(req: Request, res: Response) {
       });
     }
 
-    console.error(
-      `❌ [MOBILE-SOS] Erreur désactivation:`,
-      getErrorMessage(error),
-    );
+    mobileSosLogger.error("Erreur désactivation par param", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la désactivation.",
       code: "INTERNAL_ERROR",
@@ -407,11 +452,21 @@ export async function handleSosStatus(req: Request, res: Response) {
             siteName: session.siteName,
             zone: session.zone,
             depth: session.depth,
+            creatorId: session.userId,
+            isGroupSession: session.participants.length > 1,
+            participants: session.participants.map((p) => ({
+              userId: p.userId,
+              status: p.status,
+              joinedAt: p.joinedAt,
+              leftAt: p.leftAt,
+              currentStage: p.currentStage,
+              lastHeartbeatAt: p.lastHeartbeatAt,
+            })),
           }
         : null,
     });
   } catch (error) {
-    console.error(`❌ [MOBILE-SOS] Erreur statut:`, getErrorMessage(error));
+    mobileSosLogger.error("Erreur statut", { error: getErrorMessage(error) });
     res.status(500).json({
       error: "Erreur lors de la récupération du statut.",
       code: "INTERNAL_ERROR",
@@ -443,7 +498,9 @@ export async function handleSosHistory(req: Request, res: Response) {
       count: result.sessions.length,
     });
   } catch (error) {
-    console.error(`❌ [MOBILE-SOS] Erreur historique:`, getErrorMessage(error));
+    mobileSosLogger.error("Erreur historique", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération de l'historique.",
       code: "INTERNAL_ERROR",
@@ -473,10 +530,9 @@ export async function handleSosActiveSessions(req: Request, res: Response) {
       count: sessions.length,
     });
   } catch (error) {
-    console.error(
-      `❌ [MOBILE-SOS] Erreur sessions actives:`,
-      getErrorMessage(error),
-    );
+    mobileSosLogger.error("Erreur désactivation", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des sessions actives.",
       code: "INTERNAL_ERROR",
@@ -511,9 +567,11 @@ export async function handleSosConfirmSafe(req: Request, res: Response) {
     const session = await sosService.confirmSafe(sessionId, userId);
 
     const duration = Date.now() - startTime;
-    console.log(
-      `✅ [MOBILE-SOS] Session ${sessionId} confirmée safe par ${userId} en ${duration}ms`,
-    );
+    mobileSosLogger.info("Session confirmée safe", {
+      sessionId,
+      userId,
+      duration: `${duration}ms`,
+    });
 
     res.status(200).json({
       success: true,
@@ -535,10 +593,9 @@ export async function handleSosConfirmSafe(req: Request, res: Response) {
       });
     }
 
-    console.error(
-      `❌ [MOBILE-SOS] Erreur confirm-safe:`,
-      getErrorMessage(error),
-    );
+    mobileSosLogger.error("Erreur désactivation", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la confirmation.",
       code: "INTERNAL_ERROR",
@@ -591,7 +648,7 @@ export async function handleSosCreateContact(req: Request, res: Response) {
     });
 
     const duration = Date.now() - startTime;
-    console.log(`📞 [MOBILE-SOS] Contact créé: ${name} en ${duration}ms`);
+    mobileSosLogger.info("Contact créé", { name, duration: `${duration}ms` });
 
     res.status(201).json({
       success: true,
@@ -619,10 +676,9 @@ export async function handleSosCreateContact(req: Request, res: Response) {
       });
     }
 
-    console.error(
-      `❌ [MOBILE-SOS] Erreur création contact:`,
-      getErrorMessage(error),
-    );
+    mobileSosLogger.error("Erreur confirm-safe", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la création du contact.",
       code: "INTERNAL_ERROR",
@@ -651,10 +707,9 @@ export async function handleSosGetContacts(req: Request, res: Response) {
       count: contacts.length,
     });
   } catch (error) {
-    console.error(
-      `❌ [MOBILE-SOS] Erreur liste contacts:`,
-      getErrorMessage(error),
-    );
+    mobileSosLogger.error("Erreur sessions actives", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la récupération des contacts.",
       code: "INTERNAL_ERROR",
@@ -705,10 +760,9 @@ export async function handleSosUpdateContact(req: Request, res: Response) {
       contact,
     });
   } catch (error) {
-    console.error(
-      `❌ [MOBILE-SOS] Erreur mise à jour contact:`,
-      getErrorMessage(error),
-    );
+    mobileSosLogger.error("Erreur mise à jour contact", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la mise à jour du contact.",
       code: "INTERNAL_ERROR",
@@ -745,10 +799,9 @@ export async function handleSosDeleteContact(req: Request, res: Response) {
       message: "Contact d'urgence supprimé.",
     });
   } catch (error) {
-    console.error(
-      `❌ [MOBILE-SOS] Erreur suppression contact:`,
-      getErrorMessage(error),
-    );
+    mobileSosLogger.error("Erreur suppression contact", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       error: "Erreur lors de la suppression du contact.",
       code: "INTERNAL_ERROR",

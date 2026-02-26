@@ -2,6 +2,10 @@ import cron from "node-cron";
 import { cleanupExpiredShares } from "./dataShareService";
 import NotificationModel from "../models/notifications";
 import { refreshTokenService } from "./refreshTokenService";
+import { logger } from "./loggerService";
+
+// Create child logger for cron service
+const cronLogger = logger.child({ service: "cron" });
 
 // ─── Flags de verrouillage pour empêcher les exécutions simultanées ───
 let isDataShareCleanupRunning = false;
@@ -16,32 +20,30 @@ export function startDataShareCleanupJob(): void {
   // Cron expression: "0 3 * * *" = Tous les jours à 3h00
   cron.schedule("0 3 * * *", async () => {
     if (isDataShareCleanupRunning) {
-      console.log("[CRON] Nettoyage des partages déjà en cours, skip");
+      cronLogger.info("Data share cleanup already running, skipping");
       return;
     }
     isDataShareCleanupRunning = true;
     try {
-      console.log("🧹 [CRON] Lancement du nettoyage des partages expirés...");
+      cronLogger.info("Starting data share cleanup");
       const deletedCount = await cleanupExpiredShares();
 
       if (deletedCount > 0) {
-        console.log(`✅ [CRON] ${deletedCount} partages expirés nettoyés`);
+        cronLogger.info("Data share cleanup completed", { deletedCount });
       } else {
-        console.log("✅ [CRON] Aucun partage expiré à nettoyer");
+        cronLogger.info("No expired shares to clean");
       }
     } catch (error) {
-      console.error(
-        "❌ [CRON ERROR] Erreur lors du nettoyage des partages:",
-        error,
-      );
+      cronLogger.error("Data share cleanup failed", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     } finally {
       isDataShareCleanupRunning = false;
     }
   });
 
-  console.log(
-    "⏰ [CRON] Job de nettoyage des partages programmé (tous les jours à 3h00)",
-  );
+  cronLogger.info("Data share cleanup job scheduled (daily at 3:00 AM)");
 }
 
 /**
@@ -52,38 +54,34 @@ export function startNotificationCleanupJob(): void {
   // Cron expression: "0 4 * * *" = Tous les jours à 4h00
   cron.schedule("0 4 * * *", async () => {
     if (isNotificationCleanupRunning) {
-      console.log("[CRON] Nettoyage des notifications déjà en cours, skip");
+      cronLogger.info("Notification cleanup already running, skipping");
       return;
     }
     isNotificationCleanupRunning = true;
     try {
-      console.log(
-        "🧹 [CRON] Lancement du nettoyage des notifications expirées...",
-      );
+      cronLogger.info("Starting notification cleanup");
       const result = await NotificationModel.deleteMany({
         expiresAt: { $lt: new Date() },
       });
 
       if (result.deletedCount > 0) {
-        console.log(
-          `✅ [CRON] ${result.deletedCount} notifications expirées nettoyées`,
-        );
+        cronLogger.info("Notification cleanup completed", {
+          deletedCount: result.deletedCount,
+        });
       } else {
-        console.log("✅ [CRON] Aucune notification expirée à nettoyer");
+        cronLogger.info("No expired notifications to clean");
       }
     } catch (error) {
-      console.error(
-        "❌ [CRON ERROR] Erreur lors du nettoyage des notifications:",
-        error,
-      );
+      cronLogger.error("Notification cleanup failed", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     } finally {
       isNotificationCleanupRunning = false;
     }
   });
 
-  console.log(
-    "⏰ [CRON] Job de nettoyage des notifications programmé (tous les jours à 4h00)",
-  );
+  cronLogger.info("Notification cleanup job scheduled (daily at 4:00 AM)");
 }
 
 /**
@@ -94,50 +92,47 @@ export function startRefreshTokenCleanupJob(): void {
   // Cron expression: "0 5 * * *" = Tous les jours à 5h00
   cron.schedule("0 5 * * *", async () => {
     if (isRefreshTokenCleanupRunning) {
-      console.log("[CRON] Nettoyage des refresh tokens déjà en cours, skip");
+      cronLogger.info("Refresh token cleanup already running, skipping");
       return;
     }
     isRefreshTokenCleanupRunning = true;
     try {
-      console.log(
-        "🧹 [CRON] Lancement du nettoyage des refresh tokens expirés et inactifs...",
-      );
+      cronLogger.info("Starting refresh token cleanup");
       const deletedCount = await refreshTokenService.cleanupExpiredTokens();
 
       if (deletedCount > 0) {
-        console.log(
-          `✅ [CRON] ${deletedCount} refresh tokens expirés/révoqués/inactifs nettoyés`,
-        );
+        cronLogger.info("Refresh token cleanup completed", { deletedCount });
       } else {
-        console.log("✅ [CRON] Aucun refresh token expiré/inactif à nettoyer");
+        cronLogger.info("No expired/inactive refresh tokens to clean");
       }
     } catch (error) {
-      console.error(
-        "❌ [CRON ERROR] Erreur lors du nettoyage des refresh tokens:",
-        error,
-      );
+      cronLogger.error("Refresh token cleanup failed", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
     } finally {
       isRefreshTokenCleanupRunning = false;
     }
   });
 
-  console.log(
-    "⏰ [CRON] Job de nettoyage des refresh tokens programmé (tous les jours à 5h00)",
-  );
+  cronLogger.info("Refresh token cleanup job scheduled (daily at 5:00 AM)");
 }
 
 /**
  * Job de nettoyage manuel (pour tests ou déclenchement manuel)
  */
 export async function runManualCleanup(): Promise<number> {
-  console.log("🧹 [MANUAL CLEANUP] Lancement du nettoyage manuel...");
+  cronLogger.info("Starting manual cleanup");
 
   try {
     const deletedCount = await cleanupExpiredShares();
-    console.log(`✅ [MANUAL CLEANUP] ${deletedCount} partages nettoyés`);
+    cronLogger.info("Manual cleanup completed", { deletedCount });
     return deletedCount;
   } catch (error) {
-    console.error("❌ [MANUAL CLEANUP ERROR]", error);
+    cronLogger.error("Manual cleanup failed", {
+      error: error instanceof Error ? error.message : String(error),
+      stack: error instanceof Error ? error.stack : undefined,
+    });
     throw error;
   }
 }

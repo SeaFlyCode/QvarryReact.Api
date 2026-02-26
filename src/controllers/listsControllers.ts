@@ -4,6 +4,9 @@ import { memoryStorage } from "../services/memoryStorageService";
 import { syncService } from "../services/syncService";
 import UserModel from "../models/users";
 import { getErrorMessage } from "../utils/errorUtils";
+import { logger } from "../services/loggerService";
+
+const listsLogger = logger.child({ service: "lists" });
 
 export async function handleCreateList(req: Request, res: Response) {
   try {
@@ -39,7 +42,9 @@ export async function handleCreateList(req: Request, res: Response) {
     }
     res.status(201).json({ message: "Liste créée avec succès" });
   } catch (error: unknown) {
-    console.error("Erreur lors de la création de la liste :", error);
+    listsLogger.error("Erreur création liste", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({ success: false, error: getErrorMessage(error) });
   }
 }
@@ -86,7 +91,9 @@ export async function handleGetAllLists(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la récupération des listes :", error);
+    listsLogger.error("Erreur récupération listes", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({ success: false, error: getErrorMessage(error) });
   }
 }
@@ -111,7 +118,9 @@ export async function handleGetListById(req: Request, res: Response) {
 
     res.status(200).json(list);
   } catch (error: unknown) {
-    console.error("Erreur lors de la récupération de la liste :", error);
+    listsLogger.error("Erreur récupération liste", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({ success: false, error: getErrorMessage(error) });
   }
 }
@@ -145,7 +154,9 @@ export async function handleDeleteList(req: Request, res: Response) {
 
     res.status(200).json({ message: "Liste supprimée avec succès" });
   } catch (error: unknown) {
-    console.error("Erreur lors de la suppression de la liste :", error);
+    listsLogger.error("Erreur suppression liste", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({ success: false, error: getErrorMessage(error) });
   }
 }
@@ -188,7 +199,9 @@ export async function handleUpdateList(req: Request, res: Response) {
       .status(200)
       .json({ message: "Liste mise à jour avec succès", updatedList });
   } catch (error: unknown) {
-    console.error("Erreur lors de la mise à jour de la liste :", error);
+    listsLogger.error("Erreur mise à jour liste", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({ success: false, error: getErrorMessage(error) });
   }
 }
@@ -246,10 +259,10 @@ export async function handleGetListByUserId(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error(
-      `Erreur lors de la récupération des listes pour l'utilisateur ${req.params.userId}:`,
-      error,
-    );
+    listsLogger.error("Erreur récupération listes utilisateur", {
+      userId: req.params.userId,
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de la récupération des listes",
@@ -311,7 +324,9 @@ export async function handleAddPointToList(req: Request, res: Response) {
       pointId,
     });
   } catch (error: unknown) {
-    console.error(`Erreur lors de l'ajout d'un point à la liste:`, error);
+    listsLogger.error("Erreur ajout point liste", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de l'ajout du point à la liste",
@@ -364,7 +379,9 @@ export async function handleRemovePointFromList(req: Request, res: Response) {
       pointId,
     });
   } catch (error: unknown) {
-    console.error(`Erreur lors du retrait d'un point de la liste:`, error);
+    listsLogger.error("Erreur retrait point liste", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors du retrait du point de la liste",
@@ -424,10 +441,9 @@ export async function handleGetPointsByListId(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error(
-      `Erreur lors de la récupération des points de la liste:`,
-      error,
-    );
+    listsLogger.error("Erreur récupération points liste", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de la récupération des points de la liste",
@@ -487,10 +503,9 @@ export async function handleGetListsByPointId(req: Request, res: Response) {
       },
     });
   } catch (error: unknown) {
-    console.error(
-      `Erreur lors de la récupération des listes contenant le point:`,
-      error,
-    );
+    listsLogger.error("Erreur récupération listes par point", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de la récupération des listes contenant le point",
@@ -564,10 +579,9 @@ export async function handleUpdateListPointsOrder(req: Request, res: Response) {
       listId,
     });
   } catch (error: unknown) {
-    console.error(
-      `Erreur lors de la mise à jour de l'ordre des points:`,
-      error,
-    );
+    listsLogger.error("Erreur mise à jour ordre points", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de la mise à jour de l'ordre des points",
@@ -628,10 +642,10 @@ export async function handleGetAllListsAdmin(req: Request, res: Response) {
           }
         }
       } catch (userError) {
-        console.error(
-          `Erreur lors de la récupération des listes pour l'utilisateur ${user._id}:`,
-          userError,
-        );
+        listsLogger.error("Erreur récupération listes utilisateur", {
+          userId: user._id,
+          error: userError,
+        });
       }
     }
 
@@ -641,7 +655,9 @@ export async function handleGetAllListsAdmin(req: Request, res: Response) {
       usersWithLists: allUsersLists,
     });
   } catch (error: unknown) {
-    console.error("Erreur lors de la récupération des listes (admin):", error);
+    listsLogger.error("Erreur récupération listes admin", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de la récupération des listes",
@@ -713,10 +729,9 @@ export async function handleBulkAddPointsToList(req: Request, res: Response) {
       results,
     });
   } catch (error: unknown) {
-    console.error(
-      `Erreur lors de l'ajout en batch de points à la liste:`,
-      error,
-    );
+    listsLogger.error("Erreur ajout batch points", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de l'ajout en batch de points",
@@ -786,10 +801,9 @@ export async function handleBulkRemovePointsFromList(
       results,
     });
   } catch (error: unknown) {
-    console.error(
-      `Erreur lors du retrait en batch de points de la liste:`,
-      error,
-    );
+    listsLogger.error("Erreur retrait batch points", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors du retrait en batch de points",
@@ -828,7 +842,9 @@ export async function handleSyncListData(req: Request, res: Response) {
       message: "Données synchronisées avec succès",
     });
   } catch (error: unknown) {
-    console.error(`Erreur lors de la synchronisation manuelle:`, error);
+    listsLogger.error("Erreur synchronisation manuelle", {
+      error: getErrorMessage(error),
+    });
     res.status(500).json({
       success: false,
       message: "Erreur lors de la synchronisation",
