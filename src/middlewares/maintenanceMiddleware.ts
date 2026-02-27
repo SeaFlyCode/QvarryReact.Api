@@ -21,17 +21,24 @@ export const maintenanceMiddleware = async (
   try {
     // Routes toujours accessibles (login, maintenance status, etc.)
     // Note: Le middleware est monté sur /api, donc req.path n'inclut pas /api
+    // Le middleware de rétrocompatibilité ajoute /v1/ au path, on le normalise
+    const normalizedPath = req.path.startsWith("/v1/")
+      ? req.path.slice(3)
+      : req.path;
+
     const exemptRoutes = [
-      "/maintenance", // Toutes les routes de maintenance (status, activate, deactivate)
-      "/auth/login", // Login pour permettre aux admins de se connecter
-      "/auth/verify-2fa", // 2FA
-      "/auth/check", // Vérification d'auth
-      "/auth/complete-2fa-login", // Compléter le login 2FA
-      "/admin", // Les routes admin restent accessibles pour les admins
+      "/maintenance",
+      "/auth/login",
+      "/auth/verify-2fa",
+      "/auth/check",
+      "/auth/complete-2fa-login",
+      "/admin",
     ];
 
     // Vérifier si la route est exemptée
-    const isExempt = exemptRoutes.some((route) => req.path.startsWith(route));
+    const isExempt = exemptRoutes.some((route) =>
+      normalizedPath.startsWith(route),
+    );
     if (isExempt) {
       return next();
     }

@@ -243,6 +243,7 @@ configs:
           type: loki
           access: proxy
           url: http://loki:3100
+          uid: loki-ds
           isDefault: true
           editable: false
           jsonData:
@@ -267,23 +268,860 @@ configs:
   grafana_dashboard_json:
     content: |
       {
-        "annotations": { "list": [] },
+        "uid": "qvarry-logs",
+        "title": "QvarryReact API - Logs",
+        "tags": ["qvarry", "logs", "monitoring"],
+        "timezone": "browser",
+        "schemaVersion": 39,
+        "version": 1,
         "editable": true,
         "fiscalYearStartMonth": 0,
         "graphTooltip": 0,
         "id": null,
         "links": [],
+        "time": {
+          "from": "now-6h",
+          "to": "now"
+        },
+        "timepicker": {},
+        "refresh": "10s",
+        "annotations": {
+          "list": []
+        },
+        "templating": {
+          "list": [
+            {
+              "name": "level",
+              "type": "custom",
+              "label": "Niveau",
+              "query": "critical,error,warn,info,http,debug",
+              "current": {
+                "selected": true,
+                "text": "All",
+                "value": "$__all"
+              },
+              "options": [
+                {
+                  "selected": true,
+                  "text": "All",
+                  "value": "$__all"
+                },
+                {
+                  "selected": false,
+                  "text": "critical",
+                  "value": "critical"
+                },
+                {
+                  "selected": false,
+                  "text": "error",
+                  "value": "error"
+                },
+                {
+                  "selected": false,
+                  "text": "warn",
+                  "value": "warn"
+                },
+                {
+                  "selected": false,
+                  "text": "info",
+                  "value": "info"
+                },
+                {
+                  "selected": false,
+                  "text": "http",
+                  "value": "http"
+                },
+                {
+                  "selected": false,
+                  "text": "debug",
+                  "value": "debug"
+                }
+              ],
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*",
+              "allFormat": "regex"
+            },
+            {
+              "name": "service",
+              "type": "query",
+              "label": "Service",
+              "datasource": {
+                "type": "loki",
+                "uid": "loki-ds"
+              },
+              "query": "label_values({job=\"qvarry-api\"}, service)",
+              "current": {
+                "selected": true,
+                "text": "All",
+                "value": "$__all"
+              },
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*",
+              "allFormat": "regex",
+              "refresh": 1
+            },
+            {
+              "name": "type",
+              "type": "custom",
+              "label": "Type",
+              "query": "app,error",
+              "current": {
+                "selected": true,
+                "text": "All",
+                "value": "$__all"
+              },
+              "options": [
+                {
+                  "selected": true,
+                  "text": "All",
+                  "value": "$__all"
+                },
+                {
+                  "selected": false,
+                  "text": "app",
+                  "value": "app"
+                },
+                {
+                  "selected": false,
+                  "text": "error",
+                  "value": "error"
+                }
+              ],
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*",
+              "allFormat": "regex"
+            },
+            {
+              "name": "search",
+              "type": "textbox",
+              "label": "Recherche",
+              "query": "",
+              "current": {
+                "value": "",
+                "text": ""
+              }
+            },
+            {
+              "name": "correlationId",
+              "type": "textbox",
+              "label": "Correlation ID",
+              "query": "",
+              "current": {
+                "value": "",
+                "text": ""
+              }
+            }
+          ]
+        },
         "panels": [
           {
-            "title": "Logs en temps reel",
-            "type": "logs",
-            "gridPos": { "h": 16, "w": 24, "x": 0, "y": 0 },
-            "datasource": { "type": "loki", "uid": "" },
+            "type": "row",
+            "title": "Indicateurs",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 0
+            },
+            "id": 1,
+            "collapsed": false
+          },
+          {
+            "type": "stat",
+            "title": "Total logs (1h)",
+            "gridPos": {
+              "h": 4,
+              "w": 4,
+              "x": 0,
+              "y": 1
+            },
+            "id": 2,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
             "targets": [
               {
-                "datasource": { "type": "loki", "uid": "" },
-                "editorMode": "builder",
-                "expr": "{job=\"qvarry-api\"} |= ``",
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"$level\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "#3274D9"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "#3274D9"
+                    }
+                  ]
+                }
+              }
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "none",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "reduceOptions": {
+                "values": false,
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": ""
+              },
+              "textMode": "auto"
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Erreurs (1h)",
+            "gridPos": {
+              "h": 4,
+              "w": 4,
+              "x": 4,
+              "y": 1
+            },
+            "id": 3,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "#F2495C"
+                    }
+                  ]
+                }
+              }
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "none",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "reduceOptions": {
+                "values": false,
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": ""
+              },
+              "textMode": "auto"
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Warnings (1h)",
+            "gridPos": {
+              "h": 4,
+              "w": 4,
+              "x": 8,
+              "y": 1
+            },
+            "id": 4,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"warn\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "#FF9830"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "#FF9830"
+                    }
+                  ]
+                }
+              }
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "none",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "reduceOptions": {
+                "values": false,
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": ""
+              },
+              "textMode": "auto"
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Infos (1h)",
+            "gridPos": {
+              "h": 4,
+              "w": 4,
+              "x": 12,
+              "y": 1
+            },
+            "id": 5,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"info\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "#73BF69"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "#73BF69"
+                    }
+                  ]
+                }
+              }
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "none",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "reduceOptions": {
+                "values": false,
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": ""
+              },
+              "textMode": "auto"
+            }
+          },
+          {
+            "type": "gauge",
+            "title": "Taux d'erreur (%)",
+            "gridPos": {
+              "h": 4,
+              "w": 5,
+              "x": 16,
+              "y": 1
+            },
+            "id": 6,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "(sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto])) / sum(count_over_time({job=\"qvarry-api\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))) * 100",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "unit": "percent",
+                "min": 0,
+                "max": 100,
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "green"
+                    },
+                    {
+                      "value": 5,
+                      "color": "yellow"
+                    },
+                    {
+                      "value": 15,
+                      "color": "red"
+                    }
+                  ]
+                }
+              }
+            },
+            "options": {
+              "showThresholdLabels": false,
+              "showThresholdMarkers": true
+            }
+          },
+          {
+            "type": "stat",
+            "title": "Services actifs",
+            "gridPos": {
+              "h": 4,
+              "w": 3,
+              "x": 21,
+              "y": 1
+            },
+            "id": 7,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "count(count_over_time({job=\"qvarry-api\"} [$__auto]) by (service))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "#B877D9"
+                },
+                "mappings": [],
+                "thresholds": {
+                  "mode": "absolute",
+                  "steps": [
+                    {
+                      "value": null,
+                      "color": "#B877D9"
+                    }
+                  ]
+                }
+              }
+            },
+            "options": {
+              "colorMode": "value",
+              "graphMode": "none",
+              "justifyMode": "center",
+              "orientation": "auto",
+              "reduceOptions": {
+                "values": false,
+                "calcs": [
+                  "lastNotNull"
+                ],
+                "fields": ""
+              },
+              "textMode": "auto"
+            }
+          },
+          {
+            "type": "row",
+            "title": "Tendances",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 5
+            },
+            "id": 8,
+            "collapsed": false
+          },
+          {
+            "type": "timeseries",
+            "title": "Volume par niveau",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 6
+            },
+            "id": 9,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "sum by (level) (count_over_time({job=\"qvarry-api\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [5m]))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "drawStyle": "bars",
+                  "lineInterpolation": "linear",
+                  "barAlignment": 0,
+                  "fillOpacity": 80,
+                  "gradientMode": "none",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  },
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "showPoints": "never",
+                  "spanNulls": false
+                }
+              },
+              "overrides": [
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "critical"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "#C4162A"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "error"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "#F2495C"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "warn"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "#FF9830"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "info"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "#73BF69"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "http"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "#B877D9"
+                      }
+                    }
+                  ]
+                },
+                {
+                  "matcher": {
+                    "id": "byName",
+                    "options": "debug"
+                  },
+                  "properties": [
+                    {
+                      "id": "color",
+                      "value": {
+                        "mode": "fixed",
+                        "fixedColor": "#8AB8FF"
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            "options": {
+              "legend": {
+                "showLegend": true,
+                "displayMode": "list",
+                "placement": "bottom"
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "none"
+              }
+            }
+          },
+          {
+            "type": "timeseries",
+            "title": "Volume par service",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 6
+            },
+            "id": 10,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"$level\", type=~\"$type\"} |= \"$search\" [5m]))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "drawStyle": "bars",
+                  "lineInterpolation": "linear",
+                  "barAlignment": 0,
+                  "fillOpacity": 80,
+                  "gradientMode": "none",
+                  "stacking": {
+                    "mode": "normal",
+                    "group": "A"
+                  },
+                  "lineWidth": 1,
+                  "pointSize": 5,
+                  "showPoints": "never",
+                  "spanNulls": false
+                }
+              }
+            },
+            "options": {
+              "legend": {
+                "showLegend": true,
+                "displayMode": "list",
+                "placement": "bottom"
+              },
+              "tooltip": {
+                "mode": "multi",
+                "sort": "none"
+              }
+            }
+          },
+          {
+            "type": "row",
+            "title": "Analyse",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 14
+            },
+            "id": 11,
+            "collapsed": false
+          },
+          {
+            "type": "barchart",
+            "title": "Top 10 services les plus actifs",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 0,
+              "y": 15
+            },
+            "id": 12,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"$level\", type=~\"$type\"} |= \"$search\" [$__auto])))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "options": {
+              "orientation": "horizontal",
+              "displayMode": "gradient",
+              "showValue": "always"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "palette-classic"
+                }
+              }
+            }
+          },
+          {
+            "type": "barchart",
+            "title": "Erreurs par service",
+            "gridPos": {
+              "h": 8,
+              "w": 12,
+              "x": 12,
+              "y": 15
+            },
+            "id": 13,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"error|critical\", type=~\"$type\"} [$__auto])))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "options": {
+              "orientation": "horizontal",
+              "displayMode": "gradient",
+              "showValue": "always"
+            },
+            "fieldConfig": {
+              "defaults": {
+                "color": {
+                  "mode": "fixed",
+                  "fixedColor": "#F2495C"
+                }
+              }
+            }
+          },
+          {
+            "type": "row",
+            "title": "Logs en temps réel",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 23
+            },
+            "id": 14,
+            "collapsed": false
+          },
+          {
+            "type": "logs",
+            "title": "Logs filtrés",
+            "gridPos": {
+              "h": 18,
+              "w": 24,
+              "x": 0,
+              "y": 24
+            },
+            "id": 15,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "{job=\"qvarry-api\", level=~\"$level\", service=~\"$service\", type=~\"$type\"} |= \"$search\" |= \"$correlationId\"",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -293,105 +1131,150 @@ configs:
               "showLabels": true,
               "showCommonLabels": false,
               "wrapLogMessage": true,
-              "prettifyLogMessage": true,
+              "prettifyLogMessage": false,
               "enableLogDetails": true,
               "dedupStrategy": "none",
               "sortOrder": "Descending"
             }
           },
           {
-            "title": "Erreurs par service (24h)",
-            "type": "barchart",
-            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
-            "datasource": { "type": "loki", "uid": "" },
-            "targets": [
-              {
-                "datasource": { "type": "loki", "uid": "" },
-                "editorMode": "code",
-                "expr": "sum by (service) (count_over_time({job=\"qvarry-api\", level=\"error\"} [24h]))",
-                "queryType": "instant",
-                "refId": "A"
-              }
-            ]
+            "type": "row",
+            "title": "Alertes et Warnings",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 42
+            },
+            "id": 16,
+            "collapsed": false
           },
           {
-            "title": "Volume de logs par niveau (1h)",
-            "type": "timeseries",
-            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
-            "datasource": { "type": "loki", "uid": "" },
+            "type": "logs",
+            "title": "Derniers warnings",
+            "gridPos": {
+              "h": 10,
+              "w": 12,
+              "x": 0,
+              "y": 43
+            },
+            "id": 17,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
             "targets": [
               {
-                "datasource": { "type": "loki", "uid": "" },
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
                 "editorMode": "code",
-                "expr": "sum by (level) (count_over_time({job=\"qvarry-api\"} [5m]))",
+                "expr": "{job=\"qvarry-api\", level=\"warn\", service=~\"$service\", type=~\"$type\"}",
                 "queryType": "range",
                 "refId": "A"
               }
             ],
-            "fieldConfig": {
-              "defaults": {
-                "custom": {
-                  "drawStyle": "bars",
-                  "fillOpacity": 50,
-                  "stacking": { "mode": "normal" }
+            "options": {
+              "showTime": true,
+              "showLabels": true,
+              "showCommonLabels": false,
+              "wrapLogMessage": true,
+              "prettifyLogMessage": false,
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "sortOrder": "Descending"
+            }
+          },
+          {
+            "type": "logs",
+            "title": "Erreurs et critiques",
+            "gridPos": {
+              "h": 10,
+              "w": 12,
+              "x": 12,
+              "y": 43
+            },
+            "id": 18,
+            "datasource": {
+              "type": "loki",
+              "uid": "loki-ds"
+            },
+            "targets": [
+              {
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "editorMode": "code",
+                "expr": "{job=\"qvarry-api\", level=~\"error|critical\", service=~\"$service\", type=~\"$type\"}",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": true,
+              "showCommonLabels": false,
+              "wrapLogMessage": true,
+              "prettifyLogMessage": false,
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "sortOrder": "Descending"
+            }
+          },
+          {
+            "type": "row",
+            "title": "HTTP Requests",
+            "gridPos": {
+              "h": 1,
+              "w": 24,
+              "x": 0,
+              "y": 53
+            },
+            "id": 19,
+            "collapsed": true,
+            "panels": [
+              {
+                "type": "logs",
+                "title": "Logs HTTP",
+                "gridPos": {
+                  "h": 12,
+                  "w": 24,
+                  "x": 0,
+                  "y": 54
+                },
+                "id": 20,
+                "datasource": {
+                  "type": "loki",
+                  "uid": "loki-ds"
+                },
+                "targets": [
+                  {
+                    "datasource": {
+                      "type": "loki",
+                      "uid": "loki-ds"
+                    },
+                    "editorMode": "code",
+                    "expr": "{job=\"qvarry-api\", level=\"http\"}",
+                    "queryType": "range",
+                    "refId": "A"
+                  }
+                ],
+                "options": {
+                  "showTime": true,
+                  "showLabels": true,
+                  "showCommonLabels": false,
+                  "wrapLogMessage": true,
+                  "prettifyLogMessage": false,
+                  "enableLogDetails": true,
+                  "dedupStrategy": "none",
+                  "sortOrder": "Descending"
                 }
               }
-            }
-          },
-          {
-            "title": "Derniers warnings",
-            "type": "logs",
-            "gridPos": { "h": 10, "w": 12, "x": 0, "y": 24 },
-            "datasource": { "type": "loki", "uid": "" },
-            "targets": [
-              {
-                "datasource": { "type": "loki", "uid": "" },
-                "editorMode": "code",
-                "expr": "{job=\"qvarry-api\", level=\"warn\"}",
-                "queryType": "range",
-                "refId": "A"
-              }
-            ],
-            "options": {
-              "showTime": true,
-              "showLabels": true,
-              "wrapLogMessage": true,
-              "enableLogDetails": true,
-              "sortOrder": "Descending"
-            }
-          },
-          {
-            "title": "Derniers critiques",
-            "type": "logs",
-            "gridPos": { "h": 10, "w": 12, "x": 12, "y": 24 },
-            "datasource": { "type": "loki", "uid": "" },
-            "targets": [
-              {
-                "datasource": { "type": "loki", "uid": "" },
-                "editorMode": "code",
-                "expr": "{job=\"qvarry-api\", level=~\"error|critical\"}",
-                "queryType": "range",
-                "refId": "A"
-              }
-            ],
-            "options": {
-              "showTime": true,
-              "showLabels": true,
-              "wrapLogMessage": true,
-              "enableLogDetails": true,
-              "sortOrder": "Descending"
-            }
+            ]
           }
-        ],
-        "schemaVersion": 39,
-        "tags": ["qvarry", "logs", "monitoring"],
-        "templating": { "list": [] },
-        "time": { "from": "now-6h", "to": "now" },
-        "timepicker": {},
-        "timezone": "browser",
-        "title": "QvarryReact API - Logs",
-        "uid": "qvarry-logs",
-        "version": 1
+        ]
       }
 
 # =============================================================================

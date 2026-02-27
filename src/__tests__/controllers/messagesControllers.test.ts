@@ -48,6 +48,13 @@ import { webSocketService } from "../../services/webSocketService";
 import { memoryStorage } from "../../services/memoryStorageService";
 import * as masterEncryptionUtils from "../../utils/masterEncryptionUtils";
 
+// Valid MongoDB ObjectId constants
+const USER_ID_1 = "507f1f77bcf86cd799439011";
+const USER_ID_2 = "507f1f77bcf86cd799439012";
+const USER_ID_3 = "507f1f77bcf86cd799439013";
+const CONV_ID = "507f1f77bcf86cd799439021";
+const MSG_ID = "507f1f77bcf86cd799439031";
+
 describe("messagesControllers", () => {
   let req: Partial<Request>;
   let res: Partial<Response>;
@@ -81,16 +88,16 @@ describe("messagesControllers", () => {
 
   describe("sendMessage", () => {
     it("devrait envoyer un message avec succès", async () => {
-      req.user = { id: "user123" };
+      req.user = { id: USER_ID_1 };
       req.body = {
-        conversationId: "conv123",
+        conversationId: CONV_ID,
         content: "Hello world",
         type: "text",
       };
 
       const mockConversation = {
-        _id: "conv123",
-        participants: [{ userId: "user123" }, { userId: "user456" }],
+        _id: CONV_ID,
+        participants: [{ userId: USER_ID_1 }, { userId: USER_ID_2 }],
         lastMessage: null,
         updatedAt: new Date(),
         isGroup: false,
@@ -99,17 +106,17 @@ describe("messagesControllers", () => {
       };
 
       const mockMessage = {
-        _id: "msg123",
-        conversationId: "conv123",
-        senderId: "user123",
+        _id: MSG_ID,
+        conversationId: CONV_ID,
+        senderId: USER_ID_1,
         content: "encrypted_content",
         type: "text",
-        readBy: ["user123"],
+        readBy: [USER_ID_1],
         createdAt: new Date(),
       };
 
       const mockUser = {
-        _id: "user123",
+        _id: USER_ID_1,
         name: "John",
         surname: "Doe",
         pseudo: "encryptedPseudo",
@@ -117,6 +124,9 @@ describe("messagesControllers", () => {
       };
 
       (Conversation.findById as jest.Mock).mockResolvedValue(mockConversation);
+      (Conversation.updateOne as jest.Mock).mockResolvedValue({
+        modifiedCount: 0,
+      });
       (Message.create as jest.Mock).mockResolvedValue(mockMessage);
       (User.findById as jest.Mock).mockReturnValue({
         select: jest.fn().mockResolvedValue(mockUser),
@@ -127,7 +137,7 @@ describe("messagesControllers", () => {
       expect(Message.create).toHaveBeenCalled();
       expect(mockConversation.save).toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({ messageId: "msg123" });
+      expect(res.json).toHaveBeenCalledWith({ messageId: MSG_ID });
     });
 
     it("devrait rejeter si utilisateur non authentifié", async () => {
@@ -205,28 +215,31 @@ describe("messagesControllers", () => {
 
   describe("getMessages", () => {
     it("devrait récupérer les messages d'une conversation", async () => {
-      req.user = { id: "user123" };
-      req.params = { conversationId: "conv123" };
+      req.user = { id: USER_ID_1 };
+      req.params = { conversationId: CONV_ID };
       req.query = { limit: "20", offset: "0" };
 
       const mockConversation = {
-        _id: "conv123",
-        participants: [{ userId: "user123" }, { userId: "user456" }],
+        _id: CONV_ID,
+        participants: [{ userId: USER_ID_1 }, { userId: USER_ID_2 }],
       };
+
+      const msg1Id = "507f1f77bcf86cd799439032";
+      const msg2Id = "507f1f77bcf86cd799439033";
 
       const mockMessages = [
         {
-          _id: "msg2",
-          conversationId: "conv123",
-          senderId: "user456",
+          _id: msg2Id,
+          conversationId: CONV_ID,
+          senderId: USER_ID_2,
           content: "encrypted_message_2",
           createdAt: new Date("2024-01-02"),
           replies: [],
         },
         {
-          _id: "msg1",
-          conversationId: "conv123",
-          senderId: "user123",
+          _id: msg1Id,
+          conversationId: CONV_ID,
+          senderId: USER_ID_1,
           content: "encrypted_message_1",
           createdAt: new Date("2024-01-01"),
           replies: [],
@@ -258,11 +271,11 @@ describe("messagesControllers", () => {
       expect(res.json).toHaveBeenCalledWith({
         messages: expect.arrayContaining([
           expect.objectContaining({
-            _id: "msg1",
+            _id: msg1Id,
             content: "decrypted_content",
           }),
           expect.objectContaining({
-            _id: "msg2",
+            _id: msg2Id,
             content: "decrypted_content",
           }),
         ]),
@@ -271,7 +284,7 @@ describe("messagesControllers", () => {
           limit: 20,
           total: 2,
           hasMore: false,
-          oldestMessageId: "msg1",
+          oldestMessageId: msg1Id,
         },
       });
     });
@@ -317,23 +330,21 @@ describe("messagesControllers", () => {
 
   describe("markMessageAsRead", () => {
     it("devrait marquer un message comme lu", async () => {
-      req.user = { id: "user123" };
-      req.params = { messageId: "msg123" };
-
-      const conversationId = "507f1f77bcf86cd799439011";
+      req.user = { id: USER_ID_1 };
+      req.params = { messageId: MSG_ID };
 
       // Create a mock message with readBy as array of strings
       const mockMessage = {
-        _id: "msg123",
-        conversationId: conversationId, // Use string ID
-        readBy: ["user456"], // Already read by user456, not by user123
+        _id: MSG_ID,
+        conversationId: CONV_ID,
+        readBy: [USER_ID_2], // Already read by USER_ID_2, not by USER_ID_1
         updatedAt: new Date(),
         save: jest.fn().mockResolvedValue(true),
       };
 
       const mockConversation = {
-        _id: conversationId,
-        participants: [{ userId: "user123" }, { userId: "user456" }],
+        _id: CONV_ID,
+        participants: [{ userId: USER_ID_1 }, { userId: USER_ID_2 }],
       };
 
       (Message.findById as jest.Mock).mockResolvedValue(mockMessage);
@@ -341,7 +352,7 @@ describe("messagesControllers", () => {
 
       await markMessageAsRead(req as Request, res as Response);
 
-      // The controller should have called save (since user123 hasn't read it yet)
+      // The controller should have called save (since USER_ID_1 hasn't read it yet)
       expect(mockMessage.save).toHaveBeenCalled();
       expect(res.json).toHaveBeenCalledWith({ success: true });
     });
@@ -361,24 +372,22 @@ describe("messagesControllers", () => {
 
   describe("replyToMessage", () => {
     it("devrait répondre à un message", async () => {
-      req.user = { id: "user123" };
-      req.params = { messageId: "msg123" };
+      req.user = { id: USER_ID_1 };
+      req.params = { messageId: MSG_ID };
       req.body = { content: "Reply content" };
-
-      const conversationId = "507f1f77bcf86cd799439011";
 
       // Create a mock message with empty replies array
       const mockMessage = {
-        _id: "msg123",
-        conversationId: conversationId, // Use string ID
+        _id: MSG_ID,
+        conversationId: CONV_ID,
         replies: [],
         updatedAt: new Date(),
         save: jest.fn().mockResolvedValue(true),
       };
 
       const mockConversation = {
-        _id: conversationId,
-        participants: [{ userId: "user123" }, { userId: "user456" }],
+        _id: CONV_ID,
+        participants: [{ userId: USER_ID_1 }, { userId: USER_ID_2 }],
       };
 
       (Message.findById as jest.Mock).mockResolvedValue(mockMessage);
