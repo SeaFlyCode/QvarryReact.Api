@@ -6,6 +6,7 @@ import { refreshTokenService } from "../../services/refreshTokenService";
 import RefreshTokenModel from "../../models/refreshTokens";
 import { auditService } from "../../services/auditService";
 import crypto from "crypto";
+import * as masterEncryptionUtils from "../../utils/masterEncryptionUtils";
 
 // Mock dependencies
 jest.mock("../../models/refreshTokens");
@@ -13,7 +14,7 @@ jest.mock("../../services/auditService");
 jest.mock("../../utils/masterEncryptionUtils", () => ({
   encrypt: jest.fn((value) => `encrypted_${value}`),
   decrypt: jest.fn((value) =>
-    value.startsWith("encrypted_") ? value.substring(10) : value,
+    value && value.startsWith("encrypted_") ? value.substring(10) : value,
   ),
 }));
 
@@ -25,6 +26,14 @@ describe("refreshTokenService", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+
+    // Re-setup encryption utils mocks after clearAllMocks
+    (masterEncryptionUtils.encrypt as jest.Mock).mockImplementation(
+      (value) => `encrypted_${value}`,
+    );
+    (masterEncryptionUtils.decrypt as jest.Mock).mockImplementation((value) =>
+      value && value.startsWith("encrypted_") ? value.substring(10) : value,
+    );
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -65,8 +74,11 @@ describe("refreshTokenService", () => {
 
   describe("createRefreshToken", () => {
     beforeEach(() => {
-      // Mock find to return empty array (no existing sessions)
-      (RefreshTokenModel.find as jest.Mock).mockResolvedValue([]);
+      // Mock find to return chainable query with sort and lean
+      (RefreshTokenModel.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
       (RefreshTokenModel.create as jest.Mock).mockResolvedValue({});
       (auditService.log as jest.Mock).mockResolvedValue(undefined);
     });
@@ -113,7 +125,10 @@ describe("refreshTokenService", () => {
         tokenId: `old-token-${i}`,
         lastUsedAt: new Date(Date.now() - (10 - i) * 1000),
       }));
-      (RefreshTokenModel.find as jest.Mock).mockResolvedValue(existingSessions);
+      (RefreshTokenModel.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue(existingSessions),
+      });
       (RefreshTokenModel.updateMany as jest.Mock).mockResolvedValue({});
 
       await refreshTokenService.createRefreshToken({
@@ -487,9 +502,10 @@ describe("refreshTokenService", () => {
 
   describe("Edge Cases", () => {
     it("should handle errors gracefully during token creation", async () => {
-      (RefreshTokenModel.find as jest.Mock).mockRejectedValue(
-        new Error("DB Error"),
-      );
+      (RefreshTokenModel.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockRejectedValue(new Error("DB Error")),
+      });
 
       await expect(
         refreshTokenService.createRefreshToken({
@@ -500,7 +516,10 @@ describe("refreshTokenService", () => {
     });
 
     it("should handle missing optional fields in createRefreshToken", async () => {
-      (RefreshTokenModel.find as jest.Mock).mockResolvedValue([]);
+      (RefreshTokenModel.find as jest.Mock).mockReturnValue({
+        sort: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
       (RefreshTokenModel.create as jest.Mock).mockResolvedValue({});
 
       const token = await refreshTokenService.createRefreshToken({

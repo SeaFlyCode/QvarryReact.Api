@@ -13,7 +13,7 @@ process.env.NODE_ENV = "test";
 
 // Variables d'environnement requises pour les tests
 process.env.JWT_SECRET =
-  "test-jwt-secret-key-for-unit-tests-only-do-not-use-in-production";
+  "test-jwt-secret-key-for-testing-purposes-only-minimum-length-requirement";
 process.env.JWT_REFRESH_SECRET =
   "test-jwt-refresh-secret-key-for-unit-tests-only";
 process.env.JWT_EXPIRES_IN = "15m";
@@ -23,9 +23,12 @@ process.env.JWT_REFRESH_EXPIRES_IN = "7d";
 process.env.ENCRYPTION_KEY_MASTER =
   "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef";
 
-// Clé HMAC pour les emails (32 bytes = 64 hex chars)
-process.env.EMAIL_HMAC_KEY =
-  "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210";
+// Clé de chiffrement pour les communications (32 bytes = 64 hex chars)
+process.env.ENCRYPTION_KEY_COMMUNICATION =
+  "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789";
+
+// Clé HMAC pour les emails
+process.env.EMAIL_HMAC_KEY = "test-hmac-key-for-email-hashing";
 
 // Base de données de test
 process.env.DB_CONN_STRING = "mongodb://localhost:27017/qvarry-test";
@@ -79,6 +82,20 @@ jest.mock("../services/loggerService", () => {
     },
   };
 });
+
+// ════════════════════════════════════════════════════════
+// 🌐 Mock du service WebSocket
+// ════════════════════════════════════════════════════════
+
+jest.mock("../services/webSocketService", () => ({
+  webSocketService: {
+    initialize: jest.fn(),
+    sendNotificationToUser: jest.fn(),
+    sendMessageToUser: jest.fn(),
+    broadcastNotification: jest.fn(),
+    handleUpgrade: jest.fn(),
+  },
+}));
 
 // ════════════════════════════════════════════════════════
 // 🗄️ Mock de Mongoose

@@ -17,10 +17,17 @@ export async function connectToDatabase() {
   const dbConnString = process.env.DB_CONN_STRING || "";
   const isProduction = process.env.NODE_ENV === "production";
 
-  // SSL/TLS: activé par défaut en production, configurable via DB_SSL
-  const enableSSL = process.env.DB_SSL
-    ? process.env.DB_SSL === "true"
-    : isProduction;
+  // SSL/TLS: activé par défaut en production (opt-out avec DB_SSL=false)
+  // En dev/test: désactivé par défaut (opt-in avec DB_SSL=true)
+  const enableSSL = isProduction
+    ? process.env.DB_SSL !== "false"
+    : process.env.DB_SSL === "true";
+
+  dbLogger.info("Database SSL configuration", {
+    sslEnabled: enableSSL,
+    dbSSLEnv: process.env.DB_SSL ?? "undefined",
+    nodeEnv: process.env.NODE_ENV ?? "undefined",
+  });
 
   if (!dbConnString) {
     dbLogger.error("Missing DB_CONN_STRING environment variable");
@@ -30,10 +37,10 @@ export async function connectToDatabase() {
   // Options de sécurité MongoDB
   const mongoOptions: mongoose.ConnectOptions = {
     dbName,
-    // Timeouts pour éviter les connexions infinies
-    serverSelectionTimeoutMS: 5000, // Timeout sélection serveur: 5s
+    // Timeouts pour éviter les connexions infinies (plus longs en production)
+    serverSelectionTimeoutMS: isProduction ? 30000 : 5000, // 30s en prod, 5s en dev
     socketTimeoutMS: 45000, // Timeout socket: 45s
-    connectTimeoutMS: 10000, // Timeout connexion: 10s
+    connectTimeoutMS: isProduction ? 30000 : 10000, // 30s en prod, 10s en dev
     // Pool de connexions
     maxPoolSize: isProduction ? 50 : 10, // LOW-04: Pool adapté à l'environnement
     minPoolSize: isProduction ? 10 : 2, // LOW-04: Min connexions maintenues
@@ -42,24 +49,55 @@ export async function connectToDatabase() {
     w: "majority", // Confirmation écriture majorité
     // SSL/TLS configurable
     ...(enableSSL && {
-      ssl: true,
-      tls: true,
+      tls: true, // TLS standard (ssl: true est legacy)
     }),
+    // Force IPv4 pour éviter les problèmes DNS IPv6 dans Docker Alpine
+    family: 4,
   };
 
-  try {
-    await mongoose.connect(dbConnString, mongoOptions);
-    dbLogger.info("Database connected", {
-      dbName,
-      ssl: enableSSL,
-    });
-  } catch (error) {
-    // SÉCURITÉ: Ne jamais afficher la connection string avec les credentials
-    const maskedConnString = maskConnectionString(dbConnString);
-    dbLogger.error("Database connection failed", {
-      maskedConnString,
-      error: error instanceof Error ? getErrorMessage(error) : "Unknown error",
-    });
-    throw new Error("Database connection failed");
+  // Configuration retry avec exponential backoff
+  const maxRetries = isProduction ? 5 : 2;
+  const retryDelays = isProduction
+    ? [3000, 6000, 12000, 24000, 48000] // 3s, 6s, 12s, 24s, 48s
+    : [1000, 2000]; // 1s, 2s
+
+  let lastError: Error | unknown = null;
+
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      await mongoose.connect(dbConnString, mongoOptions);
+      dbLogger.info("Database connected", {
+        dbName,
+        ssl: enableSSL,
+        attempt,
+      });
+      return; // Succès, on sort de la fonction
+    } catch (error) {
+      lastError = error;
+
+      if (attempt < maxRetries) {
+        const delay = retryDelays[attempt - 1];
+        dbLogger.warn("Database connection attempt failed, retrying...", {
+          attempt,
+          maxRetries,
+          nextRetryInMs: delay,
+          error:
+            error instanceof Error ? getErrorMessage(error) : "Unknown error",
+        });
+        // Attendre avant le prochain essai
+        await new Promise((resolve) => setTimeout(resolve, delay));
+      }
+    }
   }
+
+  // Si on arrive ici, toutes les tentatives ont échoué
+  // SÉCURITÉ: Ne jamais afficher la connection string avec les credentials
+  const maskedConnString = maskConnectionString(dbConnString);
+  dbLogger.error("Database connection failed after all retries", {
+    maskedConnString,
+    maxRetries,
+    error:
+      lastError instanceof Error ? getErrorMessage(lastError) : "Unknown error",
+  });
+  throw new Error("Database connection failed");
 }

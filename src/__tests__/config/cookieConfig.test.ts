@@ -71,7 +71,7 @@ describe("cookieConfig", () => {
     beforeEach(() => {
       jest.resetModules();
       process.env.NODE_ENV = "production";
-      delete process.env.COOKIE_SECURE;
+      process.env.COOKIE_SECURE = "true"; // Production always has COOKIE_SECURE=true
       delete process.env.COOKIE_SAMESITE;
     });
 

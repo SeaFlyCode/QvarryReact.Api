@@ -21,6 +21,11 @@ const config: Config.InitialOptions = {
   // Extensions de fichiers à traiter
   moduleFileExtensions: ["ts", "js", "json"],
 
+  // Module name mapper pour résoudre les chemins d'imports
+  moduleNameMapper: {
+    "^@/(.*)$": "<rootDir>/src/$1",
+  },
+
   // Fichier de setup global exécuté après l'environnement de test
   setupFilesAfterEnv: ["<rootDir>/src/__tests__/setup.ts"],
 
@@ -65,6 +70,7 @@ const config: Config.InitialOptions = {
           moduleResolution: "node",
           allowSyntheticDefaultImports: true,
           types: ["node", "jest"],
+          typeRoots: ["./src/types", "./node_modules/@types"],
         },
         isolatedModules: false,
         diagnostics: {

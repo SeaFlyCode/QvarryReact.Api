@@ -38,6 +38,12 @@ export function mockRequest(
     method: options.method || "GET",
     url: options.url || "/",
     path: options.path || "/",
+    socket: {
+      remoteAddress: options.ip || "127.0.0.1",
+    } as any,
+    connection: {
+      remoteAddress: options.ip || "127.0.0.1",
+    } as any,
     get: jest.fn((header: string) => {
       const headerMap: Record<string, string> = {
         "user-agent": "jest-test-agent",

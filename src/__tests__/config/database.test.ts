@@ -39,6 +39,7 @@ import { connectToDatabase } from "../../config/database";
 
 describe("database", () => {
   const originalEnv = process.env;
+  const originalSetTimeout = global.setTimeout;
 
   beforeEach(() => {
     jest.clearAllMocks();
@@ -48,6 +49,7 @@ describe("database", () => {
 
   afterEach(() => {
     process.env = originalEnv;
+    global.setTimeout = originalSetTimeout;
   });
 
   // ═══════════════════════════════════════════════════════════════════════════
@@ -92,6 +94,7 @@ describe("database", () => {
           connectTimeoutMS: 10000,
           retryWrites: true,
           w: "majority",
+          family: 4,
         }),
       );
     });
@@ -123,7 +126,6 @@ describe("database", () => {
       expect(mockConnect).toHaveBeenCalledWith(
         "mongodb://localhost:27017/testdb",
         expect.objectContaining({
-          ssl: true,
           tls: true,
         }),
       );
@@ -155,10 +157,23 @@ describe("database", () => {
       expect(mockConnect).toHaveBeenCalledWith(
         "mongodb://localhost:27017/testdb",
         expect.objectContaining({
-          ssl: true,
           tls: true,
         }),
       );
+    });
+
+    it("disables SSL in production when DB_SSL is explicitly set to false", async () => {
+      process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "production";
+      process.env.DB_SSL = "false";
+
+      mockConnect.mockResolvedValue(undefined);
+
+      await connectToDatabase();
+
+      const callOptions = mockConnect.mock.calls[0][1];
+      expect(callOptions.ssl).toBeUndefined();
+      expect(callOptions.tls).toBeUndefined();
     });
 
     it("uses production pool size settings in production mode", async () => {
@@ -195,12 +210,53 @@ describe("database", () => {
       );
     });
 
+    it("uses production timeout settings in production mode", async () => {
+      process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "production";
+
+      mockConnect.mockResolvedValue(undefined);
+
+      await connectToDatabase();
+
+      expect(mockConnect).toHaveBeenCalledWith(
+        "mongodb://localhost:27017/testdb",
+        expect.objectContaining({
+          serverSelectionTimeoutMS: 30000,
+          connectTimeoutMS: 30000,
+        }),
+      );
+    });
+
+    it("uses test/dev timeout settings in non-production mode", async () => {
+      process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "test";
+
+      mockConnect.mockResolvedValue(undefined);
+
+      await connectToDatabase();
+
+      expect(mockConnect).toHaveBeenCalledWith(
+        "mongodb://localhost:27017/testdb",
+        expect.objectContaining({
+          serverSelectionTimeoutMS: 5000,
+          connectTimeoutMS: 10000,
+        }),
+      );
+    });
+
     // ═════════════════════════════════════════════════════════════════════════
-    // Test: Gestion des erreurs
+    // Test: Gestion des erreurs et retries
     // ═════════════════════════════════════════════════════════════════════════
 
-    it("handles connection errors gracefully", async () => {
+    it("handles connection errors with retries in test mode", async () => {
+      // Mock setTimeout to execute immediately (no delay)
+      jest.spyOn(global, "setTimeout").mockImplementation((cb: any) => {
+        cb();
+        return 0 as any;
+      });
+
       process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "test";
 
       const mockError = new Error("Connection failed");
       mockConnect.mockRejectedValue(mockError);
@@ -208,21 +264,97 @@ describe("database", () => {
       await expect(connectToDatabase()).rejects.toThrow(
         "Database connection failed",
       );
+      expect(mockConnect).toHaveBeenCalledTimes(2);
     });
 
-    it("handles non-Error connection failures", async () => {
+    it("handles non-Error connection failures with retries", async () => {
+      // Mock setTimeout to execute immediately (no delay)
+      jest.spyOn(global, "setTimeout").mockImplementation((cb: any) => {
+        cb();
+        return 0 as any;
+      });
+
       process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "test";
 
       mockConnect.mockRejectedValue("String error");
 
       await expect(connectToDatabase()).rejects.toThrow(
         "Database connection failed",
       );
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries connection and succeeds on second attempt", async () => {
+      // Mock setTimeout to execute immediately (no delay)
+      jest.spyOn(global, "setTimeout").mockImplementation((cb: any) => {
+        cb();
+        return 0 as any;
+      });
+
+      process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "test";
+
+      const mockError = new Error("Connection failed");
+      mockConnect
+        .mockRejectedValueOnce(mockError)
+        .mockResolvedValueOnce(undefined);
+
+      await connectToDatabase();
+
+      expect(mockConnect).toHaveBeenCalledTimes(2);
+    });
+
+    it("retries with correct delays in production mode", async () => {
+      // Mock setTimeout to execute immediately (no delay)
+      jest.spyOn(global, "setTimeout").mockImplementation((cb: any) => {
+        cb();
+        return 0 as any;
+      });
+
+      process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "production";
+
+      const mockError = new Error("Connection failed");
+      mockConnect.mockRejectedValue(mockError);
+
+      await expect(connectToDatabase()).rejects.toThrow(
+        "Database connection failed",
+      );
+      // In production mode, maxRetries is 5
+      expect(mockConnect).toHaveBeenCalledTimes(5);
+    });
+
+    it("succeeds on first retry in production mode", async () => {
+      // Mock setTimeout to execute immediately (no delay)
+      jest.spyOn(global, "setTimeout").mockImplementation((cb: any) => {
+        cb();
+        return 0 as any;
+      });
+
+      process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "production";
+
+      const mockError = new Error("Connection failed");
+      mockConnect
+        .mockRejectedValueOnce(mockError)
+        .mockResolvedValueOnce(undefined);
+
+      await connectToDatabase();
+
+      expect(mockConnect).toHaveBeenCalledTimes(2);
     });
 
     it("does not expose connection string with credentials in error", async () => {
+      // Mock setTimeout to execute immediately (no delay)
+      jest.spyOn(global, "setTimeout").mockImplementation((cb: any) => {
+        cb();
+        return 0 as any;
+      });
+
       process.env.DB_CONN_STRING =
         "mongodb+srv://user:password@cluster.mongodb.net/testdb";
+      process.env.NODE_ENV = "test";
 
       const mockError = new Error("Connection failed");
       mockConnect.mockRejectedValue(mockError);
@@ -269,6 +401,23 @@ describe("database", () => {
       expect(options).toHaveProperty("minPoolSize");
       expect(options).toHaveProperty("retryWrites", true);
       expect(options).toHaveProperty("w", "majority");
+      expect(options).toHaveProperty("family", 4);
+    });
+
+    it("includes family: 4 in connection options", async () => {
+      process.env.DB_CONN_STRING = "mongodb://localhost:27017/testdb";
+      process.env.NODE_ENV = "test";
+
+      mockConnect.mockResolvedValue(undefined);
+
+      await connectToDatabase();
+
+      expect(mockConnect).toHaveBeenCalledWith(
+        "mongodb://localhost:27017/testdb",
+        expect.objectContaining({
+          family: 4,
+        }),
+      );
     });
   });
 });

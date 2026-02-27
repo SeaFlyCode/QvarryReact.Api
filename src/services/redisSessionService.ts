@@ -47,7 +47,7 @@ if (REDIS_ENABLED) {
       redis = new Cluster(clusterNodes, {
         redisOptions: {
           password: process.env.REDIS_PASSWORD,
-          tls: process.env.NODE_ENV === "production" ? {} : undefined,
+          tls: process.env.REDIS_TLS === "true" ? {} : undefined,
         },
       });
     } else {
@@ -61,11 +61,7 @@ if (REDIS_ENABLED) {
           return Math.min(times * 50, 2000);
         },
         maxRetriesPerRequest: 3,
-        tls:
-          process.env.NODE_ENV === "production" &&
-          process.env.REDIS_TLS === "true"
-            ? {}
-            : undefined,
+        tls: process.env.REDIS_TLS === "true" ? {} : undefined,
         lazyConnect: true,
       });
 

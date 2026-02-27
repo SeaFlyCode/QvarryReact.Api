@@ -420,6 +420,10 @@ export async function handleGetPointById(req: Request, res: Response) {
       return res.status(401).json({ message: "ID utilisateur manquant" });
     }
 
+    if (!mongoose.Types.ObjectId.isValid(id)) {
+      return res.status(400).json({ message: "Format de l'ID invalide" });
+    }
+
     const point = memoryStorage.getPointById(userId, id);
 
     if (!point) {

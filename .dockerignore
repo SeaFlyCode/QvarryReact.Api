@@ -42,6 +42,7 @@ coverage/
 *.spec.ts
 __tests__/
 jest.config.*
+src/test-logger.ts
 
 # Fichiers temporaires
 *.log

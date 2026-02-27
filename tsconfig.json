@@ -16,8 +16,7 @@
     "declarationMap": true,
     "sourceMap": true,
     "types": ["node"],
-    "typeRoots": [
-      "./src/types", "./node_modules/@types"]
+    "typeRoots": ["./src/types", "./node_modules/@types"]
   },
   "ts-node": {
     "transpileOnly": true,
@@ -26,8 +25,6 @@
       "module": "CommonJS"
     }
   },
-  "include": [
-    "src/**/*"
-  ],
-  "exclude": ["node_modules", "dist"]
+  "include": ["src/**/*"],
+  "exclude": ["node_modules", "dist", "src/__tests__", "src/test-logger.ts"]
 }

@@ -10,8 +10,17 @@ describe("MemoryStorageService", () => {
   const testUserId = "507f1f77bcf86cd799439011";
   const testEncryptionKey = "test-encryption-key-123";
 
+  beforeAll(() => {
+    // Use fake timers to prevent setInterval from actually running
+    jest.useFakeTimers();
+  });
+
+  afterAll(() => {
+    jest.useRealTimers();
+  });
+
   beforeEach(() => {
-    // Create a fresh instance for each test to avoid interval issues
+    // Create a fresh instance for each test
     service = new MemoryStorageService();
     jest.clearAllMocks();
   });
@@ -61,16 +70,19 @@ describe("MemoryStorageService", () => {
     it("should touch session and update lastAccessed", () => {
       service.initSession(testUserId, testEncryptionKey);
       const session = service.getSession(testUserId);
-      const oldAccess = session.lastAccessed;
+      const oldAccess = session.lastAccessed.getTime();
 
-      // Wait a bit and touch
-      setTimeout(() => {
-        service.touchSession(testUserId);
-        const newSession = service.getSession(testUserId);
-        expect(newSession.lastAccessed.getTime()).toBeGreaterThanOrEqual(
-          oldAccess.getTime(),
-        );
-      }, 10);
+      // Advance time slightly
+      jest.advanceTimersByTime(100);
+
+      // Touch session
+      service.touchSession(testUserId);
+      const newSession = service.getSession(testUserId);
+
+      // lastAccessed should be updated to current time
+      expect(newSession.lastAccessed.getTime()).toBeGreaterThanOrEqual(
+        oldAccess,
+      );
     });
 
     it("should end session and remove it", () => {
@@ -159,6 +171,7 @@ describe("MemoryStorageService", () => {
         ...mockPoint,
         _id: new mongoose.Types.ObjectId("507f1f77bcf86cd799439013"),
         name: "Different Point",
+        description: "Different Description",
       });
 
       const results = service.searchPoints(testUserId, { query: "Test" });

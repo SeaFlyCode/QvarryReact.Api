@@ -464,22 +464,30 @@ app.use("/api", generalLimiter);
     await connectToDatabase();
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // HIGH-08 FIX: Vérification TLS obligatoire en production
+    // HIGH-08 FIX: Vérification TLS en production - Respect de la config .env
     // ═══════════════════════════════════════════════════════════════════════════
     if (NODE_ENV === "production") {
-      if (process.env.DB_SSL !== "true") {
-        logger.critical(
-          "[SECURITY] FATAL: DB_SSL doit être true en production",
+      const dbSSLEnabled = process.env.DB_SSL !== "false";
+      const redisTLSEnabled = process.env.REDIS_TLS === "true";
+
+      if (!dbSSLEnabled) {
+        logger.warn(
+          "[SECURITY] DB_SSL explicitement désactivé en production (DB_SSL=false)",
+          { DB_SSL: process.env.DB_SSL },
         );
-        process.exit(1);
       }
-      if (process.env.REDIS_TLS !== "true") {
-        logger.critical(
-          "[SECURITY] FATAL: REDIS_TLS doit être true en production",
+      if (!redisTLSEnabled) {
+        logger.warn(
+          "[SECURITY] REDIS_TLS n'est pas activé en production - Connexion non sécurisée",
+          { REDIS_TLS: process.env.REDIS_TLS },
         );
-        process.exit(1);
       }
-      logger.info("[SECURITY] TLS vérifié", { DB_SSL: true, REDIS_TLS: true });
+      if (dbSSLEnabled && redisTLSEnabled) {
+        logger.info("[SECURITY] TLS vérifié", {
+          DB_SSL: true,
+          REDIS_TLS: true,
+        });
+      }
     }
 
     // ═══════════════════════════════════════════════════════════════════════════

@@ -1,0 +1,418 @@
+# =============================================================================
+# Stack Monitoring - Grafana + Loki + Promtail
+# 100% self-hosted, aucune donnee envoyee a l'exterieur
+#
+# A deployer dans Dokploy comme service Docker Compose
+# Reseau : dokploy-network (overlay swarm)
+# =============================================================================
+
+version: "3.8"
+
+services:
+  # ---------------------------------------------------------------------------
+  # Loki - Stockage et indexation des logs
+  # ---------------------------------------------------------------------------
+  loki:
+    image: grafana/loki:3.4.2
+    command: -config.file=/etc/loki/loki-config.yml
+    configs:
+      - source: loki_config
+        target: /etc/loki/loki-config.yml
+    volumes:
+      - loki-data:/loki
+    networks:
+      - dokploy-network
+      - monitoring-internal
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+  # ---------------------------------------------------------------------------
+  # Promtail - Collecte les fichiers logs et les envoie a Loki
+  # ---------------------------------------------------------------------------
+  promtail:
+    image: grafana/promtail:3.4.2
+    command: -config.file=/etc/promtail/promtail-config.yml
+    configs:
+      - source: promtail_config
+        target: /etc/promtail/promtail-config.yml
+    volumes:
+      - /var/log/qvarry-api:/var/log/qvarry:ro
+      - promtail-positions:/tmp
+    networks:
+      - dokploy-network
+      - monitoring-internal
+    depends_on:
+      - loki
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 64M
+        reservations:
+          memory: 32M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+  # ---------------------------------------------------------------------------
+  # Grafana - Interface web pour consulter les logs
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.5.2
+    environment:
+      # --- Auth ---
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:-ChangeMeNow2026!}
+      # --- Serveur ---
+      - GF_SERVER_ROOT_URL=${GRAFANA_ROOT_URL:-http://localhost:3001}
+      - GF_SERVER_HTTP_PORT=3001
+      # --- Desactiver TOUTE telemetrie ---
+      - GF_ANALYTICS_REPORTING_ENABLED=false
+      - GF_ANALYTICS_CHECK_FOR_UPDATES=false
+      - GF_ANALYTICS_CHECK_FOR_PLUGIN_UPDATES=false
+      - GF_ANALYTICS_FEEDBACK_LINKS_ENABLED=false
+      # --- Desactiver les news et suggestions ---
+      - GF_NEWS_NEWS_FEED_ENABLED=false
+      - GF_SUPPORT_BUNDLES_ENABLED=false
+      # --- Provisioning auto de Loki ---
+      - GF_DATASOURCES_DEFAULT_NAME=Loki
+    volumes:
+      - grafana-data:/var/lib/grafana
+    configs:
+      - source: grafana_datasource
+        target: /etc/grafana/provisioning/datasources/loki.yml
+      - source: grafana_dashboard_provider
+        target: /etc/grafana/provisioning/dashboards/dashboard.yml
+      - source: grafana_dashboard_json
+        target: /var/lib/grafana/dashboards/qvarry-logs.json
+    networks:
+      - dokploy-network
+      - monitoring-internal
+    ports:
+      - "3001:3001"
+    depends_on:
+      - loki
+    deploy:
+      mode: replicated
+      replicas: 1
+      resources:
+        limits:
+          memory: 256M
+        reservations:
+          memory: 128M
+      restart_policy:
+        condition: on-failure
+        delay: 5s
+        max_attempts: 5
+
+# =============================================================================
+# Configs (inline - tout dans un seul fichier pour Dokploy)
+# =============================================================================
+
+configs:
+  # --- Loki ---
+  loki_config:
+    content: |
+      auth_enabled: false
+
+      server:
+        http_listen_port: 3100
+
+      common:
+        path_prefix: /loki
+        storage:
+          filesystem:
+            chunks_directory: /loki/chunks
+            rules_directory: /loki/rules
+        replication_factor: 1
+        ring:
+          kvstore:
+            store: inmemory
+
+      schema_config:
+        configs:
+          - from: 2020-10-24
+            store: tsdb
+            object_store: filesystem
+            schema: v13
+            index:
+              prefix: index_
+              period: 24h
+
+      limits_config:
+        retention_period: 336h
+        max_query_length: 721h
+        max_query_series: 5000
+
+      compactor:
+        working_directory: /loki/compactor
+        compaction_interval: 10m
+        retention_enabled: true
+        retention_delete_delay: 2h
+        delete_request_store: filesystem
+
+      analytics:
+        reporting_enabled: false
+
+  # --- Promtail ---
+  promtail_config:
+    content: |
+      server:
+        http_listen_port: 9080
+        grpc_listen_port: 0
+
+      positions:
+        filename: /tmp/positions.yaml
+
+      clients:
+        - url: http://loki:3100/loki/api/v1/push
+
+      scrape_configs:
+        # Logs applicatifs (app-*.log)
+        - job_name: qvarry-app
+          static_configs:
+            - targets:
+                - localhost
+              labels:
+                job: qvarry-api
+                type: app
+                __path__: /var/log/qvarry/app-*.log
+
+          pipeline_stages:
+            - json:
+                expressions:
+                  level: level
+                  message: message
+                  timestamp: timestamp
+                  service: metadata.service
+                  correlationId: metadata.correlationId
+            - timestamp:
+                source: timestamp
+                format: "2006-01-02 15:04:05"
+            - labels:
+                level:
+                service:
+            - output:
+                source: message
+
+        # Logs erreurs (error-*.log)
+        - job_name: qvarry-errors
+          static_configs:
+            - targets:
+                - localhost
+              labels:
+                job: qvarry-api
+                type: error
+                __path__: /var/log/qvarry/error-*.log
+
+          pipeline_stages:
+            - json:
+                expressions:
+                  level: level
+                  message: message
+                  timestamp: timestamp
+                  service: metadata.service
+                  correlationId: metadata.correlationId
+            - timestamp:
+                source: timestamp
+                format: "2006-01-02 15:04:05"
+            - labels:
+                level:
+                service:
+            - output:
+                source: message
+
+  # --- Grafana : Data source Loki (auto-provisionne) ---
+  grafana_datasource:
+    content: |
+      apiVersion: 1
+      datasources:
+        - name: Loki
+          type: loki
+          access: proxy
+          url: http://loki:3100
+          isDefault: true
+          editable: false
+          jsonData:
+            maxLines: 1000
+
+  # --- Grafana : Dashboard provider ---
+  grafana_dashboard_provider:
+    content: |
+      apiVersion: 1
+      providers:
+        - name: QvarryReact
+          orgId: 1
+          folder: ''
+          type: file
+          disableDeletion: false
+          editable: true
+          options:
+            path: /var/lib/grafana/dashboards
+            foldersFromFilesStructure: false
+
+  # --- Grafana : Dashboard JSON pre-configure ---
+  grafana_dashboard_json:
+    content: |
+      {
+        "annotations": { "list": [] },
+        "editable": true,
+        "fiscalYearStartMonth": 0,
+        "graphTooltip": 0,
+        "id": null,
+        "links": [],
+        "panels": [
+          {
+            "title": "Logs en temps reel",
+            "type": "logs",
+            "gridPos": { "h": 16, "w": 24, "x": 0, "y": 0 },
+            "datasource": { "type": "loki", "uid": "" },
+            "targets": [
+              {
+                "datasource": { "type": "loki", "uid": "" },
+                "editorMode": "builder",
+                "expr": "{job=\"qvarry-api\"} |= ``",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": true,
+              "showCommonLabels": false,
+              "wrapLogMessage": true,
+              "prettifyLogMessage": true,
+              "enableLogDetails": true,
+              "dedupStrategy": "none",
+              "sortOrder": "Descending"
+            }
+          },
+          {
+            "title": "Erreurs par service (24h)",
+            "type": "barchart",
+            "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+            "datasource": { "type": "loki", "uid": "" },
+            "targets": [
+              {
+                "datasource": { "type": "loki", "uid": "" },
+                "editorMode": "code",
+                "expr": "sum by (service) (count_over_time({job=\"qvarry-api\", level=\"error\"} [24h]))",
+                "queryType": "instant",
+                "refId": "A"
+              }
+            ]
+          },
+          {
+            "title": "Volume de logs par niveau (1h)",
+            "type": "timeseries",
+            "gridPos": { "h": 8, "w": 12, "x": 12, "y": 16 },
+            "datasource": { "type": "loki", "uid": "" },
+            "targets": [
+              {
+                "datasource": { "type": "loki", "uid": "" },
+                "editorMode": "code",
+                "expr": "sum by (level) (count_over_time({job=\"qvarry-api\"} [5m]))",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "fieldConfig": {
+              "defaults": {
+                "custom": {
+                  "drawStyle": "bars",
+                  "fillOpacity": 50,
+                  "stacking": { "mode": "normal" }
+                }
+              }
+            }
+          },
+          {
+            "title": "Derniers warnings",
+            "type": "logs",
+            "gridPos": { "h": 10, "w": 12, "x": 0, "y": 24 },
+            "datasource": { "type": "loki", "uid": "" },
+            "targets": [
+              {
+                "datasource": { "type": "loki", "uid": "" },
+                "editorMode": "code",
+                "expr": "{job=\"qvarry-api\", level=\"warn\"}",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": true,
+              "wrapLogMessage": true,
+              "enableLogDetails": true,
+              "sortOrder": "Descending"
+            }
+          },
+          {
+            "title": "Derniers critiques",
+            "type": "logs",
+            "gridPos": { "h": 10, "w": 12, "x": 12, "y": 24 },
+            "datasource": { "type": "loki", "uid": "" },
+            "targets": [
+              {
+                "datasource": { "type": "loki", "uid": "" },
+                "editorMode": "code",
+                "expr": "{job=\"qvarry-api\", level=~\"error|critical\"}",
+                "queryType": "range",
+                "refId": "A"
+              }
+            ],
+            "options": {
+              "showTime": true,
+              "showLabels": true,
+              "wrapLogMessage": true,
+              "enableLogDetails": true,
+              "sortOrder": "Descending"
+            }
+          }
+        ],
+        "schemaVersion": 39,
+        "tags": ["qvarry", "logs", "monitoring"],
+        "templating": { "list": [] },
+        "time": { "from": "now-6h", "to": "now" },
+        "timepicker": {},
+        "timezone": "browser",
+        "title": "QvarryReact API - Logs",
+        "uid": "qvarry-logs",
+        "version": 1
+      }
+
+# =============================================================================
+# Volumes persistants
+# =============================================================================
+
+volumes:
+  loki-data:
+    driver: local
+  grafana-data:
+    driver: local
+  promtail-positions:
+    driver: local
+
+# =============================================================================
+# Reseaux
+# =============================================================================
+
+networks:
+  dokploy-network:
+    external: true
+  monitoring-internal:
+    driver: overlay
+    attachable: true
