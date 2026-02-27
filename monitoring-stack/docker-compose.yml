@@ -260,6 +260,8 @@ configs:
           type: file
           disableDeletion: false
           editable: true
+          updateIntervalSeconds: 10
+          allowUpdates: true
           options:
             path: /var/lib/grafana/dashboards
             foldersFromFilesStructure: false
@@ -273,7 +275,7 @@ configs:
         "tags": ["qvarry", "logs", "monitoring"],
         "timezone": "browser",
         "schemaVersion": 39,
-        "version": 1,
+        "version": 2,
         "editable": true,
         "fiscalYearStartMonth": 0,
         "graphTooltip": 0,
@@ -298,13 +300,13 @@ configs:
               "current": {
                 "selected": true,
                 "text": "All",
-                "value": "$__all"
+                "value": ".*"
               },
               "options": [
                 {
                   "selected": true,
                   "text": "All",
-                  "value": "$__all"
+                  "value": ".*"
                 },
                 {
                   "selected": false,
@@ -354,7 +356,7 @@ configs:
               "current": {
                 "selected": true,
                 "text": "All",
-                "value": "$__all"
+                "value": ".*"
               },
               "multi": true,
               "includeAll": true,
@@ -370,13 +372,13 @@ configs:
               "current": {
                 "selected": true,
                 "text": "All",
-                "value": "$__all"
+                "value": ".*"
               },
               "options": [
                 {
                   "selected": true,
                   "text": "All",
-                  "value": "$__all"
+                  "value": ".*"
                 },
                 {
                   "selected": false,
@@ -450,7 +452,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"$level\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"$level\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -509,7 +511,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -568,7 +570,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"warn\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"warn\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -627,7 +629,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"info\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"info\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -686,7 +688,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "(sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto])) / sum(count_over_time({job=\"qvarry-api\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [$__auto]))) * 100",
+                "expr": "(sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [5m])) / sum(count_over_time({job=\"qvarry-api\", service=~\"$service\", type=~\"$type\"} |= \"$search\" [5m]))) * 100",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -741,7 +743,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "count(count_over_time({job=\"qvarry-api\"} [$__auto]) by (service))",
+                "expr": "count(sum by (service) (count_over_time({job=\"qvarry-api\"} [5m])))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -1030,7 +1032,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"$level\", type=~\"$type\"} |= \"$search\" [$__auto])))",
+                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"$level\", type=~\"$type\"} |= \"$search\" [5m])))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -1069,7 +1071,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"error|critical\", type=~\"$type\"} [$__auto])))",
+                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"error|critical\", type=~\"$type\"} [5m])))",
                 "queryType": "range",
                 "refId": "A"
               }
