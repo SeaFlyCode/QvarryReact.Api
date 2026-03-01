@@ -252,7 +252,7 @@ class SosService {
     );
 
     const existingSessions = await SosSessionModel.find({
-      status: { $in: ["ACTIVE", "ESCALATING"] },
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
       "participants.userId": { $in: participantObjectIds },
       "participants.status": { $ne: "LEFT" },
     });
@@ -545,12 +545,12 @@ class SosService {
     const session = sessionId
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
-          status: { $in: ["ACTIVE", "ESCALATING"] },
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
           "participants.userId": userObjectId,
           "participants.status": { $ne: "LEFT" },
         })
       : await SosSessionModel.findOne({
-          status: { $in: ["ACTIVE", "ESCALATING"] },
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
           "participants.userId": userObjectId,
           "participants.status": { $ne: "LEFT" },
         });
@@ -747,12 +747,12 @@ class SosService {
     const session = sessionId
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
-          status: { $in: ["ACTIVE", "ESCALATING"] },
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
           "participants.userId": userObjectId,
           "participants.status": { $ne: "LEFT" },
         })
       : await SosSessionModel.findOne({
-          status: { $in: ["ACTIVE", "ESCALATING"] },
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
           "participants.userId": userObjectId,
           "participants.status": { $ne: "LEFT" },
         });
@@ -770,8 +770,8 @@ class SosService {
     session.expiresAt = newExpiresAt;
     session.extensionCount += 1;
 
-    // Si la session était en escalade, remettre tous les participants ESCALATING en ACTIVE
-    if (session.status === "ESCALATING") {
+    // Si la session était en escalade ou expirée, remettre tous les participants ESCALATING en ACTIVE
+    if (session.status === "ESCALATING" || session.status === "EXPIRED") {
       session.status = "ACTIVE";
       session.currentStage = -1;
 
@@ -826,12 +826,12 @@ class SosService {
     const session = sessionId
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
-          status: { $in: ["ACTIVE", "ESCALATING"] },
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
           "participants.userId": userObjectId,
           "participants.status": { $ne: "LEFT" },
         })
       : await SosSessionModel.findOne({
-          status: { $in: ["ACTIVE", "ESCALATING"] },
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
           "participants.userId": userObjectId,
           "participants.status": { $ne: "LEFT" },
         });
@@ -1008,9 +1008,10 @@ class SosService {
     sessionId: string,
     confirmerId: string,
   ): Promise<ISosSession> {
+    // Allow confirmation during ACTIVE, EXPIRED (timer just expired) and ESCALATING stages
     const session = await SosSessionModel.findOne({
       _id: new mongoose.Types.ObjectId(sessionId),
-      status: { $in: ["ESCALATING"] },
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
     });
 
     if (!session) {
@@ -1078,7 +1079,7 @@ class SosService {
    */
   async getActiveSession(userId: string): Promise<ISosSession | null> {
     return SosSessionModel.findOne({
-      status: { $in: ["ACTIVE", "ESCALATING"] },
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
       "participants.userId": new mongoose.Types.ObjectId(userId),
       "participants.status": { $ne: "LEFT" },
     });
@@ -1234,9 +1235,9 @@ class SosService {
   async processExpiredSessions(): Promise<void> {
     const now = new Date();
 
-    // Trouver toutes les sessions ACTIVE ou ESCALATING
+    // Trouver toutes les sessions ACTIVE, EXPIRED ou ESCALATING
     const activeSessions = await SosSessionModel.find({
-      status: { $in: ["ACTIVE", "ESCALATING"] },
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
     });
 
     for (const session of activeSessions) {
@@ -1301,13 +1302,22 @@ class SosService {
         );
 
         if (escalatingParticipants.length > 0) {
-          session.status = "ESCALATING";
-
           // Définir le currentStage de la session au maximum des stages des participants
           const maxStage = Math.max(
             ...activeParticipants.map((p) => p.currentStage),
           );
           session.currentStage = maxStage;
+
+          // Transition de statut : ACTIVE -> EXPIRED -> ESCALATING
+          // EXPIRED = timer expiré, stage 0 (participant déconnecté, alarme locale)
+          // ESCALATING = stage 1+ (alerte communauté, SMS contacts)
+          if (maxStage === 0 && session.status === "ACTIVE") {
+            // Timer vient d'expirer, premier participant en stage 0
+            session.status = "EXPIRED";
+          } else if (maxStage >= 1) {
+            // Au moins un participant a atteint stage 1+, escalade réelle
+            session.status = "ESCALATING";
+          }
 
           // Mettre à jour les timestamps de session avec les plus anciennes dates des participants
           const stage0Dates = activeParticipants
@@ -1703,6 +1713,13 @@ class SosService {
   ): Promise<ISosContact> {
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
+    // Valider le format du numéro de téléphone (E.164)
+    if (!/^\+[1-9]\d{6,14}$/.test(data.phone)) {
+      throw new Error(
+        "Format de numéro de téléphone invalide. Utilisez le format international (ex: +33612345678)",
+      );
+    }
+
     // Vérifier le nombre max de contacts (5)
     const count = await SosContactModel.countDocuments({
       userId: userObjectId,
@@ -1753,6 +1770,13 @@ class SosService {
       isDefault: boolean;
     }>,
   ): Promise<ISosContact | null> {
+    // Valider le format du numéro de téléphone si fourni (E.164)
+    if (data.phone && !/^\+[1-9]\d{6,14}$/.test(data.phone)) {
+      throw new Error(
+        "Format de numéro de téléphone invalide. Utilisez le format international (ex: +33612345678)",
+      );
+    }
+
     return SosContactModel.findOneAndUpdate(
       {
         _id: new mongoose.Types.ObjectId(contactId),
@@ -1886,9 +1910,9 @@ class SosService {
       activatedAt: { $gte: yesterday },
     });
 
-    // Récupérer les sessions en cours (ACTIVE + ESCALATING)
+    // Récupérer les sessions en cours (ACTIVE + EXPIRED + ESCALATING)
     const sessions = await SosSessionModel.find({
-      status: { $in: ["ACTIVE", "ESCALATING"] },
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
     })
       .populate("userId", "name surname")
       .populate("participants.userId", "name surname")
@@ -1930,9 +1954,9 @@ class SosService {
    * Inclut les infos de participants pour chaque session
    */
   async getAllActiveSessions(): Promise<any[]> {
-    // Récupérer TOUTES les sessions ACTIVE + ESCALATING
+    // Récupérer TOUTES les sessions ACTIVE + EXPIRED + ESCALATING
     const sessions = await SosSessionModel.find({
-      status: { $in: ["ACTIVE", "ESCALATING"] },
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
     })
       .populate("userId", "name surname")
       .populate("participants.userId", "name surname")
@@ -1957,7 +1981,7 @@ class SosService {
   ): Promise<ISosSession> {
     const session = await SosSessionModel.findOne({
       _id: new mongoose.Types.ObjectId(sessionId),
-      status: { $in: ["ACTIVE", "ESCALATING"] },
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
     });
 
     if (!session) {

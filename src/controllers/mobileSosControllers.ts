@@ -302,12 +302,22 @@ export async function handleSosDeactivate(req: Request, res: Response) {
       });
     }
 
-    const { sessionId, scope } = req.body;
+    const { sessionId, scope: rawScope } = req.body;
+
+    // Validation du scope
+    const validScopes = ["self", "all"];
+    const scope = rawScope || "all";
+    if (!validScopes.includes(scope)) {
+      return res.status(400).json({
+        success: false,
+        error: "Scope invalide. Valeurs acceptées: 'self' ou 'all'",
+      });
+    }
 
     const session = await sosService.deactivateSession(
       userId,
       sessionId,
-      scope || "all",
+      scope,
     );
 
     const duration = Date.now() - startTime;
@@ -377,12 +387,22 @@ export async function handleSosDeactivateByParam(req: Request, res: Response) {
       });
     }
 
-    const { scope } = req.body;
+    const { scope: rawScope } = req.body;
+
+    // Validation du scope
+    const validScopes = ["self", "all"];
+    const scope = rawScope || "all";
+    if (!validScopes.includes(scope)) {
+      return res.status(400).json({
+        success: false,
+        error: "Scope invalide. Valeurs acceptées: 'self' ou 'all'",
+      });
+    }
 
     const session = await sosService.deactivateSession(
       userId,
       sessionId,
-      scope || "all",
+      scope,
     );
 
     const duration = Date.now() - startTime;

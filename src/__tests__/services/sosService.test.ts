@@ -20,6 +20,7 @@ jest.mock("../../models/users");
 jest.mock("../../services/vonageService", () => ({
   vonageService: {
     sendSosAlertToMultiple: jest.fn(),
+    isReady: jest.fn(() => true), // Mock isReady to return true by default
   },
 }));
 jest.mock("../../services/notificationService", () => ({
@@ -731,7 +732,7 @@ describe("SosService", () => {
       expect(result).toEqual(mockSession);
       expect(SosSessionModel.findOne).toHaveBeenCalledWith(
         expect.objectContaining({
-          status: { $in: ["ACTIVE", "ESCALATING"] },
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
         }),
       );
     });
@@ -1004,10 +1005,13 @@ describe("SosService", () => {
       (vonageService.sendSosAlertToMultiple as jest.Mock) = jest
         .fn()
         .mockResolvedValue([{ success: true, messageId: "msg-123" }]);
+      // Mock vonageService.isReady() to return true
+      (vonageService.isReady as jest.Mock) = jest.fn().mockReturnValue(true);
 
       await sosService.processExpiredSessions();
 
       expect(mockSession.participants[0].currentStage).toBe(2);
+      expect(vonageService.isReady).toHaveBeenCalled();
       expect(vonageService.sendSosAlertToMultiple).toHaveBeenCalled();
     });
   });
@@ -1046,31 +1050,19 @@ describe("SosService", () => {
       expect(mockContact.save).toHaveBeenCalled();
     });
 
-    it("should add contact with any phone format (no validation)", async () => {
-      // Note: addContact doesn't validate phone format - it saves any string
-      const mockContact = {
-        _id: new mongoose.Types.ObjectId(mockContactId),
-        userId: new mongoose.Types.ObjectId(mockUserId),
-        name: "Contact",
-        phone: "invalid-phone",
-        isDefault: false,
-        save: jest.fn().mockResolvedValue({}),
-      };
-
+    it("should reject invalid phone format (E.164 validation)", async () => {
+      // The new behavior validates phone format and rejects invalid phones
       (SosContactModel.countDocuments as jest.Mock) = jest
         .fn()
         .mockResolvedValue(0);
-      (SosContactModel as unknown as jest.Mock).mockImplementation(
-        () => mockContact,
-      );
 
-      await sosService.addContact(mockUserId, {
-        name: "Contact",
-        phone: "invalid-phone",
-        isDefault: false,
-      });
-
-      expect(mockContact.save).toHaveBeenCalled();
+      await expect(
+        sosService.addContact(mockUserId, {
+          name: "Contact",
+          phone: "invalid-phone", // Invalid format
+          isDefault: false,
+        }),
+      ).rejects.toThrow("Format de numéro de téléphone invalide");
     });
 
     it("should enforce maximum contact limit", async () => {
@@ -1133,23 +1125,13 @@ describe("SosService", () => {
       expect(result?.name).toBe("New Name");
     });
 
-    it("should allow any phone format (no validation)", async () => {
-      // Note: updateContact doesn't validate phone format
-      const mockContact = {
-        _id: new mongoose.Types.ObjectId(mockContactId),
-        userId: new mongoose.Types.ObjectId(mockUserId),
-        phone: "invalid",
-      };
-
-      (SosContactModel.findOneAndUpdate as jest.Mock) = jest
-        .fn()
-        .mockResolvedValue(mockContact);
-
-      const result = await sosService.updateContact(mockUserId, mockContactId, {
-        phone: "invalid",
-      });
-
-      expect(result).toBeDefined();
+    it("should reject invalid phone format (E.164 validation)", async () => {
+      // The new behavior validates phone format and rejects invalid phones
+      await expect(
+        sosService.updateContact(mockUserId, mockContactId, {
+          phone: "invalid", // Invalid format
+        }),
+      ).rejects.toThrow("Format de numéro de téléphone invalide");
     });
 
     it("should return null if contact not found", async () => {

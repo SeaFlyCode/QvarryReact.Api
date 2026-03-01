@@ -15,8 +15,8 @@ import mongoose, { Document, Schema, Model } from "mongoose";
 // Statuts possibles d'une session SOS
 export type SosSessionStatus =
   | "ACTIVE" // Session en cours, timer actif
-  | "EXPIRED" // Timer expiré, en attente d'escalade
-  | "ESCALATING" // Escalade en cours (stages 0-2)
+  | "EXPIRED" // Timer expiré, stage 0 (alarme locale, participant déconnecté)
+  | "ESCALATING" // Escalade en cours (stages 1-2: alerte communauté, SMS contacts)
   | "RESOLVED" // Session terminée normalement
   | "CANCELLED"; // Session annulée par l'utilisateur
 

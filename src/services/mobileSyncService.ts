@@ -411,7 +411,7 @@ class MobileSyncService {
         }).lean(),
         SosSessionModel.findOne({
           userId: new mongoose.Types.ObjectId(userId),
-          status: { $in: ["ACTIVE", "ESCALATING"] },
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
         }).lean(),
       ]);
 
@@ -603,7 +603,7 @@ class MobileSyncService {
     // Récupérer la session SOS active
     const activeSosSession = await SosSessionModel.findOne({
       userId: new mongoose.Types.ObjectId(userId),
-      status: { $in: ["ACTIVE", "ESCALATING"] },
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
     }).lean();
 
     // Détection des suppressions (soft-delete)

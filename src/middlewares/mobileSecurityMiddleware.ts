@@ -63,6 +63,9 @@ const MOBILE_MAX_REQUESTS_BASE = 5; // 5 en prod, 50 en dev
 const MOBILE_WINDOW_MINUTES = 15;
 const MOBILE_BLOCK_MINUTES = 30;
 
+// MINOR #11: Limite de taille pour prévenir DoS par mémoire
+const MAX_KNOWN_DEVICES = 10000;
+
 const MOBILE_MAX_REQUESTS = isProduction
   ? MOBILE_MAX_REQUESTS_BASE
   : MOBILE_MAX_REQUESTS_BASE * DEV_MULTIPLIER;
@@ -108,6 +111,26 @@ function isValidDeviceId(deviceId: string | undefined): boolean {
   // UUID v4 ou format similaire (32-64 caractères alphanumériques avec tirets)
   const uuidRegex = /^[a-zA-Z0-9-]{32,64}$/;
   return uuidRegex.test(deviceId);
+}
+
+/**
+ * MINOR #11: Éviction de l'appareil le plus ancien si la limite est atteinte
+ * Prévient l'épuisement mémoire en cas d'attaque ciblée (millions de device IDs)
+ */
+function evictOldestDeviceIfNeeded(): void {
+  if (knownDevices.size >= MAX_KNOWN_DEVICES) {
+    // Map maintient l'ordre d'insertion, le premier est le plus ancien
+    const oldestDeviceId = knownDevices.keys().next().value;
+    if (oldestDeviceId) {
+      knownDevices.delete(oldestDeviceId);
+      mobileSecLogger.warn(
+        `[SECURITY] knownDevices limit reached (${MAX_KNOWN_DEVICES}), evicting oldest entry`,
+        {
+          evictedDevice: maskDeviceId(oldestDeviceId),
+        },
+      );
+    }
+  }
 }
 
 /**
@@ -206,6 +229,8 @@ export const verifyMobilePlatform = async (
     existingDevice.lastSeen = now;
     existingDevice.trustScore = calculateDeviceTrustScore(deviceId, req);
   } else {
+    // MINOR #11: Vérifier la limite avant d'ajouter un nouvel appareil
+    evictOldestDeviceIfNeeded();
     knownDevices.set(deviceId, {
       firstSeen: now,
       lastSeen: now,
@@ -520,6 +545,16 @@ export function associateDeviceWithUser(
   if (device) {
     device.userId = userId;
     device.trustScore = Math.min(device.trustScore + 10, 100);
+  } else {
+    // MINOR #11: Si le device n'existe pas encore, le créer avec vérification de limite
+    evictOldestDeviceIfNeeded();
+    const now = new Date();
+    knownDevices.set(deviceId, {
+      userId,
+      firstSeen: now,
+      lastSeen: now,
+      trustScore: 60, // Score de base + bonus pour association utilisateur
+    });
   }
 }
 

@@ -87,13 +87,16 @@ describe("VonageService", () => {
         Object.getPrototypeOf(vonageService),
       );
 
+      // The new behavior throws an error in sendSmsOnce but catches it in sendSmsWithRetry
+      // and returns a failed result with the error message
       const result = await uninitializedService.sendSms(
         "+33612345678",
         "Test message",
       );
 
       expect(result.success).toBe(false);
-      expect(result.error).toBe("Service Vonage non configuré");
+      expect(result.error).toContain("not initialized");
+      expect(result.attempts).toBe(1); // Should not retry when not configured
     });
 
     it("should send SMS successfully", async () => {

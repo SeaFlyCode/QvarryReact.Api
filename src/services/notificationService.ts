@@ -428,7 +428,10 @@ class NotificationService {
           type,
           ...Object.entries(data || {}).reduce(
             (acc, [key, value]) => {
-              acc[key] = String(value);
+              acc[key] =
+                typeof value === "object"
+                  ? JSON.stringify(value)
+                  : String(value);
               return acc;
             },
             {} as Record<string, string>,
@@ -442,6 +445,13 @@ class NotificationService {
         // Aucune méthode n'a fonctionné, ajouter à la file de retry
         this.addToPendingQueue(userIdStr, title, message, data, type);
         deliveryMethod = "queued_for_retry";
+      } else if (isSosNotification) {
+        // WS succeeded but FCM failed for SOS — log critical (WS delivered but no push backup)
+        notifLogger.warn(
+          "[SOS-WARNING] WebSocket delivered but FCM push failed - no push notification backup",
+          { userId: userIdStr, type },
+        );
+        deliveryMethod = "websocket_only_no_push";
       }
     }
 
