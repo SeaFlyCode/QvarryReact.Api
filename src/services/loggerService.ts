@@ -9,12 +9,15 @@ import * as fs from "fs";
 // Import du correlation store (sera disponible après création du middleware)
 // On utilise un try-catch pour éviter les erreurs si le middleware n'est pas encore créé
 let getCorrelationId: (() => string | undefined) | undefined;
+let getRequestContext: (() => any | undefined) | undefined;
 try {
   const correlationModule = require("../middlewares/correlationMiddleware");
   getCorrelationId = correlationModule.getCorrelationId;
+  getRequestContext = correlationModule.getRequestContext;
 } catch {
   // Le middleware n'est pas encore disponible, on continue sans
   getCorrelationId = undefined;
+  getRequestContext = undefined;
 }
 
 // ════════════════════════════════════════════════════════
@@ -257,6 +260,21 @@ class Logger implements LoggerInterface {
     const correlationId = getCorrelationId?.();
     if (correlationId) {
       sanitizedMeta.correlationId = correlationId;
+    }
+
+    // Ajouter automatiquement le contexte de la requête s'il est disponible
+    const requestContext = getRequestContext?.();
+    if (requestContext) {
+      // Injecter userId, sessionId, clientType s'ils ne sont pas déjà présents dans les méta explicites
+      if (requestContext.userId && !sanitizedMeta.userId) {
+        sanitizedMeta.userId = requestContext.userId;
+      }
+      if (requestContext.sessionId && !sanitizedMeta.sessionId) {
+        sanitizedMeta.sessionId = requestContext.sessionId;
+      }
+      if (requestContext.clientType && !sanitizedMeta.clientType) {
+        sanitizedMeta.clientType = requestContext.clientType;
+      }
     }
 
     const fullMeta = { ...this.defaultMeta, ...sanitizedMeta };

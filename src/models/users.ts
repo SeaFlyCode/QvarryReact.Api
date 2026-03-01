@@ -59,7 +59,7 @@ const UserSchema: Schema<IUser> = new Schema({
   password: { type: String, required: true, maxlength: 200 },
   password_history: { type: [String], default: [] }, // REM-006: Historique des 5 derniers mots de passe
   email: { type: String, required: true, maxlength: 500 },
-  emailHash: { type: String, index: true },
+  emailHash: { type: String },
   ip_creation: { type: String, required: true },
   ip_last_connection: { type: String, required: true },
   creation_date: { type: Date, default: Date.now },

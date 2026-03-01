@@ -99,7 +99,6 @@ const sosEventSchema: Schema<ISosEvent> = new Schema(
     createdAt: {
       type: Date,
       default: Date.now,
-      index: true,
     },
   },
   {

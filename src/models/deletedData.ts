@@ -110,7 +110,6 @@ const deletedDataSchema = new Schema<IDeletedData>({
   deletedAt: {
     type: Date,
     default: Date.now,
-    index: true,
   },
   deletionReason: {
     type: String,

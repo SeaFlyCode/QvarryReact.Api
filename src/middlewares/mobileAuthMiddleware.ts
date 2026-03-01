@@ -14,6 +14,7 @@ import { jwtKeyManager } from "../utils/jwtKeyManager";
 import UserModel from "../models/users";
 import { anonymizeIp } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
+import { setRequestContext } from "./correlationMiddleware";
 
 const mobileAuthLogger = logger.child({ service: "mobile-auth" });
 
@@ -281,6 +282,13 @@ export const mobileAuthMiddleware = async (
       id: decoded.id,
       isAdmin: verifiedIsAdmin, // HIGH-3 FIX: Valeur vérifiée depuis la DB
     };
+
+    // Enrichir le contexte de la requête pour les logs automatiques
+    setRequestContext({
+      userId: decoded.id,
+      sessionId: decoded.jti,
+      clientType: "mobile",
+    });
 
     // Log de debug en développement
     if (process.env.NODE_ENV === "development") {

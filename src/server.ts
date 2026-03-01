@@ -543,10 +543,6 @@ app.use("/api", generalLimiter);
       },
     );
 
-    // Monter les routes pour les utilisateurs
-    // Route de maintenance (doit être avant le middleware de maintenance pour status public)
-    app.use("/api/v1/maintenance", maintenanceRoutes);
-
     // MED-09 FIX: API versioning — Middleware de rétrocompatibilité /api/ → /api/v1/
     // Les routes sont montées sur /api/v1/ et /api/ redirige pour rétrocompatibilité
     app.use("/api", (req, res, next) => {
@@ -556,6 +552,10 @@ app.use("/api", generalLimiter);
       }
       next();
     });
+
+    // Route de maintenance (doit être avant le middleware de maintenance pour status public,
+    // mais APRÈS le middleware de rétrocompatibilité pour que /api/maintenance → /api/v1/maintenance fonctionne)
+    app.use("/api/v1/maintenance", maintenanceRoutes);
 
     // Routes d'authentification (doivent être AVANT le middleware de maintenance)
     // pour permettre aux admins de se connecter pendant la maintenance

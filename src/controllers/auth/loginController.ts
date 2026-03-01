@@ -32,6 +32,7 @@ import {
   loadAndDecryptUserData,
 } from "./authHelpers";
 import { logger } from "../../services/loggerService";
+import { setRequestContext } from "../../middlewares/correlationMiddleware";
 
 const loginLogger = logger.child({ service: "auth-login" });
 
@@ -207,6 +208,8 @@ export async function handleLoginUser(req: Request, res: Response) {
     // 5. GÉNÉRATION DES TOKENS (JWT + REFRESH TOKEN)
     // ─────────────────────────────────────────────────────────────────────
     const userId = (user._id as mongoose.Types.ObjectId).toString();
+    // Enrichir le contexte de la requête pour les logs automatiques
+    setRequestContext({ userId, clientType: "web" });
     const { token, tokenId } = generateSecureToken(
       userId,
       user.is_admin || false,
@@ -435,6 +438,8 @@ export async function handleRefreshToken(req: Request, res: Response) {
     // 3. DÉTECTION DE VOL DE TOKEN (Refresh Token Rotation Attack)
     // ─────────────────────────────────────────────────────────────────────
     const userId = storedToken.userId.toString();
+    // Enrichir le contexte de la requête pour les logs automatiques
+    setRequestContext({ userId, clientType: "web" });
     const tokenFamily = storedToken.tokenFamily;
     const ipAddress = req.ip || req.connection.remoteAddress;
 
@@ -645,6 +650,9 @@ export const checkAuth = async (req: Request, res: Response) => {
       jti?: string;
     };
 
+    // Enrichir le contexte de la requête pour les logs automatiques
+    setRequestContext({ userId: decoded.id, clientType: "web" });
+
     // Vérifier l'expiration explicite
     if (decoded.exp && decoded.exp * 1000 < Date.now()) {
       loginLogger.warn("[AUTH] Token expiré", { userId: decoded.id });
@@ -766,6 +774,8 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
         return res.status(401).json({ error: "Token temporaire invalide" });
       }
       userId = decoded.userId;
+      // Enrichir le contexte de la requête pour les logs automatiques
+      setRequestContext({ userId, clientType: "web" });
     } catch {
       return res
         .status(401)

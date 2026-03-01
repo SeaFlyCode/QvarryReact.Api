@@ -9,6 +9,7 @@ import { isErrorWithName } from "../utils/errorUtils";
 import { loadAndDecryptUserData } from "../controllers/auth";
 import { anonymizeIp } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
+import { setRequestContext } from "./correlationMiddleware";
 import { JWT_COOKIE_NAME } from "../config/cookieConfig";
 
 const authLogger = logger.child({ service: "auth" });
@@ -356,6 +357,13 @@ export const authMiddleware = async (
       tokenId: decoded.jti,
       clientType: decoded.platform === "mobile" ? "mobile" : "web",
     };
+
+    // Enrichir le contexte de la requête pour les logs automatiques
+    setRequestContext({
+      userId: decoded.id,
+      sessionId: decoded.jti,
+      clientType: decoded.platform === "mobile" ? "mobile" : "web",
+    });
 
     // 11. CONTEXTE MOBILE (si applicable)
     if (isMobileToken) {
