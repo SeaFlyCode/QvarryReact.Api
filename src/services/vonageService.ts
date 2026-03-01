@@ -19,6 +19,7 @@ interface SmsSendResult {
   error?: string;
   to: string;
   attempts?: number;
+  deliveryConfirmed: boolean; // Always false - delivery receipts not yet implemented
 }
 
 interface VonageSmsResponse {
@@ -106,27 +107,47 @@ class VonageService {
     let lastResult: SmsSendResult | null = null;
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      // Tentative d'envoi
-      lastResult = await this.sendSmsOnce(to, text);
+      try {
+        // Tentative d'envoi
+        lastResult = await this.sendSmsOnce(to, text);
 
-      // Si succès ou service non configuré, on arrête immédiatement
-      if (
-        lastResult.success ||
-        lastResult.error === "Service Vonage non configuré"
-      ) {
-        return { ...lastResult, attempts: attempt };
-      }
+        // Si succès, on arrête immédiatement
+        if (lastResult.success) {
+          return { ...lastResult, attempts: attempt };
+        }
 
-      // Si échec et qu'il reste des tentatives, on attend avant de retry
-      if (attempt < maxRetries) {
-        const delay = SMS_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
-        vonageLogger.warn("Retry SMS après délai", {
-          attempt,
-          maxRetries,
-          to: to.substring(0, 6) + "***",
-          delayMs: delay,
-        });
-        await this.sleep(delay);
+        // Si échec et qu'il reste des tentatives, on attend avant de retry
+        if (attempt < maxRetries) {
+          const delay = SMS_RETRY_BASE_DELAY_MS * Math.pow(2, attempt - 1);
+          vonageLogger.warn("Retry SMS après délai", {
+            attempt,
+            maxRetries,
+            to: to.substring(0, 6) + "***",
+            delayMs: delay,
+          });
+          await this.sleep(delay);
+        }
+      } catch (error) {
+        // Si Vonage n'est pas configuré, on ne retry pas
+        if (
+          error instanceof Error &&
+          error.message.includes("not initialized")
+        ) {
+          return {
+            success: false,
+            error: error.message,
+            to,
+            attempts: attempt,
+            deliveryConfirmed: false,
+          };
+        }
+        // Autre erreur, on continue à retry
+        lastResult = {
+          success: false,
+          error: error instanceof Error ? error.message : String(error),
+          to,
+          deliveryConfirmed: false,
+        };
       }
     }
 
@@ -137,6 +158,7 @@ class VonageService {
         error: "Échec de toutes les tentatives sans résultat",
         attempts: maxRetries,
         to: to,
+        deliveryConfirmed: false,
       };
     }
     return { ...lastResult, attempts: maxRetries };
@@ -150,14 +172,15 @@ class VonageService {
    */
   private async sendSmsOnce(to: string, text: string): Promise<SmsSendResult> {
     if (!this.isReady()) {
-      vonageLogger.warn("Service non configuré — SMS simulé", {
-        to: to.substring(0, 6) + "***",
-      });
-      return {
-        success: false,
-        error: "Service Vonage non configuré",
-        to,
-      };
+      vonageLogger.error(
+        "[SOS-CRITICAL] Cannot send Stage 2 emergency SMS - Vonage not configured",
+        {
+          to: to.substring(0, 6) + "***",
+        },
+      );
+      throw new Error(
+        "Vonage SMS service not initialized - SMS cannot be sent",
+      );
     }
 
     try {
@@ -188,6 +211,7 @@ class VonageService {
           success: false,
           error: errorText,
           to,
+          deliveryConfirmed: false,
         };
       }
 
@@ -199,10 +223,14 @@ class VonageService {
           to: to.substring(0, 6) + "***",
           messageId: message["message-id"],
         });
+        // TODO: Implement Vonage delivery receipt webhook at /api/webhooks/vonage/delivery
+        // Vonage supports delivery receipts via webhook but it's not implemented yet
+        // For now, we only confirm that Vonage accepted the SMS, not that it was delivered
         return {
           success: true,
           messageId: message["message-id"],
           to,
+          deliveryConfirmed: false, // Delivery receipts not yet implemented
         };
       } else {
         const errorText = message?.["error-text"] || "Erreur inconnue";
@@ -214,6 +242,7 @@ class VonageService {
           success: false,
           error: errorText,
           to,
+          deliveryConfirmed: false,
         };
       }
     } catch (error) {
@@ -227,6 +256,7 @@ class VonageService {
         success: false,
         error: errorMessage,
         to,
+        deliveryConfirmed: false,
       };
     }
   }
@@ -313,6 +343,7 @@ class VonageService {
         success: false,
         error: result.reason?.message || "Erreur inconnue",
         to: contacts[index].phone,
+        deliveryConfirmed: false,
       };
     });
   }

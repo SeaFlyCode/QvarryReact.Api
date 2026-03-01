@@ -112,6 +112,111 @@ class SosService {
     return R * c;
   }
 
+  /**
+   * Envoyer une notification SOS critique avec retry
+   * SAFETY-CRITICAL: Pour les notifications d'escalade SOS
+   * Retry 3 fois avec délai de 2 secondes entre chaque tentative
+   * @returns true si au moins une tentative a réussi, false si toutes ont échoué
+   */
+  private async sendSosNotificationWithRetry(params: {
+    userId: string;
+    title: string;
+    message: string;
+    type: string;
+    data: any;
+    maxRetries?: number;
+  }): Promise<boolean> {
+    const { userId, title, message, type, data, maxRetries = 3 } = params;
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    const sessionId = data.sosSessionId?.toString() || "unknown";
+
+    let lastError: Error | null = null;
+
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      try {
+        await createNotification(
+          userObjectId,
+          type as any,
+          title,
+          message,
+          data,
+        );
+
+        sosLogger.info("SOS notification sent successfully", {
+          userId,
+          sessionId,
+          attempt,
+          type,
+        });
+
+        return true;
+      } catch (error) {
+        lastError = error instanceof Error ? error : new Error(String(error));
+
+        sosLogger.warn(
+          `[SOS-CRITICAL] Failed to send escalation notification (attempt ${attempt}/${maxRetries})`,
+          {
+            userId,
+            sessionId,
+            attempt,
+            type,
+            error: lastError.message,
+          },
+        );
+
+        // Attendre 2 secondes avant de réessayer (sauf pour la dernière tentative)
+        if (attempt < maxRetries) {
+          await new Promise((resolve) => setTimeout(resolve, 2000));
+        }
+      }
+    }
+
+    // Toutes les tentatives ont échoué
+    sosLogger.error(
+      `[SOS-CRITICAL] All notification attempts failed after ${maxRetries} retries`,
+      {
+        userId,
+        sessionId,
+        type,
+        title,
+        error: lastError?.message || "Unknown error",
+      },
+    );
+
+    return false;
+  }
+
+  /**
+   * Envoyer une notification WebSocket avec gestion d'erreur
+   * SAFETY-CRITICAL: Pour les notifications d'escalade SOS
+   * Ne lève pas d'exception - log uniquement
+   */
+  private sendSosWebSocketNotification(
+    userId: string,
+    notification: any,
+    context: { sessionId: string; stage: number },
+  ): void {
+    try {
+      webSocketService.sendNotificationToUser(userId, notification);
+
+      sosLogger.info("SOS WebSocket notification sent", {
+        userId,
+        sessionId: context.sessionId,
+        stage: context.stage,
+        notificationType: notification.type,
+      });
+    } catch (error) {
+      sosLogger.error(`[SOS-CRITICAL] Failed to send WebSocket notification`, {
+        userId,
+        sessionId: context.sessionId,
+        stage: context.stage,
+        notificationType: notification.type,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Ne pas lever l'exception - l'escalade doit continuer
+    }
+  }
+
   // ─── ACTIVATION ────────────────────────────────────────────────────
 
   /**
@@ -1252,24 +1357,29 @@ class SosService {
     participant.currentStage = 0;
     participant.stage0TriggeredAt = new Date();
 
-    // Envoyer notification push au participant
-    await createNotification(
-      participant.userId,
-      "sos_alert",
-      "🆘 Alerte SOS - Timer expiré",
-      "Votre timer SOS a expiré ! Donnez un signe de vie ou l'escalade va se déclencher.",
-      {
+    // Envoyer notification push au participant avec retry
+    await this.sendSosNotificationWithRetry({
+      userId: participantUserId,
+      title: "🆘 Alerte SOS - Timer expiré",
+      message:
+        "Votre timer SOS a expiré ! Donnez un signe de vie ou l'escalade va se déclencher.",
+      type: "sos_alert",
+      data: {
         sosSessionId: sessionId,
       },
-    );
-
-    // Envoyer via WebSocket pour alarme immédiate
-    webSocketService.sendNotificationToUser(participantUserId, {
-      type: "sos_alarm",
-      stage: 0,
-      sessionId: sessionId.toString(),
-      message: "Timer SOS expiré — Donnez un signe de vie !",
     });
+
+    // Envoyer via WebSocket pour alarme immédiate (avec gestion d'erreur)
+    this.sendSosWebSocketNotification(
+      participantUserId,
+      {
+        type: "sos_alarm",
+        stage: 0,
+        sessionId: sessionId.toString(),
+        message: "Timer SOS expiré — Donnez un signe de vie !",
+      },
+      { sessionId: sessionId.toString(), stage: 0 },
+    );
 
     await this.logEvent(sessionId, participantUserId, "STAGE_CHANGE", {
       stage: 0,
@@ -1302,13 +1412,17 @@ class SosService {
     const user = await UserModel.findById(participant.userId).lean();
     const userName = user ? decrypt(user.name) : "Un utilisateur";
 
-    // Envoyer notification WebSocket au participant (rappel)
-    webSocketService.sendNotificationToUser(participantUserId, {
-      type: "sos_alarm",
-      stage: 1,
-      sessionId: sessionId.toString(),
-      message: "Escalade Stage 1 — D'autres utilisateurs sont notifiés !",
-    });
+    // Envoyer notification WebSocket au participant (rappel) - avec gestion d'erreur
+    this.sendSosWebSocketNotification(
+      participantUserId,
+      {
+        type: "sos_alarm",
+        stage: 1,
+        sessionId: sessionId.toString(),
+        message: "Escalade Stage 1 — D'autres utilisateurs sont notifiés !",
+      },
+      { sessionId: sessionId.toString(), stage: 1 },
+    );
 
     // Notifier TOUS les utilisateurs Qvarry vérifiés (sauf TOUS les participants de la session)
     const allVerifiedUsers = await UserModel.find({
@@ -1326,37 +1440,41 @@ class SosService {
       notifiedCount: allVerifiedUsers.length,
     });
 
-    // Envoyer les notifications à chaque utilisateur
-    for (const targetUser of allVerifiedUsers) {
-      try {
-        // Push notification
-        await createNotification(
-          targetUser._id,
-          "sos_stage1_alert",
-          "🆘 Alerte SOS",
-          `${userName} a besoin d'aide ! Consultez la carte SOS.`,
-          {
-            sosSessionId: sessionId,
-          },
-        );
+    // Envoyer les notifications à chaque utilisateur avec retry
+    let successCount = 0;
+    let failCount = 0;
 
-        // WebSocket notification
-        webSocketService.sendNotificationToUser(targetUser._id.toString(), {
+    for (const targetUser of allVerifiedUsers) {
+      // Push notification avec retry
+      const pushSuccess = await this.sendSosNotificationWithRetry({
+        userId: targetUser._id.toString(),
+        title: "🆘 Alerte SOS",
+        message: `${userName} a besoin d'aide ! Consultez la carte SOS.`,
+        type: "sos_stage1_alert",
+        data: {
+          sosSessionId: sessionId,
+        },
+      });
+
+      if (pushSuccess) {
+        successCount++;
+      } else {
+        failCount++;
+      }
+
+      // WebSocket notification avec gestion d'erreur
+      this.sendSosWebSocketNotification(
+        targetUser._id.toString(),
+        {
           type: "sos_alert_stage1",
           stage: 1,
           sessionId: sessionId.toString(),
           userName,
           participantId: participantUserId,
           message: `${userName} a besoin d'aide ! Consultez la carte SOS.`,
-        });
-      } catch (error) {
-        sosLogger.error("Failed to notify user for stage 1", {
-          targetUserId: targetUser._id.toString(),
-          sessionId: sessionId.toString(),
-          error: error instanceof Error ? error.message : String(error),
-        });
-        // On continue même si une notification échoue
-      }
+        },
+        { sessionId: sessionId.toString(), stage: 1 },
+      );
     }
 
     await this.logEvent(sessionId, participantUserId, "STAGE_CHANGE", {
@@ -1370,6 +1488,8 @@ class SosService {
       stage: 1,
       target: "all_users",
       notifiedCount: allVerifiedUsers.length,
+      successCount,
+      failCount,
       participantId: participantUserId,
     });
 
@@ -1377,6 +1497,8 @@ class SosService {
       sessionId: sessionId.toString(),
       participantId: participantUserId,
       notifiedCount: allVerifiedUsers.length,
+      successCount,
+      failCount,
     });
   }
 
@@ -1399,6 +1521,53 @@ class SosService {
     const userName = user
       ? `${decrypt(user.name)} ${decrypt(user.surname)}`
       : "Un utilisateur Qvarry";
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // SAFETY-CRITICAL: Vérifier que Vonage est configuré AVANT d'envoyer les SMS
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (!vonageService.isReady()) {
+      sosLogger.error(
+        "[SOS-CRITICAL] Stage 2 escalation: Cannot send SMS - Vonage not configured. Emergency contacts will NOT be notified by SMS.",
+        {
+          sessionId: sessionId.toString(),
+          participantId: participantUserId,
+          userName,
+        },
+      );
+
+      // Logger l'événement d'échec critique
+      await this.logEvent(sessionId, participantUserId, "SMS_FAILED", {
+        stage: 2,
+        reason: "VONAGE_NOT_CONFIGURED",
+        participantId: participantUserId,
+        critical: true,
+      });
+
+      // Alarme WebSocket pour notifier l'utilisateur
+      webSocketService.sendNotificationToUser(participantUserId, {
+        type: "sos_alarm",
+        stage: 2,
+        sessionId: sessionId.toString(),
+        message:
+          "ERREUR CRITIQUE: Les SMS d'urgence ne peuvent pas être envoyés (Vonage non configuré) !",
+        error: true,
+      });
+
+      // Audit critique
+      await auditService.log({
+        userId: participantUserId,
+        action: "SOS_STAGE_2_FAILED_VONAGE_NOT_CONFIGURED",
+        level: "critical",
+        details: {
+          sessionId: sessionId,
+          participantId: participantUserId,
+          userName,
+          reason: "Vonage SMS service not configured",
+        },
+      });
+
+      return; // On ne peut pas envoyer les SMS, on arrête ici
+    }
 
     // Récupérer les contacts d'urgence de TOUS les participants de la session
     let allContacts: any[] = [];
@@ -1483,13 +1652,17 @@ class SosService {
       }
     }
 
-    // Alarme WebSocket
-    webSocketService.sendNotificationToUser(participantUserId, {
-      type: "sos_alarm",
-      stage: 2,
-      sessionId: sessionId.toString(),
-      message: "Escalade Stage 2 — SMS envoyés aux contacts d'urgence !",
-    });
+    // Alarme WebSocket avec gestion d'erreur
+    this.sendSosWebSocketNotification(
+      participantUserId,
+      {
+        type: "sos_alarm",
+        stage: 2,
+        sessionId: sessionId.toString(),
+        message: "Escalade Stage 2 — SMS envoyés aux contacts d'urgence !",
+      },
+      { sessionId: sessionId.toString(), stage: 2 },
+    );
 
     // Audit critique
     await auditService.log({

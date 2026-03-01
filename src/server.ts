@@ -252,6 +252,77 @@ app.get("/health", healthLimiter, (req, res) => {
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SOS HEALTH CHECK - Surveillance du cron SOS (safety-critical)
+// ═══════════════════════════════════════════════════════════════════════════
+// Cette route permet de surveiller le bon fonctionnement du système SOS
+// et de détecter rapidement toute défaillance du cron d'escalade
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.get("/health/sos", healthLimiter, async (req, res) => {
+  try {
+    const { lastSosCronExecution } = await import("./services/sosCronJobs");
+    const { default: SosSessionModel } = await import("./models/sosSession");
+
+    // Compter les sessions SOS actives
+    const activeSosSessions = await SosSessionModel.countDocuments({
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    // Vérifier si le cron fonctionne correctement
+    const now = new Date();
+    let cronStatus: "ok" | "degraded" | "critical" = "ok";
+    let cronRunning = true;
+
+    if (!lastSosCronExecution) {
+      // Le cron n'a jamais été exécuté (le serveur vient de démarrer)
+      cronStatus = "degraded";
+    } else {
+      const timeSinceLastExecution =
+        now.getTime() - lastSosCronExecution.getTime();
+      const minutesSinceLastExecution = timeSinceLastExecution / (1000 * 60);
+
+      if (minutesSinceLastExecution > 5) {
+        // Plus de 5 minutes sans exécution → CRITIQUE
+        cronStatus = "critical";
+        cronRunning = false;
+      } else if (minutesSinceLastExecution > 2) {
+        // Plus de 2 minutes sans exécution → DÉGRADÉ
+        cronStatus = "degraded";
+      }
+    }
+
+    // Statut global du système SOS
+    let overallStatus: "ok" | "degraded" | "critical" = cronStatus;
+    if (activeSosSessions > 0 && cronStatus !== "ok") {
+      // Si des sessions sont actives ET le cron ne fonctionne pas → CRITIQUE
+      overallStatus = "critical";
+    }
+
+    res.status(200).json({
+      status: overallStatus,
+      cronRunning,
+      lastCronRun: lastSosCronExecution,
+      activeSosSessions,
+      uptime: process.uptime(),
+      timestamp: now.toISOString(),
+    });
+  } catch (error) {
+    serverLogger.error("[SOS-HEALTH] Erreur lors de la vérification", {
+      error: error instanceof Error ? error.message : error,
+    });
+    res.status(500).json({
+      status: "critical",
+      cronRunning: false,
+      lastCronRun: null,
+      activeSosSessions: 0,
+      uptime: process.uptime(),
+      timestamp: new Date().toISOString(),
+      error: "Unable to check SOS health",
+    });
+  }
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LOW-03: Métriques basiques pour monitoring (Prometheus-compatible si besoin)
 // HIGH-1 FIX: Endpoint protégé par authMiddleware + adminMiddleware
 // ═══════════════════════════════════════════════════════════════════════════
@@ -511,6 +582,23 @@ app.use("/api", generalLimiter);
 
     // Démarrer les services SOS Mode
     vonageService.initialize();
+
+    // Vérifier si Vonage est prêt (safety-critical pour Stage 2 SMS)
+    if (!vonageService.isReady()) {
+      serverLogger.warn(
+        "[SOS-CRITICAL] Vonage SMS service NOT configured. Stage 2 SOS escalation (emergency SMS) will NOT work!",
+        {
+          VONAGE_API_KEY: process.env.VONAGE_API_KEY ? "SET" : "MISSING",
+          VONAGE_API_SECRET: process.env.VONAGE_API_SECRET ? "SET" : "MISSING",
+          VONAGE_SMS_FROM: process.env.VONAGE_SMS_FROM || "Qvarry (default)",
+        },
+      );
+    } else {
+      serverLogger.info("[SOS] Vonage SMS service configured and ready", {
+        VONAGE_SMS_FROM: process.env.VONAGE_SMS_FROM || "Qvarry (default)",
+      });
+    }
+
     startSosEscalationJob();
     startSosCleanupJob();
 
@@ -747,8 +835,109 @@ app.use("/api", generalLimiter);
     });
 
     // Gestion de l'arrêt gracieux
-    const gracefulShutdown = (signal: string) => {
+    const gracefulShutdown = async (signal: string) => {
       serverLogger.warn("Signal reçu, arrêt gracieux...", { signal });
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // SOS-CRITICAL: Vérifier les sessions SOS actives avant l'arrêt
+      // ═══════════════════════════════════════════════════════════════════════
+      try {
+        const { default: SosSessionModel } =
+          await import("./models/sosSession");
+
+        const activeSosSessions = await SosSessionModel.find({
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+        })
+          .select("_id userId participants.userId status currentStage")
+          .lean();
+
+        if (activeSosSessions.length > 0) {
+          serverLogger.critical(
+            `[SOS-CRITICAL] Server shutting down with ${activeSosSessions.length} active SOS sessions`,
+            {
+              count: activeSosSessions.length,
+              signal,
+            },
+          );
+
+          // Logger chaque session active
+          for (const session of activeSosSessions) {
+            serverLogger.critical("[SOS-CRITICAL] Active SOS session", {
+              sessionId: session._id.toString(),
+              userId: session.userId.toString(),
+              status: session.status,
+              currentStage: session.currentStage,
+              participantCount: session.participants?.length || 0,
+            });
+          }
+
+          // Tenter d'envoyer une notification WebSocket aux utilisateurs concernés
+          try {
+            const affectedUserIds = new Set<string>();
+
+            // Collecter tous les IDs d'utilisateurs concernés (créateurs et participants)
+            for (const session of activeSosSessions) {
+              affectedUserIds.add(session.userId.toString());
+              if (session.participants && session.participants.length > 0) {
+                for (const participant of session.participants) {
+                  affectedUserIds.add(participant.userId.toString());
+                }
+              }
+            }
+
+            // Envoyer une notification à tous les utilisateurs concernés
+            for (const userId of affectedUserIds) {
+              try {
+                webSocketService.sendNotificationToUser(userId, {
+                  type: "sos_server_restart",
+                  message:
+                    "Le serveur redémarre. Votre session SOS reste active mais les notifications peuvent être retardées.",
+                  severity: "warning",
+                  timestamp: new Date().toISOString(),
+                });
+              } catch (wsError) {
+                serverLogger.error(
+                  "[SOS-CRITICAL] Failed to send WebSocket notification",
+                  {
+                    userId,
+                    error: wsError instanceof Error ? wsError.message : wsError,
+                  },
+                );
+              }
+            }
+
+            serverLogger.warn(
+              `[SOS-CRITICAL] Sent restart notifications to ${affectedUserIds.size} users`,
+            );
+          } catch (notifError) {
+            serverLogger.error(
+              "[SOS-CRITICAL] Failed to send WebSocket notifications",
+              {
+                error:
+                  notifError instanceof Error ? notifError.message : notifError,
+              },
+            );
+          }
+        } else {
+          serverLogger.info(
+            "[SOS] No active SOS sessions during shutdown - safe to proceed",
+          );
+        }
+      } catch (sosCheckError) {
+        serverLogger.error(
+          "[SOS-CRITICAL] Failed to check active SOS sessions during shutdown",
+          {
+            error:
+              sosCheckError instanceof Error
+                ? sosCheckError.message
+                : sosCheckError,
+          },
+        );
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
+      // Continuer avec l'arrêt normal
+      // ═══════════════════════════════════════════════════════════════════════
 
       server.close(() => {
         serverLogger.info("Serveur HTTP fermé");
@@ -787,6 +976,12 @@ app.use("/api", generalLimiter);
       notifications: `ws://localhost:${PORT}/ws/notifications`,
       messages: `ws://localhost:${PORT}/ws/messages`,
     });
+
+    // Initialiser les notifications push (Firebase Cloud Messaging)
+    const { NotificationService } =
+      await import("./services/notificationService");
+    NotificationService.initializePushNotifications();
+    serverLogger.info("Service de notifications push initialisé");
   } catch (err) {
     serverLogger.critical("Impossible de se connecter à la base de données", {
       error: getErrorMessage(err),

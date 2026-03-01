@@ -9,6 +9,455 @@ import { logger } from "./loggerService";
 
 const notifLogger = logger.child({ service: "notification" });
 
+// ═══════════════════════════════════════════════════════════════════════════
+// FIREBASE ADMIN SDK - Import conditionnel
+// ═══════════════════════════════════════════════════════════════════════════
+let firebaseAdmin: any = null;
+try {
+  firebaseAdmin = require("firebase-admin");
+} catch (error) {
+  notifLogger.warn(
+    "[SOS-WARNING] firebase-admin non installé - notifications push désactivées",
+  );
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// TYPES POUR LES NOTIFICATIONS PUSH
+// ═══════════════════════════════════════════════════════════════════════════
+interface PushNotificationResult {
+  sent: boolean;
+  method: "fcm" | "websocket" | "db_only";
+  error?: string;
+}
+
+interface PendingNotification {
+  userId: string;
+  title: string;
+  message: string;
+  data: any;
+  type: NotificationType;
+  attempts: number;
+  lastAttempt: Date;
+  createdAt: Date;
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLASSE DE SERVICE DE NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+class NotificationService {
+  private static fcmInitialized: boolean = false;
+  private static pendingNotifications: Map<string, PendingNotification> =
+    new Map();
+  private static retryIntervalId: NodeJS.Timeout | null = null;
+  private static readonly MAX_RETRY_ATTEMPTS = 5;
+  private static readonly RETRY_INTERVAL_MS = 30000; // 30 secondes
+
+  /**
+   * Initialise Firebase Admin SDK pour les notifications push
+   */
+  static initializePushNotifications(): void {
+    if (!firebaseAdmin) {
+      notifLogger.warn(
+        "[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.",
+      );
+      return;
+    }
+
+    try {
+      // Vérifier si Firebase est déjà initialisé
+      if (firebaseAdmin.apps.length > 0) {
+        this.fcmInitialized = true;
+        notifLogger.info("Firebase Admin SDK déjà initialisé");
+        return;
+      }
+
+      // Option 1 : JSON string depuis variable d'environnement
+      const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
+      if (serviceAccountJson) {
+        const serviceAccount = JSON.parse(serviceAccountJson);
+        firebaseAdmin.initializeApp({
+          credential: firebaseAdmin.credential.cert(serviceAccount),
+        });
+        this.fcmInitialized = true;
+        notifLogger.info(
+          "Firebase Admin SDK initialisé via FIREBASE_SERVICE_ACCOUNT",
+        );
+        return;
+      }
+
+      // Option 2 : Fichier via GOOGLE_APPLICATION_CREDENTIALS
+      const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+      if (credentialsPath) {
+        firebaseAdmin.initializeApp({
+          credential: firebaseAdmin.credential.applicationDefault(),
+        });
+        this.fcmInitialized = true;
+        notifLogger.info(
+          "Firebase Admin SDK initialisé via GOOGLE_APPLICATION_CREDENTIALS",
+        );
+        return;
+      }
+
+      notifLogger.warn(
+        "[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.",
+      );
+    } catch (error) {
+      notifLogger.error("Erreur lors de l'initialisation de Firebase Admin", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+      notifLogger.warn(
+        "[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.",
+      );
+    }
+  }
+
+  /**
+   * Envoie une notification push via Firebase Cloud Messaging
+   */
+  static async sendPushNotification(
+    userId: mongoose.Types.ObjectId | string,
+    title: string,
+    body: string,
+    data: Record<string, string>,
+  ): Promise<PushNotificationResult> {
+    const userIdStr = typeof userId === "string" ? userId : userId.toString();
+
+    // Vérifier si Firebase est initialisé
+    if (!this.fcmInitialized || !firebaseAdmin) {
+      notifLogger.warn(
+        `[SOS-CRITICAL] Push notification could not be sent to user ${userIdStr} - FCM not configured`,
+      );
+      return {
+        sent: false,
+        method: "db_only",
+        error: "FCM not configured",
+      };
+    }
+
+    try {
+      // Récupérer le token FCM de l'utilisateur
+      const User = mongoose.model("User");
+      const user = await User.findById(userId).select("fcmToken").lean();
+
+      if (!user || !(user as any).fcmToken) {
+        notifLogger.warn(
+          `[SOS-CRITICAL] Push notification could not be sent to user ${userIdStr} - FCM token not found`,
+        );
+        return {
+          sent: false,
+          method: "db_only",
+          error: "No FCM token",
+        };
+      }
+
+      const fcmToken = (user as any).fcmToken;
+
+      // Construire le message FCM
+      const message = {
+        token: fcmToken,
+        notification: {
+          title,
+          body,
+        },
+        data: {
+          ...data,
+          userId: userIdStr,
+        },
+        android: {
+          priority: "high" as const,
+          notification: {
+            sound: "default",
+            priority: "high" as const,
+          },
+        },
+        apns: {
+          payload: {
+            aps: {
+              sound: "default",
+              contentAvailable: true,
+            },
+          },
+        },
+      };
+
+      // Envoyer le message
+      const response = await firebaseAdmin.messaging().send(message);
+
+      notifLogger.info("Notification push envoyée avec succès", {
+        userId: userIdStr,
+        messageId: response,
+      });
+
+      return {
+        sent: true,
+        method: "fcm",
+      };
+    } catch (error: any) {
+      // Gérer les tokens invalides
+      if (
+        error.code === "messaging/invalid-registration-token" ||
+        error.code === "messaging/registration-token-not-registered"
+      ) {
+        notifLogger.warn("Token FCM invalide ou expiré, suppression du token", {
+          userId: userIdStr,
+          error: error.code,
+        });
+
+        // Supprimer le token invalide
+        try {
+          const User = mongoose.model("User");
+          await User.updateOne({ _id: userId }, { $unset: { fcmToken: "" } });
+        } catch (updateError) {
+          notifLogger.error("Erreur lors de la suppression du token FCM", {
+            error:
+              updateError instanceof Error
+                ? updateError.message
+                : String(updateError),
+          });
+        }
+      }
+
+      notifLogger.error("Erreur lors de l'envoi de la notification push", {
+        userId: userIdStr,
+        error: error.message,
+        code: error.code,
+      });
+
+      return {
+        sent: false,
+        method: "db_only",
+        error: error.message,
+      };
+    }
+  }
+
+  /**
+   * Ajoute une notification à la file d'attente de retry
+   */
+  private static addToPendingQueue(
+    userId: string,
+    title: string,
+    message: string,
+    data: any,
+    type: NotificationType,
+  ): void {
+    const notificationKey = `${userId}-${Date.now()}`;
+
+    this.pendingNotifications.set(notificationKey, {
+      userId,
+      title,
+      message,
+      data,
+      type,
+      attempts: 0,
+      lastAttempt: new Date(),
+      createdAt: new Date(),
+    });
+
+    notifLogger.warn(
+      "[SOS-WARNING] Notification ajoutée à la file d'attente de retry",
+      {
+        userId,
+        type,
+        queueSize: this.pendingNotifications.size,
+      },
+    );
+
+    // Démarrer le service de retry si pas déjà actif
+    if (!this.retryIntervalId) {
+      this.startRetryService();
+    }
+  }
+
+  /**
+   * Démarre le service de retry des notifications en attente
+   */
+  private static startRetryService(): void {
+    if (this.retryIntervalId) {
+      return; // Déjà démarré
+    }
+
+    notifLogger.info("Démarrage du service de retry des notifications SOS");
+
+    this.retryIntervalId = setInterval(() => {
+      this.retryPendingNotifications();
+    }, this.RETRY_INTERVAL_MS);
+  }
+
+  /**
+   * Réessaie d'envoyer les notifications en attente
+   */
+  static async retryPendingNotifications(): Promise<void> {
+    if (this.pendingNotifications.size === 0) {
+      return;
+    }
+
+    notifLogger.info("Tentative de renvoi des notifications en attente", {
+      count: this.pendingNotifications.size,
+    });
+
+    const toRemove: string[] = [];
+
+    for (const [key, notification] of this.pendingNotifications.entries()) {
+      notification.attempts++;
+      notification.lastAttempt = new Date();
+
+      // Tentative WebSocket
+      let wsSuccess = false;
+      try {
+        if (
+          webSocketService &&
+          typeof webSocketService.sendNotificationToUser === "function"
+        ) {
+          webSocketService.sendNotificationToUser(notification.userId, {
+            type: "notification",
+            notificationType: notification.type,
+            title: notification.title,
+            message: notification.message,
+            ...notification.data,
+          });
+          wsSuccess = true;
+          notifLogger.info("Notification retry réussie via WebSocket", {
+            userId: notification.userId,
+            attempts: notification.attempts,
+          });
+          toRemove.push(key);
+          continue;
+        }
+      } catch (error) {
+        notifLogger.debug("Retry WebSocket échoué", {
+          userId: notification.userId,
+          attempts: notification.attempts,
+        });
+      }
+
+      // Si WebSocket échoue, tenter push notification
+      if (!wsSuccess) {
+        const pushResult = await this.sendPushNotification(
+          notification.userId,
+          notification.title,
+          notification.message,
+          notification.data,
+        );
+
+        if (pushResult.sent) {
+          notifLogger.info("Notification retry réussie via push", {
+            userId: notification.userId,
+            attempts: notification.attempts,
+          });
+          toRemove.push(key);
+          continue;
+        }
+      }
+
+      // Si max tentatives atteint, logger CRITICAL et supprimer
+      if (notification.attempts >= this.MAX_RETRY_ATTEMPTS) {
+        notifLogger.error(
+          `[SOS-CRITICAL] Notification could not be delivered after ${this.MAX_RETRY_ATTEMPTS} attempts`,
+          {
+            userId: notification.userId,
+            type: notification.type,
+            title: notification.title,
+            elapsedTime: Date.now() - notification.createdAt.getTime(),
+          },
+        );
+        toRemove.push(key);
+      }
+    }
+
+    // Supprimer les notifications traitées
+    toRemove.forEach((key) => this.pendingNotifications.delete(key));
+
+    // Arrêter le service si plus de notifications en attente
+    if (this.pendingNotifications.size === 0 && this.retryIntervalId) {
+      clearInterval(this.retryIntervalId);
+      this.retryIntervalId = null;
+      notifLogger.info("Service de retry des notifications arrêté (file vide)");
+    }
+  }
+
+  /**
+   * Envoie une notification à un utilisateur (WebSocket + Push si nécessaire)
+   */
+  static async sendNotificationToUser(
+    userId: mongoose.Types.ObjectId | string,
+    type: NotificationType,
+    title: string,
+    message: string,
+    data?: Record<string, any>,
+  ): Promise<void> {
+    const userIdStr = typeof userId === "string" ? userId : userId.toString();
+    const isSosNotification =
+      type.toLowerCase().includes("sos") ||
+      title.toLowerCase().includes("sos") ||
+      message.toLowerCase().includes("sos");
+
+    let deliveryMethod: string = "db_only";
+    let wsSuccess = false;
+
+    // Tentative 1 : WebSocket
+    try {
+      if (
+        webSocketService &&
+        typeof webSocketService.sendNotificationToUser === "function"
+      ) {
+        webSocketService.sendNotificationToUser(userIdStr, {
+          type: "notification",
+          notificationType: type,
+          title,
+          message,
+          ...data,
+        });
+        wsSuccess = true;
+        deliveryMethod = "websocket";
+      }
+    } catch (error) {
+      notifLogger.warn("Échec d'envoi via WebSocket", {
+        userId: userIdStr,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Tentative 2 : Push notification (si WS échoue OU si SOS)
+    if (!wsSuccess || isSosNotification) {
+      const pushResult = await this.sendPushNotification(
+        userId,
+        title,
+        message,
+        {
+          type,
+          ...Object.entries(data || {}).reduce(
+            (acc, [key, value]) => {
+              acc[key] = String(value);
+              return acc;
+            },
+            {} as Record<string, string>,
+          ),
+        },
+      );
+
+      if (pushResult.sent) {
+        deliveryMethod = wsSuccess ? "websocket+fcm" : "fcm";
+      } else if (!wsSuccess) {
+        // Aucune méthode n'a fonctionné, ajouter à la file de retry
+        this.addToPendingQueue(userIdStr, title, message, data, type);
+        deliveryMethod = "queued_for_retry";
+      }
+    }
+
+    notifLogger.info("Notification envoyée", {
+      userId: userIdStr,
+      type,
+      isSosNotification,
+      deliveryMethod,
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// FONCTIONS PUBLIQUES (LEGACY) - Maintiennent la compatibilité
+// ═══════════════════════════════════════════════════════════════════════════
+
 /**
  * Créer une nouvelle notification
  * @param userId - ID de l'utilisateur destinataire
@@ -58,21 +507,25 @@ export async function createNotification(
     type,
   });
 
-  // Envoyer la notification via WebSocket si l'utilisateur est connecté
-  if (
-    webSocketService &&
-    typeof webSocketService.sendNotificationToUser === "function"
-  ) {
-    webSocketService.sendNotificationToUser(userId.toString(), {
-      type: "notification", // Ajout explicite du type pour le client
-      notificationId: notification._id,
-      notificationType: type,
-      title,
-      message,
-      conversationId: data?.conversationId?.toString(), // Pour filtrer si on est sur la conversation
-      createdAt: notification.createdAt,
-    });
-  }
+  // Utiliser le nouveau système de notification avec push + retry
+  await NotificationService.sendNotificationToUser(
+    userId,
+    type,
+    title,
+    message,
+    {
+      notificationId: notification._id.toString(),
+      conversationId: data?.conversationId?.toString(),
+      createdAt: notification.createdAt.toISOString(),
+      ...(data?.contactId && { contactId: data.contactId.toString() }),
+      ...(data?.messageId && { messageId: data.messageId.toString() }),
+      ...(data?.shareId && { shareId: data.shareId.toString() }),
+      ...(data?.senderId && { senderId: data.senderId.toString() }),
+      ...(data?.sosSessionId && {
+        sosSessionId: data.sosSessionId.toString(),
+      }),
+    },
+  );
 
   return notification;
 }
@@ -305,3 +758,9 @@ export async function notifyShareRead(
     },
   );
 }
+
+// ═══════════════════════════════════════════════════════════════════════════
+// EXPORTS DE LA CLASSE ET MÉTHODES STATIQUES
+// ═══════════════════════════════════════════════════════════════════════════
+export { NotificationService };
+export default NotificationService;

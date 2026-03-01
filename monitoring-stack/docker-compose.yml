@@ -155,6 +155,7 @@ configs:
         retention_period: 336h
         max_query_length: 721h
         max_query_series: 5000
+        allow_structured_metadata: true
 
       compactor:
         working_directory: /loki/compactor
@@ -194,18 +195,16 @@ configs:
             - json:
                 expressions:
                   level: level
-                  message: message
                   timestamp: timestamp
                   service: metadata.service
-                  correlationId: metadata.correlationId
+                  clientType: metadata.clientType
             - timestamp:
                 source: timestamp
                 format: "2006-01-02 15:04:05"
             - labels:
                 level:
                 service:
-            - output:
-                source: message
+                clientType:
 
         # Logs erreurs (error-*.log)
         - job_name: qvarry-errors
@@ -221,18 +220,16 @@ configs:
             - json:
                 expressions:
                   level: level
-                  message: message
                   timestamp: timestamp
                   service: metadata.service
-                  correlationId: metadata.correlationId
+                  clientType: metadata.clientType
             - timestamp:
                 source: timestamp
                 format: "2006-01-02 15:04:05"
             - labels:
                 level:
                 service:
-            - output:
-                source: message
+                clientType:
 
   # --- Grafana : Data source Loki (auto-provisionne) ---
   grafana_datasource:
@@ -325,6 +322,15 @@ configs:
               "allValue": ".*"
             },
             {
+              "name": "clientType",
+              "type": "custom",
+              "label": "Client",
+              "query": "web,mobile",
+              "multi": true,
+              "includeAll": true,
+              "allValue": ".*"
+            },
+            {
               "name": "search",
               "type": "textbox",
               "label": "Recherche",
@@ -338,6 +344,16 @@ configs:
               "name": "correlationId",
               "type": "textbox",
               "label": "Correlation ID",
+              "query": "",
+              "current": {
+                "value": "",
+                "text": ""
+              }
+            },
+            {
+              "name": "userId",
+              "type": "textbox",
+              "label": "User ID",
               "query": "",
               "current": {
                 "value": "",
@@ -380,7 +396,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"$$level\", service=~\"$$service\", type=~\"$$type\"} |= \"$$search\" [5m]))",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"$$level\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -439,7 +455,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$$service\", type=~\"$$type\"} |= \"$$search\" [5m]))",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -498,7 +514,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"warn\", service=~\"$$service\", type=~\"$$type\"} |= \"$$search\" [5m]))",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"warn\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -557,7 +573,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"info\", service=~\"$$service\", type=~\"$$type\"} |= \"$$search\" [5m]))",
+                "expr": "sum(count_over_time({job=\"qvarry-api\", level=\"info\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -616,7 +632,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "(sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$$service\", type=~\"$$type\"} |= \"$$search\" [5m])) / sum(count_over_time({job=\"qvarry-api\", service=~\"$$service\", type=~\"$$type\"} |= \"$$search\" [5m]))) * 100",
+                "expr": "(sum(count_over_time({job=\"qvarry-api\", level=~\"error|critical\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [5m])) / sum(count_over_time({job=\"qvarry-api\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [5m]))) * 100",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -742,7 +758,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum by (level) (count_over_time({job=\"qvarry-api\", service=~\"$$service\", type=~\"$$type\"} |= \"$$search\" [5m]))",
+                "expr": "sum by (level) (count_over_time({job=\"qvarry-api\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -891,7 +907,7 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"$$level\", type=~\"$$type\"} |= \"$$search\" [5m]))",
+                "expr": "sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"$$level\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [5m]))",
                 "queryType": "range",
                 "refId": "A"
               }
@@ -960,17 +976,9 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"$$level\", type=~\"$$type\"} |= \"$$search\" [$__range])))",
-                "queryType": "range",
+                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"$$level\", type=~\"$$type\", clientType=~\"$$clientType\"} |= \"$$search\" [6h])))",
+                "queryType": "instant",
                 "refId": "A"
-              }
-            ],
-            "transformations": [
-              {
-                "id": "reduce",
-                "options": {
-                  "reducers": ["sum"]
-                }
               }
             ],
             "options": {
@@ -1007,17 +1015,9 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"error|critical\", type=~\"$$type\"} [$__range])))",
-                "queryType": "range",
+                "expr": "topk(10, sum by (service) (count_over_time({job=\"qvarry-api\", level=~\"error|critical\", type=~\"$$type\", clientType=~\"$$clientType\"} [6h])))",
+                "queryType": "instant",
                 "refId": "A"
-              }
-            ],
-            "transformations": [
-              {
-                "id": "reduce",
-                "options": {
-                  "reducers": ["sum"]
-                }
               }
             ],
             "options": {
@@ -1067,14 +1067,14 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "{job=\"qvarry-api\", level=~\"$$level\", service=~\"$$service\", type=~\"$$type\"} |= \"$$search\" |= \"$$correlationId\"",
+                "expr": "{job=\"qvarry-api\", level=~\"$$level\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} | json | message =~ \"(?i).*$$search.*\" | correlationId =~ \".*$$correlationId.*\" | userId =~ \".*$$userId.*\" | line_format \"{{.message}}\"",
                 "queryType": "range",
                 "refId": "A"
               }
             ],
             "options": {
               "showTime": true,
-              "showLabels": true,
+              "showLabels": false,
               "showCommonLabels": false,
               "wrapLogMessage": true,
               "prettifyLogMessage": false,
@@ -1116,14 +1116,14 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "{job=\"qvarry-api\", level=\"warn\", service=~\"$$service\", type=~\"$$type\"}",
+                "expr": "{job=\"qvarry-api\", level=\"warn\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} | json | userId =~ \".*$$userId.*\" | line_format \"{{.message}}\"",
                 "queryType": "range",
                 "refId": "A"
               }
             ],
             "options": {
               "showTime": true,
-              "showLabels": true,
+              "showLabels": false,
               "showCommonLabels": false,
               "wrapLogMessage": true,
               "prettifyLogMessage": false,
@@ -1153,14 +1153,14 @@ configs:
                   "uid": "loki-ds"
                 },
                 "editorMode": "code",
-                "expr": "{job=\"qvarry-api\", level=~\"error|critical\", service=~\"$$service\", type=~\"$$type\"}",
+                "expr": "{job=\"qvarry-api\", level=~\"error|critical\", service=~\"$$service\", type=~\"$$type\", clientType=~\"$$clientType\"} | json | userId =~ \".*$$userId.*\" | line_format \"{{.message}}\"",
                 "queryType": "range",
                 "refId": "A"
               }
             ],
             "options": {
               "showTime": true,
-              "showLabels": true,
+              "showLabels": false,
               "showCommonLabels": false,
               "wrapLogMessage": true,
               "prettifyLogMessage": false,
@@ -1202,14 +1202,14 @@ configs:
                       "uid": "loki-ds"
                     },
                     "editorMode": "code",
-                    "expr": "{job=\"qvarry-api\", level=\"http\"}",
+                    "expr": "{job=\"qvarry-api\", level=\"http\", clientType=~\"$$clientType\"} | json | userId =~ \".*$$userId.*\" | line_format \"{{.message}}\"",
                     "queryType": "range",
                     "refId": "A"
                   }
                 ],
                 "options": {
                   "showTime": true,
-                  "showLabels": true,
+                  "showLabels": false,
                   "showCommonLabels": false,
                   "wrapLogMessage": true,
                   "prettifyLogMessage": false,

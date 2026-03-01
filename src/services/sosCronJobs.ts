@@ -5,14 +5,75 @@
 // Vérifie les sessions expirées et déclenche l'escalade
 // ═══════════════════════════════════════════════════════════════════════════
 
+import os from "os";
 import cron from "node-cron";
 import { sosService } from "./sosService";
 import { logger } from "./loggerService";
+import CronLockModel from "../models/cronLock";
 
 const sosCronLogger = logger.child({ service: "sos-cron" });
 
-// ─── Flag de verrouillage pour empêcher les exécutions simultanées ───
-let isSosEscalationRunning = false;
+// ─── Identifiant unique de cette instance ───
+// Format: hostname-pid-timestamp pour garantir l'unicité entre instances
+const INSTANCE_ID = `${os.hostname()}-${process.pid}-${Date.now()}`;
+
+// ─── Heartbeat pour monitoring de santé du cron ───
+export let lastSosCronExecution: Date | null = null;
+
+/**
+ * Acquiert un verrou distribué pour exécuter le job d'escalade
+ * Retourne true si le verrou a été acquis, false sinon
+ */
+async function acquireLock(): Promise<boolean> {
+  try {
+    const now = new Date();
+    const lockExpiration = new Date(now.getTime() + 90000); // 90 secondes
+
+    // Tentative d'acquisition du verrou
+    // On peut acquérir si: verrou n'existe pas OU verrou expiré
+    const lock = await CronLockModel.findOneAndUpdate(
+      {
+        lockName: "sos-escalation",
+        $or: [
+          { expiresAt: { $lt: now } }, // Verrou expiré
+          { lockedBy: INSTANCE_ID }, // Cette instance possède déjà le verrou
+        ],
+      },
+      {
+        lockedBy: INSTANCE_ID,
+        lockedAt: now,
+        expiresAt: lockExpiration,
+        lastHeartbeat: now,
+      },
+      { upsert: true, new: true },
+    );
+
+    // Vérifie que c'est bien nous qui avons le verrou
+    return lock.lockedBy === INSTANCE_ID;
+  } catch (error) {
+    // En cas d'erreur (ex: race condition), on considère qu'on n'a pas le verrou
+    sosCronLogger.warn("Erreur lors de l'acquisition du verrou", {
+      error: error instanceof Error ? error.message : error,
+    });
+    return false;
+  }
+}
+
+/**
+ * Libère le verrou distribué après exécution
+ */
+async function releaseLock(): Promise<void> {
+  try {
+    await CronLockModel.deleteOne({
+      lockName: "sos-escalation",
+      lockedBy: INSTANCE_ID,
+    });
+  } catch (error) {
+    sosCronLogger.warn("Erreur lors de la libération du verrou", {
+      error: error instanceof Error ? error.message : error,
+    });
+  }
+}
 
 /**
  * Job de vérification des sessions SOS expirées
@@ -23,28 +84,53 @@ let isSosEscalationRunning = false;
  * - Vérifie les sessions ACTIVE dont expiresAt < now → déclenche Stage 0
  * - Vérifie les sessions ESCALATING Stage 0 depuis >= 15min → Stage 1
  * - Vérifie les sessions ESCALATING Stage 1 depuis >= 30min → Stage 2
+ *
+ * Utilise un verrou distribué MongoDB pour éviter les exécutions simultanées
+ * sur plusieurs instances (prévient les SMS et alertes en double)
  */
 export function startSosEscalationJob(): void {
   // Cron expression: "* * * * *" = Toutes les minutes
   cron.schedule("* * * * *", async () => {
-    if (isSosEscalationRunning) {
-      sosCronLogger.info("Vérification escalade déjà en cours, skip");
+    // Tentative d'acquisition du verrou distribué
+    const lockAcquired = await acquireLock();
+
+    if (!lockAcquired) {
+      sosCronLogger.info(
+        "Verrou d'escalade détenu par une autre instance, skip",
+        { instanceId: INSTANCE_ID },
+      );
       return;
     }
-    isSosEscalationRunning = true;
+
+    // Verrou acquis, on exécute le job
     try {
+      sosCronLogger.debug("Démarrage de la vérification des sessions SOS", {
+        instanceId: INSTANCE_ID,
+      });
+
       await sosService.processExpiredSessions();
+
+      // Mettre à jour le heartbeat après exécution réussie
+      lastSosCronExecution = new Date();
+
+      sosCronLogger.debug("Vérification des sessions SOS terminée", {
+        instanceId: INSTANCE_ID,
+      });
     } catch (error) {
       sosCronLogger.error("Erreur lors de la vérification des sessions SOS", {
         error: error instanceof Error ? error.message : error,
         stack: error instanceof Error ? error.stack : undefined,
+        instanceId: INSTANCE_ID,
       });
     } finally {
-      isSosEscalationRunning = false;
+      // Libération du verrou dans tous les cas
+      await releaseLock();
     }
   });
 
-  sosCronLogger.info("Job d'escalade SOS programmé (toutes les 60 secondes)");
+  sosCronLogger.info("Job d'escalade SOS programmé (toutes les 60 secondes)", {
+    instanceId: INSTANCE_ID,
+  });
 }
 
 /**

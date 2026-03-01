@@ -17,6 +17,16 @@ import { logger } from "../services/loggerService";
 const mobileSecLogger = logger.child({ service: "mobile-security" });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SECURITY WARNING: ATTESTATION VERIFICATION NOT IMPLEMENTED
+// ═══════════════════════════════════════════════════════════════════════════
+mobileSecLogger.warn(
+  "[SECURITY-WARNING] Device attestation verification is not implemented. Running in permissive mode.",
+  {
+    note: "Apple App Attest and Google Play Integrity API verification required for production",
+  },
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // TYPES & INTERFACES
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -402,22 +412,32 @@ export const verifyDeviceAttestation = (strict: boolean = false) => {
         });
       }
 
-      // TODO: Validation réelle avec Apple/Google APIs
+      // SECURITY: Attestation tokens are accepted without server-side verification.
+      // TODO: Implement Apple App Attest and Google Play Integrity API verification
       // - iOS: Appeler Apple's App Attest API
       // - Android: Appeler Google Play Integrity API
-      // Pour l'instant, on fait une validation basique
 
+      // [SECURITY-WARNING] This is NOT true attestation verification
+      mobileSecLogger.warn(
+        "[SECURITY-WARNING] Device attestation NOT verified against Apple/Google APIs. Trust score boost is UNVERIFIED. This is a known security gap.",
+        {
+          deviceId: maskDeviceId(attestationData.deviceId),
+          platform: attestationData.platform,
+        },
+      );
+
+      // Reduced boost because attestation is not server-side verified
       // Augmenter le trust score si attestation valide
       const deviceId = req.headers["x-device-id"] as string;
       const device = knownDevices.get(deviceId);
       if (device) {
-        device.trustScore = Math.min(device.trustScore + 25, 100);
+        device.trustScore = Math.min(device.trustScore + 12, 100);
       }
 
-      mobileSecLogger.info("Attestation validée", {
+      mobileSecLogger.info("Attestation validée (format uniquement)", {
         deviceId: maskDeviceId(deviceId),
       });
-      (req as any).attestationVerified = true;
+      (req as any).attestationVerified = false;
 
       next();
     } catch (error) {

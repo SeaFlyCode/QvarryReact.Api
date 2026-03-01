@@ -81,15 +81,17 @@ Temps 0                    Timer expire
 
 ### Delais configurables
 
+> ⚠️ Les valeurs ci-dessous sont synchronisées avec le code source (dernière mise à jour: mars 2026)
+
 | Parametre                  | Valeur par defaut | Configurable par |
 | -------------------------- | ----------------- | ---------------- |
 | Delai avant Stade 1        | 15 min            | Admin site       |
 | Delai avant Stade 2        | 30 min            | Admin site       |
 | Duree alarme sonore        | 3 min             | Systeme          |
-| Duree min session SOS      | 30 min            | Systeme          |
-| Duree max session SOS      | 12H               | Systeme          |
+| Duree min session SOS      | 15 min            | Systeme          |
+| Duree max session SOS      | 8H (480 min)      | Systeme          |
 | Prolongation par heartbeat | +15 min           | User             |
-| Nb max de prolongations    | 3                 | Admin site       |
+| Nb max de prolongations    | Illimité          | Admin site       |
 
 ---
 
@@ -274,7 +276,7 @@ Plusieurs mecanismes combines pour detecter si l'utilisateur est en vie / sorti 
 │  Configuration rapide           │
 │                                 │
 │  Duree prevue :                 │
-│  [30min] [1H] [2H] [4H] [___]  │
+│  [15min] [1H] [2H] [4H] [___]  │
 │                                 │
 │  Contacts d'urgence :           │
 │  [v] Marc Dupont (default)      │

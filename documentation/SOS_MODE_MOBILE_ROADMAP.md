@@ -86,8 +86,8 @@ interface SosContact {
 
 **Fonctionnalites** :
 
-- [ ] Selection de la duree : boutons rapides [30min] [1H] [2H] [4H] + saisie custom
-- [ ] Validation : min 30min, max 12H
+- [ ] Selection de la duree : boutons rapides [15min] [1H] [2H] [4H] + saisie custom
+- [ ] Validation : min 15min, max 8H (480 min)
 - [ ] Affichage des contacts qui seront prevenus (contacts par defaut)
 - [ ] Note optionnelle (zone precise, ex: "Galerie nord, niveau -2")
 - [ ] Confirmation par **swipe** (pas un simple tap, pour eviter les activations accidentelles)

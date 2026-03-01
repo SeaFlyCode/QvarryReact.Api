@@ -41,6 +41,116 @@ const mobileSosMiddleware = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
+// RATE LIMITER SPÉCIFIQUE POUR OPÉRATIONS SOS CRITIQUES
+// ═══════════════════════════════════════════════════════════════════════════
+// Les opérations critiques (heartbeat, extend, deactivate, status) nécessitent
+// un rate limit plus élevé car le heartbeat est envoyé toutes les 60 secondes.
+// 30 requêtes / 15 min permet : 15 heartbeats + extensions + checks de statut
+
+interface SosRateLimitEntry {
+  count: number;
+  firstAttempt: Date;
+  blockedUntil?: Date;
+}
+
+const isProduction = process.env.NODE_ENV === "production";
+const DEV_MULTIPLIER = 10;
+
+// Rate limiting pour opérations SOS critiques
+const SOS_CRITICAL_MAX_REQUESTS_BASE = 30; // 30 en prod, 300 en dev
+const SOS_CRITICAL_WINDOW_MINUTES = 15;
+const SOS_CRITICAL_BLOCK_MINUTES = 30;
+
+const SOS_CRITICAL_MAX_REQUESTS = isProduction
+  ? SOS_CRITICAL_MAX_REQUESTS_BASE
+  : SOS_CRITICAL_MAX_REQUESTS_BASE * DEV_MULTIPLIER;
+const SOS_CRITICAL_WINDOW_MS = SOS_CRITICAL_WINDOW_MINUTES * 60 * 1000;
+const SOS_CRITICAL_BLOCK_DURATION_MS = SOS_CRITICAL_BLOCK_MINUTES * 60 * 1000;
+
+const sosCriticalRateLimitStore = new Map<string, SosRateLimitEntry>();
+
+/**
+ * Génère un identifiant composite pour le rate limiting SOS (IP + Device)
+ */
+function getSosIdentifier(req: express.Request): string {
+  const ip = req.ip || req.connection.remoteAddress || "unknown";
+  const deviceId = (req.headers["x-device-id"] as string) || "no-device";
+  return `sos_critical_${ip}_${deviceId}`;
+}
+
+/**
+ * Rate limiter spécifique pour les opérations SOS critiques
+ * Permet 30 requêtes / 15 min pour supporter le heartbeat (60s) + autres ops
+ */
+const sosCriticalRateLimiter = async (
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) => {
+  const identifier = getSosIdentifier(req);
+  const now = new Date();
+
+  const entry = sosCriticalRateLimitStore.get(identifier);
+
+  if (!entry) {
+    sosCriticalRateLimitStore.set(identifier, {
+      count: 1,
+      firstAttempt: now,
+    });
+    return next();
+  }
+
+  // Vérifier si bloqué
+  if (entry.blockedUntil && entry.blockedUntil > now) {
+    const remainingMinutes = Math.ceil(
+      (entry.blockedUntil.getTime() - now.getTime()) / 60000,
+    );
+    return res.status(429).json({
+      error: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
+      code: "SOS_RATE_LIMIT_EXCEEDED",
+      retryAfter: remainingMinutes * 60,
+    });
+  }
+
+  // Réinitialiser la fenêtre si expirée
+  const timeSinceFirst = now.getTime() - entry.firstAttempt.getTime();
+  if (timeSinceFirst > SOS_CRITICAL_WINDOW_MS) {
+    sosCriticalRateLimitStore.set(identifier, {
+      count: 1,
+      firstAttempt: now,
+    });
+    return next();
+  }
+
+  // Incrémenter le compteur
+  entry.count++;
+
+  // Bloquer si limite dépassée
+  if (entry.count > SOS_CRITICAL_MAX_REQUESTS) {
+    entry.blockedUntil = new Date(
+      now.getTime() + SOS_CRITICAL_BLOCK_DURATION_MS,
+    );
+    sosCriticalRateLimitStore.set(identifier, entry);
+
+    return res.status(429).json({
+      error: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
+      code: "SOS_RATE_LIMIT_EXCEEDED",
+      retryAfter: SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+    });
+  }
+
+  sosCriticalRateLimitStore.set(identifier, entry);
+  next();
+};
+
+// Middleware pour opérations SOS critiques (avec rate limit élevé)
+const mobileSosCriticalMiddleware = [
+  verifyMobilePlatform,
+  authMiddleware,
+  sosCriticalRateLimiter, // Rate limiter plus permissif pour dead-man's-switch
+];
+
+// ═══════════════════════════════════════════════════════════════════════════
 // ROUTES SESSION SOS
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -107,7 +217,7 @@ router.post("/activate", ...mobileSosMiddleware, handleSosActivate);
  *   - 404: NO_ACTIVE_SESSION
  *   - 500: INTERNAL_ERROR
  */
-router.post("/heartbeat", ...mobileSosMiddleware, handleSosHeartbeat);
+router.post("/heartbeat", ...mobileSosCriticalMiddleware, handleSosHeartbeat);
 
 /**
  * POST /api/mobile/sos/extend
@@ -128,7 +238,7 @@ router.post("/heartbeat", ...mobileSosMiddleware, handleSosHeartbeat);
  *   - 404: NO_ACTIVE_SESSION
  *   - 500: INTERNAL_ERROR
  */
-router.post("/extend", ...mobileSosMiddleware, handleSosExtend);
+router.post("/extend", ...mobileSosCriticalMiddleware, handleSosExtend);
 
 /**
  * POST /api/mobile/sos/deactivate
@@ -148,7 +258,7 @@ router.post("/extend", ...mobileSosMiddleware, handleSosExtend);
  *   - 404: NO_ACTIVE_SESSION
  *   - 500: INTERNAL_ERROR
  */
-router.post("/deactivate", ...mobileSosMiddleware, handleSosDeactivate);
+router.post("/deactivate", ...mobileSosCriticalMiddleware, handleSosDeactivate);
 
 /**
  * GET /api/mobile/sos/status
@@ -157,7 +267,7 @@ router.post("/deactivate", ...mobileSosMiddleware, handleSosDeactivate);
  * Response 200:
  *   { success: true, active: boolean, session: { ..., participants: [...], isGroupSession: boolean, creatorId: string } | null }
  */
-router.get("/status", ...mobileSosMiddleware, handleSosStatus);
+router.get("/status", ...mobileSosCriticalMiddleware, handleSosStatus);
 
 /**
  * GET /api/mobile/sos/history
