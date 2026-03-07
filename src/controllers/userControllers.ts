@@ -202,7 +202,7 @@ export async function handleCreateUser(req: Request, res: Response) {
     const createdUser = await createUser(newUser);
 
     // Envoi de l'email de bienvenue avec le lien de vérification
-    const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+    const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
     // Le lien redirige vers la page de connexion avec l'email pré-rempli et le mode vérification
     const verificationLink = `${frontendUrl}/?verify=${encodeURIComponent(email)}`;
 
@@ -682,7 +682,7 @@ export async function handleResendVerificationEmail(
 
     // Récupérer le nom décrypté pour l'email
     const userName = decrypt(user.name);
-    const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+    const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
     // Le lien redirige vers la page de connexion avec l'email pré-rempli et le mode vérification
     const verificationLink = `${frontendUrl}/?verify=${encodeURIComponent(email)}`;
 

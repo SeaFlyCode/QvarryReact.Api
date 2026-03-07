@@ -262,7 +262,7 @@ export const handleShareData = async (
     });
 
     // Envoyer des emails aux destinataires (asynchrone, ne bloque pas la réponse)
-    const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+    const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
     const shareLink = `${frontendUrl}/partage`;
 
     // Récupérer le nom de l'expéditeur

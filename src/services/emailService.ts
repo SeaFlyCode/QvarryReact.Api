@@ -227,7 +227,7 @@ const replaceVariables = (
   const allVariables: Record<string, string> = {
     ...variables,
     YEAR: new Date().getFullYear().toString(),
-    FRONTEND_URL: process.env.FRONTEND_URL || "https://qvarry.com",
+    FRONTEND_URL: process.env.FRONTEND_URL || "https://app.qvarry.fr",
   };
 
   // Remplacer les variables simples {{VAR}}
@@ -345,7 +345,7 @@ export const sendEmail = async (options: EmailOptions): Promise<boolean> => {
     const text = buildEmailText(template, variables);
 
     const mailOptions = {
-      from: `"QVARRY" <${process.env.EMAIL_FROM || "noreply@qvarry.com"}>`,
+      from: `"QVARRY" <${process.env.EMAIL_FROM || "noreply@qvarry.fr"}>`,
       to,
       subject,
       text,
@@ -511,7 +511,7 @@ export const sendPasswordChangedEmail = async (
       CHANGE_TIME: formatEmailDate(),
       IP_ADDRESS: anonymizeIp(ipAddress),
       DEVICE_INFO: deviceInfo,
-      SECURE_ACCOUNT_LINK: `${process.env.FRONTEND_URL || "https://qvarry.com"}/profil/security`,
+      SECURE_ACCOUNT_LINK: `${process.env.FRONTEND_URL || "https://app.qvarry.fr"}/profil/security`,
     },
   });
 };
@@ -536,7 +536,7 @@ export const sendSecurityAlertEmail = async (
       DEVICE_INFO: deviceInfo,
       LOCATION: location,
       LOGIN_TIME: formatEmailDate(),
-      SECURE_ACCOUNT_LINK: `${process.env.FRONTEND_URL || "https://qvarry.com"}/profil/security`,
+      SECURE_ACCOUNT_LINK: `${process.env.FRONTEND_URL || "https://app.qvarry.fr"}/profil/security`,
     },
   });
 };
@@ -583,7 +583,7 @@ export const sendContactRequestEmail = async (
   declineLink?: string,
   viewProfileLink?: string,
 ): Promise<boolean> => {
-  const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+  const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
   return sendEmail({
     to,
     subject: `👋 ${requesterName} souhaite vous ajouter - QVARRY`,
@@ -609,7 +609,7 @@ export const sendContactAcceptedEmail = async (
   contactProfileLink?: string,
   messageLink?: string,
 ): Promise<boolean> => {
-  const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+  const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
   return sendEmail({
     to,
     subject: `🤝 ${contactName} a accepté votre demande - QVARRY`,
@@ -630,7 +630,7 @@ export const sendAccountApprovedEmail = async (
   to: string,
   userName: string,
 ): Promise<boolean> => {
-  const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+  const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
   return sendEmail({
     to,
     subject: "✅ Votre compte QVARRY a été validé !",
@@ -652,7 +652,7 @@ export const sendAccountRejectedEmail = async (
   userName: string,
   rejectionReason?: string,
 ): Promise<boolean> => {
-  const contactEmail = process.env.CONTACT_EMAIL || "contact@qvarry.com";
+  const contactEmail = process.env.CONTACT_EMAIL || "contact@qvarry.fr";
   return sendEmail({
     to,
     subject: "❌ Votre demande de compte QVARRY",
@@ -678,7 +678,7 @@ export const sendAdminPendingValidationEmail = async (
   newUserEmail: string,
   registrationDate: string,
 ): Promise<boolean> => {
-  const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+  const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
   return sendEmail({
     to: adminEmail,
     subject: "👤 Nouveau compte en attente de validation - QVARRY",

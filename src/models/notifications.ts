@@ -16,7 +16,19 @@ export type NotificationType =
   | "sos_alert" // Alerte SOS générique (stage 0)
   | "sos_stage1_alert" // Alerte SOS stage 1 (notification à tous les users)
   | "sos_stage2_sms" // Notification interne de suivi SMS envoyé (stage 2)
-  | "sos_resolved"; // Session SOS résolue
+  | "sos_resolved" // Session SOS résolue
+  | "contact_refused" // Demande de contact refusée
+  | "group_member_added" // Ajouté à un groupe existant
+  | "group_member_removed" // Retiré d'un groupe
+  | "group_deleted" // Groupe supprimé
+  | "sos_confirmed_safe" // Un contact a confirmé que la personne est en sécurité
+  | "sos_session_cancelled" // Session SOS annulée par le créateur
+  | "sos_participant_left" // Un participant a quitté la session SOS
+  | "sos_surface_detected" // Détection de déplacement en surface
+  | "sos_reconnection_detected" // Reconnexion stable détectée
+  | "sos_sms_triggered" // SMS d'urgence envoyés (stage 2)
+  | "login_new_device" // Connexion depuis un nouvel appareil
+  | "admin_notification"; // Notification admin générique
 
 // Interface pour les notifications
 export interface INotification extends Document {
@@ -72,6 +84,18 @@ const notificationSchema: Schema<INotification> = new Schema(
         "sos_stage1_alert",
         "sos_stage2_sms",
         "sos_resolved",
+        "contact_refused",
+        "group_member_added",
+        "group_member_removed",
+        "group_deleted",
+        "sos_confirmed_safe",
+        "sos_session_cancelled",
+        "sos_participant_left",
+        "sos_surface_detected",
+        "sos_reconnection_detected",
+        "sos_sms_triggered",
+        "login_new_device",
+        "admin_notification",
       ],
       required: true,
     },

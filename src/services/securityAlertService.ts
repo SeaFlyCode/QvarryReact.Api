@@ -329,7 +329,7 @@ class SecurityAlertService {
             TIMESTAMP: timestamp,
             DETAILS: JSON.stringify(alert.details || {}, null, 2),
             ACTION_TAKEN: this.getAutoActionDescription(alert),
-            ADMIN_PANEL_LINK: `${process.env.FRONTEND_URL || "https://qvarry.com"}/admin/audit`,
+            ADMIN_PANEL_LINK: `${process.env.FRONTEND_URL || "https://app.qvarry.fr"}/admin/audit`,
           },
         });
         securityLogger.info("Alert email sent to admin", {

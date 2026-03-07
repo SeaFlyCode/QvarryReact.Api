@@ -202,7 +202,7 @@ export const addContact = async (
         const recipientEmail = decrypt(targetUserFull.email);
         const recipientName = decrypt(targetUserFull.name);
         const requesterName = await getDisplayName(userId);
-        const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+        const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
         const acceptLink = `${frontendUrl}/contacts`;
 
         sendContactRequestEmail(
@@ -701,6 +701,25 @@ export const refuseContact = async (
     // Supprimer du cache si présent
     if (userId && memoryStorage.hasSession(userId)) {
       memoryStorage.deleteContact(userId, contactId);
+    }
+
+    // Notifier le demandeur que sa demande a été refusée
+    try {
+      const displayName = await getDisplayName(userId);
+      await createNotification(
+        contact.userId as Types.ObjectId,
+        "contact_refused",
+        "Demande de contact refusée",
+        `${displayName} a refusé votre demande de contact`,
+        {
+          contactId: new Types.ObjectId(contactId),
+          senderId: new Types.ObjectId(userId),
+        },
+      );
+    } catch (notifErr) {
+      contactLogger.error("Erreur envoi notification refus contact", {
+        error: notifErr instanceof Error ? notifErr.message : String(notifErr),
+      });
     }
 
     res.status(200).json({

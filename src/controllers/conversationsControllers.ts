@@ -216,6 +216,25 @@ export async function createPrivateConversation(req: Request, res: Response) {
       userId,
     );
 
+    // Push notification au participant invité
+    try {
+      const displayName = await getDisplayName(userId);
+      await createNotification(
+        new Types.ObjectId(participantId),
+        "message",
+        "Nouvelle conversation",
+        `${displayName} a démarré une conversation avec vous`,
+        {
+          conversationId: conversation._id as Types.ObjectId,
+          senderId: new Types.ObjectId(userId),
+        },
+      );
+    } catch (notifErr) {
+      convoLogger.error("Erreur envoi notification nouvelle conversation", {
+        error: notifErr instanceof Error ? notifErr.message : String(notifErr),
+      });
+    }
+
     res.status(201).json({ conversationId: conversation._id });
   } catch (err) {
     convoLogger.error("Erreur création conversation privée", {
@@ -624,6 +643,33 @@ export async function addGroupMembers(req: Request, res: Response) {
       conversation as IConversation,
       memoryStorage,
     );
+
+    // Push notification aux nouveaux membres ajoutés
+    try {
+      const displayName = await getDisplayName(userId);
+      const groupName = conversation.name
+        ? decryptCommunication(conversation.name)
+        : "un groupe";
+      for (const uid of userIds) {
+        if (uid !== userId) {
+          await createNotification(
+            new Types.ObjectId(uid),
+            "group_member_added",
+            "Ajouté à un groupe",
+            `${displayName} vous a ajouté au groupe "${groupName}"`,
+            {
+              conversationId: conversation._id as Types.ObjectId,
+              senderId: new Types.ObjectId(userId),
+            },
+          );
+        }
+      }
+    } catch (notifErr) {
+      convoLogger.error("Erreur envoi notification ajout membres", {
+        error: notifErr instanceof Error ? notifErr.message : String(notifErr),
+      });
+    }
+
     res.json({ success: true, conversation: conversation.toObject() });
   } catch (err) {
     convoLogger.error("Erreur ajout membres groupe", {
@@ -684,6 +730,28 @@ export async function removeGroupMember(req: Request, res: Response) {
     // ═══════════════════════════════════════════════════════════════════════════
     // Notifier le membre retiré pour que le groupe disparaisse de son écran
     webSocketService.notifyMemberRemoved(id, memberId);
+
+    // Push notification au membre retiré
+    try {
+      const displayName = await getDisplayName(userId);
+      const groupName = conversation.name
+        ? decryptCommunication(conversation.name)
+        : "un groupe";
+      await createNotification(
+        new Types.ObjectId(memberId),
+        "group_member_removed",
+        "Retiré d'un groupe",
+        `${displayName} vous a retiré du groupe "${groupName}"`,
+        {
+          conversationId: new Types.ObjectId(id),
+          senderId: new Types.ObjectId(userId),
+        },
+      );
+    } catch (notifErr) {
+      convoLogger.error("Erreur envoi notification retrait membre", {
+        error: notifErr instanceof Error ? notifErr.message : String(notifErr),
+      });
+    }
 
     // Synchronisation mémoire pour tous les membres restants
     await updateMemoryForAllParticipants(
@@ -860,6 +928,32 @@ export async function deleteGroup(req: Request, res: Response) {
 
     // Notifier tous les participants que le groupe a été supprimé
     webSocketService.notifyGroupDeleted(id, participantIds, userId);
+
+    // Push notification aux participants (sauf l'admin qui supprime)
+    try {
+      const displayName = await getDisplayName(userId);
+      const groupName = conversation.name
+        ? decryptCommunication(conversation.name)
+        : "un groupe";
+      for (const participantId of participantIds) {
+        if (participantId !== userId) {
+          await createNotification(
+            new Types.ObjectId(participantId),
+            "group_deleted",
+            "Groupe supprimé",
+            `${displayName} a supprimé le groupe "${groupName}"`,
+            {
+              conversationId: new Types.ObjectId(id),
+              senderId: new Types.ObjectId(userId),
+            },
+          );
+        }
+      }
+    } catch (notifErr) {
+      convoLogger.error("Erreur envoi notification suppression groupe", {
+        error: notifErr instanceof Error ? notifErr.message : String(notifErr),
+      });
+    }
 
     convoLogger.info("Groupe supprime", {
       groupId: id,

@@ -85,6 +85,7 @@ import mobileAuthRoutes from "./routes/mobileAuthRoutes";
 import mobileSyncRoutes from "./routes/mobileSyncRoutes";
 import mobileTwoFactorRoutes from "./routes/mobileTwoFactorRoutes";
 import mobileSosRoutes from "./routes/mobileSosRoutes";
+import mobilePushTokenRoutes from "./routes/mobilePushTokenRoutes";
 import { maintenanceMiddleware } from "./middlewares/maintenanceMiddleware";
 import cookieParser from "cookie-parser";
 import {
@@ -515,6 +516,7 @@ app.use("/api/mobile/auth", mobileAuthLimiter);
 app.use("/api/mobile/2fa", twoFactorLimiter); // 2FA mobile = même protection que web
 app.use("/api/mobile/sync", highTrafficLimiter); // Sync peut être fréquent
 app.use("/api/mobile/sos", mobileAuthLimiter); // SOS mode - protection mobile
+app.use("/api/mobile/push-tokens", mobileAuthLimiter); // Push tokens - protection mobile
 
 // Routes admin (RISQUE MOYEN - déjà protégées par authMiddleware + adminMiddleware)
 app.use("/api/admin", adminLimiter);
@@ -667,6 +669,9 @@ app.use("/api", generalLimiter);
 
     // Routes SOS Mode mobile (alertes d'urgence)
     app.use("/api/v1/mobile/sos", mobileSosRoutes);
+
+    // Routes Push Tokens mobile (enregistrement/suppression tokens FCM)
+    app.use("/api/v1/mobile/push-tokens", mobilePushTokenRoutes);
 
     // Routes admin (doivent être AVANT le middleware de maintenance)
     // pour permettre aux admins de gérer la maintenance

@@ -40,6 +40,7 @@ import {
 
 import UserModel, { IUserBase } from "../models/users";
 import MaintenanceModel from "../models/maintenance";
+import { createNotification } from "../services/notificationService";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HELPERS (réutilisés depuis authControllers)
@@ -230,6 +231,32 @@ export async function handleMobileLogin(req: Request, res: Response) {
       duration: loginDuration,
     });
 
+    // 10b. NOTIFICATION DE CONNEXION (si activée)
+    if (user.login_notifications_enabled !== false) {
+      try {
+        const platformLabel =
+          mobileContext?.platform === "ios"
+            ? "iOS"
+            : mobileContext?.platform === "android"
+              ? "Android"
+              : "mobile";
+        await createNotification(
+          user._id as mongoose.Types.ObjectId,
+          "login_new_device",
+          "Nouvelle connexion détectée",
+          `Connexion depuis un appareil ${platformLabel}. Si ce n'est pas vous, changez votre mot de passe.`,
+          {
+            senderId: user._id as mongoose.Types.ObjectId,
+          },
+        );
+      } catch (notifErr) {
+        mobileAuthLogger.error("Erreur envoi notification login", {
+          error:
+            notifErr instanceof Error ? notifErr.message : String(notifErr),
+        });
+      }
+    }
+
     // 11. RÉPONSE (tokens dans le body, pas de cookies)
     const jwtMaxAge =
       parseInt(process.env.JWT_EXPIRES_IN?.replace(/[^0-9]/g, "") || "15") * 60;
@@ -355,7 +382,7 @@ export async function handleMobileRegister(req: Request, res: Response) {
     const createdUser = await createUser(newUser);
 
     // 6. ENVOI EMAIL DE BIENVENUE
-    const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+    const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
     const verificationLink = `${frontendUrl}/?verify=${encodeURIComponent(email)}`;
 
     sendWelcomeEmail(
@@ -454,8 +481,8 @@ export async function handleMobileForgotPassword(req: Request, res: Response) {
     });
 
     // Envoyer l'email
-    const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
-    const resetLink = `${frontendUrl}/reset-password?token=${resetToken}&email=${encodeURIComponent(email)}`;
+    const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
+    const resetLink = `${frontendUrl}/?reset=${encodeURIComponent(email)}`;
     const resetCode = crypto.randomBytes(3).toString("hex").toUpperCase(); // Code 6 caractères
 
     await sendPasswordResetEmail(

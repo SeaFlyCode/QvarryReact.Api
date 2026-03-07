@@ -187,6 +187,18 @@ class SosService {
   }
 
   /**
+   * Sanitiser un contact pour l'admin en masquant le numéro de téléphone
+   * Les admins ne doivent PAS voir les numéros de téléphone des contacts d'urgence
+   */
+  private sanitizeContactForAdmin(contact: any): any {
+    const { phone, ...rest } = contact;
+    return {
+      ...rest,
+      phone: "***",
+    };
+  }
+
+  /**
    * Envoyer une notification WebSocket avec gestion d'erreur
    * SAFETY-CRITICAL: Pour les notifications d'escalade SOS
    * Ne lève pas d'exception - log uniquement
@@ -606,7 +618,7 @@ class SosService {
       if (distance > SURFACE_DISTANCE_THRESHOLD_METERS) {
         participant.surfaceDetectionSent = true;
 
-        // Envoyer suggestion via WebSocket
+        // Envoyer suggestion via WebSocket + push
         webSocketService.sendNotificationToUser(userId, {
           type: "sos_surface_detected",
           sessionId: (session._id as mongoose.Types.ObjectId).toString(),
@@ -614,6 +626,25 @@ class SosService {
             "Tu sembles t'être déplacé significativement. Es-tu en surface ?",
           distance: Math.round(distance),
         });
+
+        // Push notification
+        try {
+          await createNotification(
+            new mongoose.Types.ObjectId(userId),
+            "sos_surface_detected",
+            "Déplacement détecté",
+            "Tu sembles t'être déplacé significativement. Es-tu en surface ?",
+            {
+              sosSessionId: session._id as mongoose.Types.ObjectId,
+            },
+          );
+        } catch (error) {
+          sosLogger.error("Failed to send surface detection notification", {
+            userId,
+            sessionId: session._id?.toString(),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
 
         await this.logEvent(
           session._id as mongoose.Types.ObjectId,
@@ -660,6 +691,28 @@ class SosService {
           connectedSince: participant.firstReconnectionAt,
           heartbeatCount: participant.consecutiveHeartbeats,
         });
+
+        // Push notification
+        try {
+          await createNotification(
+            new mongoose.Types.ObjectId(userId),
+            "sos_reconnection_detected",
+            "Connexion stable détectée",
+            "Tu sembles avoir une connexion stable depuis plus de 5 minutes. Désactiver le Mode SOS ?",
+            {
+              sosSessionId: session._id as mongoose.Types.ObjectId,
+            },
+          );
+        } catch (error) {
+          sosLogger.error(
+            "Failed to send reconnection detection notification",
+            {
+              userId,
+              sessionId: session._id?.toString(),
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+        }
 
         await this.logEvent(
           session._id as mongoose.Types.ObjectId,
@@ -897,7 +950,7 @@ class SosService {
         // Il reste des participants → session continue
         await session.save();
 
-        // Notifier les autres participants
+        // Notifier les autres participants (WS + push)
         for (const otherParticipant of remainingActiveParticipants) {
           const otherUserId = otherParticipant.userId.toString();
           webSocketService.sendNotificationToUser(otherUserId, {
@@ -907,6 +960,26 @@ class SosService {
             userId,
             message: `${userName} a quitté la session SOS`,
           });
+
+          // Push notification
+          try {
+            await createNotification(
+              otherParticipant.userId,
+              "sos_participant_left",
+              "Participant a quitté la session SOS",
+              `${userName} a quitté la session SOS.`,
+              {
+                sosSessionId: session._id as mongoose.Types.ObjectId,
+                senderId: new mongoose.Types.ObjectId(userId),
+              },
+            );
+          } catch (error) {
+            sosLogger.error("Failed to send participant left notification", {
+              otherUserId,
+              sessionId: session._id?.toString(),
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
 
         sosLogger.info("Participant left SOS session", {
@@ -961,7 +1034,7 @@ class SosService {
         },
       );
 
-      // Notifier tous les autres participants
+      // Notifier tous les autres participants (WS + push)
       for (const participant of session.participants) {
         const participantId = participant.userId.toString();
         if (participantId !== userId) {
@@ -972,6 +1045,26 @@ class SosService {
             userId,
             message: `La session SOS a été désactivée par ${userName}`,
           });
+
+          // Push notification
+          try {
+            await createNotification(
+              participant.userId,
+              "sos_session_cancelled",
+              "Session SOS annulée",
+              `${userName} a désactivé la session SOS.`,
+              {
+                sosSessionId: session._id as mongoose.Types.ObjectId,
+                senderId: new mongoose.Types.ObjectId(userId),
+              },
+            );
+          } catch (error) {
+            sosLogger.error("Failed to send session cancelled notification", {
+              participantId,
+              sessionId: session._id?.toString(),
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
         }
       }
 
@@ -1034,6 +1127,29 @@ class SosService {
     session.resolvedByUserId = new mongoose.Types.ObjectId(confirmerId);
 
     await session.save();
+
+    // Notifier tous les participants que la session est confirmée safe
+    for (const participant of session.participants) {
+      const participantId = participant.userId.toString();
+      try {
+        await createNotification(
+          participant.userId,
+          "sos_confirmed_safe",
+          "✅ Session SOS résolue",
+          `La session SOS a été confirmée en sécurité.`,
+          {
+            sosSessionId: session._id as mongoose.Types.ObjectId,
+            senderId: new mongoose.Types.ObjectId(confirmerId),
+          },
+        );
+      } catch (error) {
+        sosLogger.error("Failed to send confirmSafe notification", {
+          participantId,
+          sessionId: session._id?.toString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
 
     // Nettoyer les contacts temporaires
     await this.cleanupSessionContacts(session._id.toString());
@@ -1674,6 +1790,25 @@ class SosService {
       { sessionId: sessionId.toString(), stage: 2 },
     );
 
+    // Push notification pour informer que les SMS ont été envoyés
+    try {
+      await createNotification(
+        new mongoose.Types.ObjectId(participantUserId),
+        "sos_sms_triggered",
+        "🆘 SMS d'urgence envoyés",
+        `Stage 2 — ${results.filter((r) => r.success).length} SMS envoyés à vos contacts d'urgence.`,
+        {
+          sosSessionId: sessionId,
+        },
+      );
+    } catch (error) {
+      sosLogger.error("Failed to send SMS triggered notification", {
+        participantUserId,
+        sessionId: sessionId.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     // Audit critique
     await auditService.log({
       userId: participantUserId,
@@ -2095,12 +2230,17 @@ class SosService {
       .sort({ isDefault: -1, createdAt: -1 })
       .lean();
 
+    // Sanitiser les contacts pour l'admin (masquer les numéros de téléphone)
+    const sanitizedContacts = allContacts.map((contact) =>
+      this.sanitizeContactForAdmin(contact),
+    );
+
     // Grouper les contacts par participant userId
     const contactsByParticipant: Record<string, any[]> = {};
     const phonesSeen = new Set<string>();
     const deduplicatedContacts: any[] = [];
 
-    allContacts.forEach((contact: any) => {
+    sanitizedContacts.forEach((contact: any) => {
       const uid = contact.userId?.toString();
       if (!contactsByParticipant[uid]) contactsByParticipant[uid] = [];
       contactsByParticipant[uid].push(contact);
@@ -2190,7 +2330,7 @@ class SosService {
       },
       participantsDetails,
       events,
-      contacts: allContacts,
+      contacts: sanitizedContacts,
       deduplicatedContacts,
       contactsByParticipant,
     };
@@ -2886,6 +3026,1054 @@ class SosService {
       heartbeats,
       groupStats,
     };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // MÉTHODES ADMIN AVANCÉES
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Forcer un heartbeat pour un participant
+   * Prolonge la session et réactive le participant si nécessaire
+   */
+  async adminHeartbeat(
+    sessionId: string,
+    userId: string,
+    adminId: string,
+  ): Promise<ISosSession> {
+    const session = await SosSessionModel.findOne({
+      _id: new mongoose.Types.ObjectId(sessionId),
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    const participant = session.participants.find(
+      (p) => p.userId.toString() === userId && p.status !== "LEFT",
+    );
+
+    if (!participant) {
+      throw new Error("PARTICIPANT_NOT_FOUND");
+    }
+
+    const now = new Date();
+
+    // Mettre à jour le heartbeat du participant
+    participant.lastHeartbeatAt = now;
+    participant.consecutiveHeartbeats =
+      (participant.consecutiveHeartbeats || 0) + 1;
+
+    // Si participant était déconnecté ou en escalade → réactiver
+    if (
+      participant.status === "DISCONNECTED" ||
+      participant.status === "ESCALATING"
+    ) {
+      participant.status = "ACTIVE";
+      participant.currentStage = -1;
+
+      sosLogger.info("Participant reactivated by admin heartbeat", {
+        sessionId: sessionId,
+        userId,
+        previousStatus: participant.status,
+      });
+    }
+
+    // Incrémenter le compteur de heartbeats de la session
+    session.heartbeatCount = (session.heartbeatCount || 0) + 1;
+
+    // Prolonger l'expiration si la session est active
+    if (session.status === "ACTIVE") {
+      session.expiresAt = new Date(
+        now.getTime() + HEARTBEAT_EXTENSION_MINUTES * 60 * 1000,
+      );
+    }
+
+    // Si session était EXPIRED ou ESCALATING et plus aucun participant en danger → repasser en ACTIVE
+    const hasParticipantsInDanger = session.participants.some(
+      (p) =>
+        p.status !== "LEFT" &&
+        (p.status === "DISCONNECTED" || p.status === "ESCALATING"),
+    );
+
+    if (
+      (session.status === "EXPIRED" || session.status === "ESCALATING") &&
+      !hasParticipantsInDanger
+    ) {
+      session.status = "ACTIVE";
+      session.currentStage = -1;
+
+      sosLogger.info("Session reactivated by admin heartbeat", {
+        sessionId: sessionId,
+        previousStatus: session.status,
+      });
+    }
+
+    await session.save();
+
+    // Logger l'événement
+    await this.logEvent(
+      session._id as mongoose.Types.ObjectId,
+      userId,
+      "HEARTBEAT",
+      {
+        triggeredBy: "admin",
+        adminId,
+        consecutiveHeartbeats: participant.consecutiveHeartbeats,
+      },
+    );
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_HEARTBEAT",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        targetUserId: userId,
+        consecutiveHeartbeats: participant.consecutiveHeartbeats,
+      },
+    });
+
+    sosLogger.info("Admin forced heartbeat", {
+      sessionId,
+      userId,
+      adminId,
+      consecutiveHeartbeats: participant.consecutiveHeartbeats,
+    });
+
+    return session;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Prolonger la durée d'une session
+   * Ajoute des minutes supplémentaires à l'expiration
+   */
+  async adminExtendSession(
+    sessionId: string,
+    additionalMinutes: number,
+    adminId: string,
+  ): Promise<ISosSession> {
+    const session = await SosSessionModel.findOne({
+      _id: new mongoose.Types.ObjectId(sessionId),
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    // Valider la durée
+    if (
+      additionalMinutes < MIN_DURATION_MINUTES ||
+      additionalMinutes > MAX_DURATION_MINUTES
+    ) {
+      throw new Error("INVALID_EXTENSION_DURATION");
+    }
+
+    const now = new Date();
+
+    // Prolonger l'expiration
+    session.expiresAt = new Date(
+      session.expiresAt.getTime() + additionalMinutes * 60 * 1000,
+    );
+
+    // Incrémenter le compteur d'extensions
+    session.extensionCount = (session.extensionCount || 0) + 1;
+
+    // Si session était EXPIRED → repasser en ACTIVE
+    if (session.status === "EXPIRED") {
+      session.status = "ACTIVE";
+
+      sosLogger.info("Expired session reactivated by admin extension", {
+        sessionId: sessionId,
+        additionalMinutes,
+      });
+    }
+
+    await session.save();
+
+    // Logger l'événement
+    await this.logEvent(
+      session._id as mongoose.Types.ObjectId,
+      session.userId.toString(),
+      "EXTENDED",
+      {
+        triggeredBy: "admin",
+        adminId,
+        additionalMinutes,
+        newExpiresAt: session.expiresAt,
+      },
+    );
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_EXTEND_SESSION",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        additionalMinutes,
+        newExpiresAt: session.expiresAt,
+        extensionCount: session.extensionCount,
+      },
+    });
+
+    sosLogger.info("Admin extended session", {
+      sessionId,
+      adminId,
+      additionalMinutes,
+      extensionCount: session.extensionCount,
+    });
+
+    return session;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Forcer l'escalade d'un participant vers un stage spécifique
+   * Permet de déclencher manuellement les alertes d'escalade
+   */
+  async adminForceEscalation(
+    sessionId: string,
+    userId: string,
+    targetStage: number,
+    adminId: string,
+  ): Promise<ISosSession> {
+    const session = await SosSessionModel.findOne({
+      _id: new mongoose.Types.ObjectId(sessionId),
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    const participant = session.participants.find(
+      (p) => p.userId.toString() === userId && p.status !== "LEFT",
+    );
+
+    if (!participant) {
+      throw new Error("PARTICIPANT_NOT_FOUND");
+    }
+
+    // Valider le stage cible
+    if (![0, 1, 2].includes(targetStage)) {
+      throw new Error("INVALID_STAGE");
+    }
+
+    // Vérifier que le stage cible est supérieur au stage actuel
+    if (targetStage <= (participant.currentStage ?? -1)) {
+      throw new Error("STAGE_ALREADY_REACHED");
+    }
+
+    // Déclencher l'escalade appropriée
+    if (targetStage === 0) {
+      await this.triggerStage0(session, participant);
+    } else if (targetStage === 1) {
+      await this.triggerStage1(session, participant);
+    } else if (targetStage === 2) {
+      await this.triggerStage2(session, participant);
+    }
+
+    // Mettre la session en état ESCALATING
+    session.status = "ESCALATING";
+    if (targetStage > (session.currentStage ?? -1)) {
+      session.currentStage = targetStage;
+    }
+
+    await session.save();
+
+    // Logger l'événement
+    await this.logEvent(
+      session._id as mongoose.Types.ObjectId,
+      userId,
+      "STAGE_CHANGE",
+      {
+        triggeredBy: "admin",
+        adminId,
+        stage: targetStage,
+        previousStage: participant.currentStage,
+      },
+    );
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_FORCE_ESCALATION",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        targetUserId: userId,
+        targetStage,
+        previousStage: participant.currentStage,
+      },
+    });
+
+    sosLogger.info("Admin forced escalation", {
+      sessionId,
+      userId,
+      targetStage,
+      adminId,
+    });
+
+    return session;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Activer une session SOS pour un utilisateur spécifique
+   * Contrairement à la méthode mobile, ne vérifie pas les contacts d'urgence
+   */
+  async adminActivateSession(params: {
+    targetUserId: string;
+    adminId: string;
+    expectedDuration: number;
+    note?: string;
+    lat?: number;
+    lng?: number;
+    siteName?: string;
+    zone?: string;
+    depth?: number;
+    participantIds?: string[];
+  }): Promise<ISosSession> {
+    const {
+      targetUserId,
+      adminId,
+      expectedDuration,
+      note,
+      lat,
+      lng,
+      siteName,
+      zone,
+      depth,
+      participantIds,
+    } = params;
+
+    // Valider la durée
+    if (
+      expectedDuration < MIN_DURATION_MINUTES ||
+      expectedDuration > MAX_DURATION_MINUTES
+    ) {
+      throw new Error("INVALID_DURATION");
+    }
+
+    const targetUserObjectId = new mongoose.Types.ObjectId(targetUserId);
+
+    // Collecter tous les IDs de participants (créateur + participants ajoutés)
+    const allParticipantIds = [targetUserId];
+    if (participantIds && participantIds.length > 0) {
+      allParticipantIds.push(...participantIds);
+    }
+
+    // Vérifier qu'aucun des participants n'a déjà une session active
+    const participantObjectIds = allParticipantIds.map(
+      (id) => new mongoose.Types.ObjectId(id),
+    );
+
+    const existingSessions = await SosSessionModel.find({
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+      "participants.userId": { $in: participantObjectIds },
+      "participants.status": { $ne: "LEFT" },
+    });
+
+    if (existingSessions.length > 0) {
+      throw new Error("SESSION_ALREADY_ACTIVE");
+    }
+
+    // Vérifier que les participants existent dans la base de données
+    if (participantIds && participantIds.length > 0) {
+      const participantUsers = await UserModel.find({
+        _id: {
+          $in: participantIds.map((id) => new mongoose.Types.ObjectId(id)),
+        },
+      }).select("_id");
+
+      if (participantUsers.length !== participantIds.length) {
+        throw new Error("INVALID_PARTICIPANT_IDS");
+      }
+    }
+
+    // Calculer la date d'expiration
+    const now = new Date();
+    const expiresAt = new Date(now.getTime() + expectedDuration * 60 * 1000);
+
+    // Créer les participants
+    const participants: ISosParticipant[] = allParticipantIds.map(
+      (participantId) => ({
+        userId: new mongoose.Types.ObjectId(participantId),
+        joinedAt: now,
+        leftAt: null,
+        status: "ACTIVE" as SosParticipantStatus,
+        currentStage: -1,
+        stage0TriggeredAt: null,
+        stage1TriggeredAt: null,
+        stage2TriggeredAt: null,
+        lastHeartbeatAt: null,
+        lastKnownLat: lat,
+        lastKnownLng: lng,
+        lastKnownAccuracy: undefined,
+        consecutiveHeartbeats: 0,
+        firstReconnectionAt: null,
+        surfaceDetectionSent: false,
+        reconnectionDetectionSent: false,
+      }),
+    );
+
+    // Créer la session (l'admin force l'activation sans vérifier les contacts)
+    const session = new SosSessionModel({
+      userId: targetUserObjectId,
+      status: "ACTIVE",
+      currentStage: -1,
+      activatedAt: now,
+      expectedDuration,
+      expiresAt,
+      lastKnownLat: lat,
+      lastKnownLng: lng,
+      lastKnownAccuracy: undefined,
+      entryLat: lat,
+      entryLng: lng,
+      note: note || `Session créée par l'administrateur`,
+      siteName,
+      zone,
+      depth,
+      heartbeatCount: 0,
+      extensionCount: 0,
+      consecutiveHeartbeats: 0,
+      surfaceDetectionSent: false,
+      reconnectionDetectionSent: false,
+      useDefaultContacts: true, // Utilisera les contacts par défaut si disponibles
+      participants,
+    });
+    await session.save();
+
+    // Récupérer le nom de l'admin pour les notifications
+    const admin = await UserModel.findById(adminId).lean();
+    const adminName = admin ? decrypt(admin.name) : "Un administrateur";
+
+    // Notifier TOUS les participants (y compris le créateur)
+    for (const participantId of allParticipantIds) {
+      try {
+        // Push notification
+        await createNotification(
+          new mongoose.Types.ObjectId(participantId),
+          "sos_alert",
+          "🆘 Session SOS activée",
+          `Une session SOS a été activée pour vous par ${adminName}.`,
+          {
+            sosSessionId: session._id,
+          },
+        );
+
+        // WebSocket notification
+        webSocketService.sendNotificationToUser(participantId, {
+          type: "sos_session_activated_admin",
+          sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+          adminName,
+          adminId,
+          message: `Session SOS activée par ${adminName}`,
+        });
+
+        // Logger l'événement
+        await this.logEvent(
+          session._id as mongoose.Types.ObjectId,
+          participantId,
+          participantId === targetUserId ? "ACTIVATED" : "PARTICIPANT_ADDED",
+          {
+            triggeredBy: "admin",
+            adminId,
+            adminName,
+          },
+        );
+      } catch (error) {
+        sosLogger.error("Failed to notify participant of admin activation", {
+          participantId,
+          sessionId: session._id?.toString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_ACTIVATE_SESSION",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        targetUserId,
+        expectedDuration,
+        participantCount: allParticipantIds.length,
+        siteName,
+        zone,
+      },
+    });
+
+    sosLogger.info("Admin activated SOS session", {
+      sessionId: session._id?.toString(),
+      targetUserId,
+      adminId,
+      participantCount: allParticipantIds.length,
+    });
+
+    return session;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Confirmer la sécurité d'un utilisateur et résoudre sa session
+   * Similaire à adminCancelSession mais avec un type de résolution différent
+   */
+  async adminConfirmSafe(
+    sessionId: string,
+    adminId: string,
+    reason?: string,
+  ): Promise<ISosSession> {
+    const session = await SosSessionModel.findOne({
+      _id: new mongoose.Types.ObjectId(sessionId),
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    const now = new Date();
+    session.status = "RESOLVED";
+    session.resolvedAt = now;
+    session.resolvedBy = "ADMIN";
+
+    // Marquer tous les participants comme LEFT
+    session.participants.forEach((p) => {
+      if (p.status !== "LEFT") {
+        p.status = "LEFT";
+        p.leftAt = now;
+      }
+    });
+
+    await session.save();
+
+    // Notifier tous les participants que leur sécurité a été confirmée
+    for (const participant of session.participants) {
+      try {
+        webSocketService.sendNotificationToUser(participant.userId.toString(), {
+          type: "sos_confirmed_safe_admin",
+          sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+          message:
+            "Votre sécurité a été confirmée par un administrateur. Session terminée.",
+          reason,
+        });
+      } catch (error) {
+        sosLogger.error("Failed to notify participant of admin confirmation", {
+          participantId: participant.userId.toString(),
+          sessionId: session._id?.toString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Nettoyer les contacts temporaires
+    await this.cleanupSessionContacts(session._id.toString());
+
+    // Logger l'événement
+    await this.logEvent(
+      session._id as mongoose.Types.ObjectId,
+      session.userId.toString(),
+      "RESOLVED",
+      {
+        resolvedBy: "ADMIN_CONFIRM_SAFE",
+        adminId,
+        reason,
+      },
+    );
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_CONFIRM_SAFE",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        sessionUserId: session.userId,
+        reason,
+      },
+    });
+
+    sosLogger.info("Admin confirmed user safe", {
+      sessionId,
+      adminId,
+      reason,
+    });
+
+    return session;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Ajouter un participant à une session existante
+   */
+  async adminAddParticipant(
+    sessionId: string,
+    targetUserId: string,
+    adminId: string,
+  ): Promise<ISosSession> {
+    const session = await SosSessionModel.findOne({
+      _id: new mongoose.Types.ObjectId(sessionId),
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    // Vérifier que l'utilisateur cible existe
+    const targetUser = await UserModel.findById(targetUserId).lean();
+    if (!targetUser) {
+      throw new Error("USER_NOT_FOUND");
+    }
+
+    // Vérifier que l'utilisateur n'est pas déjà participant actif
+    const existingParticipant = session.participants.find(
+      (p) => p.userId.toString() === targetUserId && p.status !== "LEFT",
+    );
+
+    if (existingParticipant) {
+      throw new Error("ALREADY_PARTICIPANT");
+    }
+
+    // Vérifier que l'utilisateur n'a pas déjà une autre session active
+    const userActiveSession = await SosSessionModel.findOne({
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+      "participants.userId": new mongoose.Types.ObjectId(targetUserId),
+      "participants.status": { $ne: "LEFT" },
+    });
+
+    if (userActiveSession) {
+      throw new Error("USER_HAS_ACTIVE_SESSION");
+    }
+
+    const now = new Date();
+
+    // Ajouter le nouveau participant
+    const newParticipant: ISosParticipant = {
+      userId: new mongoose.Types.ObjectId(targetUserId),
+      joinedAt: now,
+      leftAt: null,
+      status: "ACTIVE" as SosParticipantStatus,
+      currentStage: -1,
+      stage0TriggeredAt: null,
+      stage1TriggeredAt: null,
+      stage2TriggeredAt: null,
+      lastHeartbeatAt: null,
+      lastKnownLat: session.lastKnownLat,
+      lastKnownLng: session.lastKnownLng,
+      lastKnownAccuracy: session.lastKnownAccuracy,
+      consecutiveHeartbeats: 0,
+      firstReconnectionAt: null,
+      surfaceDetectionSent: false,
+      reconnectionDetectionSent: false,
+    };
+
+    session.participants.push(newParticipant);
+    await session.save();
+
+    // Récupérer le nom de l'admin
+    const admin = await UserModel.findById(adminId).lean();
+    const adminName = admin ? decrypt(admin.name) : "Un administrateur";
+
+    // Notifier le nouveau participant
+    try {
+      // Push notification
+      await createNotification(
+        new mongoose.Types.ObjectId(targetUserId),
+        "sos_alert",
+        "🆘 Tu as été ajouté à une session SOS",
+        `${adminName} t'a ajouté à une session SOS.`,
+        {
+          sosSessionId: session._id,
+        },
+      );
+
+      // WebSocket notification
+      webSocketService.sendNotificationToUser(targetUserId, {
+        type: "sos_participant_added",
+        sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+        adminName,
+        adminId,
+        message: `Tu as été ajouté à une session SOS par ${adminName}`,
+      });
+
+      // Logger l'événement
+      await this.logEvent(
+        session._id as mongoose.Types.ObjectId,
+        targetUserId,
+        "PARTICIPANT_ADDED",
+        {
+          triggeredBy: "admin",
+          adminId,
+          adminName,
+        },
+      );
+    } catch (error) {
+      sosLogger.error("Failed to notify new participant", {
+        targetUserId,
+        sessionId: session._id?.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_ADD_PARTICIPANT",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        targetUserId,
+      },
+    });
+
+    sosLogger.info("Admin added participant to session", {
+      sessionId,
+      targetUserId,
+      adminId,
+    });
+
+    return session;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Retirer un participant d'une session
+   */
+  async adminRemoveParticipant(
+    sessionId: string,
+    targetUserId: string,
+    adminId: string,
+  ): Promise<ISosSession> {
+    const session = await SosSessionModel.findOne({
+      _id: new mongoose.Types.ObjectId(sessionId),
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    const participant = session.participants.find(
+      (p) => p.userId.toString() === targetUserId && p.status !== "LEFT",
+    );
+
+    if (!participant) {
+      throw new Error("PARTICIPANT_NOT_FOUND");
+    }
+
+    if (participant.status === "LEFT") {
+      throw new Error("PARTICIPANT_ALREADY_LEFT");
+    }
+
+    const now = new Date();
+
+    // Marquer le participant comme LEFT
+    participant.status = "LEFT";
+    participant.leftAt = now;
+
+    // Vérifier si c'était le dernier participant actif
+    const activeParticipants = session.participants.filter(
+      (p) => p.status !== "LEFT",
+    );
+
+    if (activeParticipants.length === 0) {
+      // Résoudre la session
+      session.status = "RESOLVED";
+      session.resolvedAt = now;
+      session.resolvedBy = "ADMIN";
+
+      await this.cleanupSessionContacts(session._id.toString());
+    }
+
+    await session.save();
+
+    // Récupérer le nom de l'admin
+    const admin = await UserModel.findById(adminId).lean();
+    const adminName = admin ? decrypt(admin.name) : "Un administrateur";
+
+    // Notifier le participant retiré
+    try {
+      webSocketService.sendNotificationToUser(targetUserId, {
+        type: "sos_participant_removed",
+        sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+        message: `Tu as été retiré de la session SOS par ${adminName}`,
+        adminName,
+        adminId,
+      });
+
+      // Logger l'événement
+      await this.logEvent(
+        session._id as mongoose.Types.ObjectId,
+        targetUserId,
+        "PARTICIPANT_LEFT",
+        {
+          triggeredBy: "admin",
+          adminId,
+          adminName,
+        },
+      );
+    } catch (error) {
+      sosLogger.error("Failed to notify removed participant", {
+        targetUserId,
+        sessionId: session._id?.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_REMOVE_PARTICIPANT",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        targetUserId,
+        sessionResolved: activeParticipants.length === 0,
+      },
+    });
+
+    sosLogger.info("Admin removed participant from session", {
+      sessionId,
+      targetUserId,
+      adminId,
+      sessionResolved: activeParticipants.length === 0,
+    });
+
+    return session;
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Déclencher l'envoi de SMS aux contacts d'urgence
+   * Envoie des SMS à tous les contacts d'urgence de tous les participants actifs
+   */
+  async adminTriggerSms(
+    sessionId: string,
+    adminId: string,
+  ): Promise<{ sent: number; failed: number }> {
+    const session = await SosSessionModel.findOne({
+      _id: new mongoose.Types.ObjectId(sessionId),
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    // Récupérer tous les participants actifs
+    const activeParticipants = session.participants.filter(
+      (p) => p.status !== "LEFT",
+    );
+
+    if (activeParticipants.length === 0) {
+      throw new Error("NO_ACTIVE_PARTICIPANTS");
+    }
+
+    const participantUserIds = activeParticipants.map((p) =>
+      p.userId.toString(),
+    );
+
+    // Récupérer TOUS les contacts d'urgence de tous les participants
+    const allContacts = await SosContactModel.find({
+      userId: {
+        $in: participantUserIds.map((id) => new mongoose.Types.ObjectId(id)),
+      },
+    }).lean();
+
+    if (allContacts.length === 0) {
+      throw new Error("NO_CONTACTS_FOUND");
+    }
+
+    let sent = 0;
+    let failed = 0;
+
+    // Envoyer un SMS à chaque contact
+    for (const contact of allContacts) {
+      try {
+        // Récupérer les infos du participant
+        const participantUser = await UserModel.findById(contact.userId).lean();
+        const participantName = participantUser
+          ? `${decrypt(participantUser.name)} ${decrypt(participantUser.surname)}`
+          : "Un utilisateur";
+
+        // Construire le message SMS
+        const locationStr =
+          session.lastKnownLat && session.lastKnownLng
+            ? `Localisation: https://maps.google.com/?q=${session.lastKnownLat},${session.lastKnownLng}`
+            : "Localisation non disponible";
+
+        const message = `🆘 ALERTE SOS - ${participantName} a besoin d'aide!\n${locationStr}\nSession: ${session._id}`;
+
+        // Envoyer le SMS via Vonage
+        await vonageService.sendSosAlert(
+          contact.name,
+          contact.phone,
+          participantName,
+          session.note || session.siteName,
+          session.lastKnownLat && session.lastKnownLng
+            ? { lat: session.lastKnownLat, lng: session.lastKnownLng }
+            : undefined,
+        );
+
+        sent++;
+
+        // Logger l'événement
+        await this.logEvent(
+          session._id as mongoose.Types.ObjectId,
+          contact.userId.toString(),
+          "SMS_SENT",
+          {
+            triggeredBy: "admin",
+            adminId,
+            contactName: contact.name,
+            contactPhone: "***", // Masquer le numéro dans les logs
+          },
+        );
+
+        sosLogger.info("Admin triggered SMS sent", {
+          sessionId: session._id?.toString(),
+          contactName: contact.name,
+          participantName,
+        });
+      } catch (error) {
+        failed++;
+        sosLogger.error("Failed to send admin triggered SMS", {
+          sessionId: session._id?.toString(),
+          contactId: contact._id?.toString(),
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+    }
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_TRIGGER_SMS",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        sent,
+        failed,
+        totalContacts: allContacts.length,
+      },
+    });
+
+    sosLogger.info("Admin triggered SMS sending completed", {
+      sessionId,
+      adminId,
+      sent,
+      failed,
+      total: allContacts.length,
+    });
+
+    return { sent, failed };
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Admin: Envoyer une notification personnalisée à un participant
+   */
+  async adminSendNotification(
+    sessionId: string,
+    targetUserId: string,
+    message: string,
+    adminId: string,
+  ): Promise<void> {
+    const session = await SosSessionModel.findOne({
+      _id: new mongoose.Types.ObjectId(sessionId),
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+    });
+
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND");
+    }
+
+    // Vérifier que l'utilisateur est bien participant
+    const participant = session.participants.find(
+      (p) => p.userId.toString() === targetUserId && p.status !== "LEFT",
+    );
+
+    if (!participant) {
+      throw new Error("PARTICIPANT_NOT_FOUND");
+    }
+
+    // Récupérer le nom de l'admin
+    const admin = await UserModel.findById(adminId).lean();
+    const adminName = admin ? decrypt(admin.name) : "Un administrateur";
+
+    // Envoyer push notification avec retry
+    await this.sendSosNotificationWithRetry({
+      userId: targetUserId,
+      title: "📢 Message de l'administrateur",
+      message: message,
+      type: "admin_notification",
+      data: {
+        sosSessionId: session._id,
+        adminId,
+        adminName,
+      },
+    });
+
+    // Envoyer via WebSocket (avec gestion d'erreur)
+    this.sendSosWebSocketNotification(
+      targetUserId,
+      {
+        type: "sos_admin_notification",
+        sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+        message: message,
+        adminName,
+        adminId,
+      },
+      { sessionId: sessionId, stage: -1 },
+    );
+
+    // Logger l'événement
+    await this.logEvent(
+      session._id as mongoose.Types.ObjectId,
+      targetUserId,
+      "NOTIFICATION_SENT",
+      {
+        adminId,
+        adminName,
+        message,
+      },
+    );
+
+    // Audit critique
+    await auditService.log({
+      userId: adminId,
+      action: "ADMIN_SOS_SEND_NOTIFICATION",
+      level: "critical",
+      details: {
+        sessionId: session._id,
+        targetUserId,
+        message,
+      },
+    });
+
+    sosLogger.info("Admin sent custom notification", {
+      sessionId,
+      targetUserId,
+      adminId,
+      message,
+    });
   }
 
   // ─── UTILITAIRES ───────────────────────────────────────────────────

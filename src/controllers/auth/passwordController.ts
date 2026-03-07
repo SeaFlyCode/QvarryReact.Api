@@ -67,7 +67,7 @@ export async function handleForgotPassword(req: Request, res: Response) {
     const userName = decrypt(user.name);
     const ipAddress = req.ip || req.connection.remoteAddress || "Inconnue";
     const deviceInfo = req.headers["user-agent"] || "Navigateur inconnu";
-    const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+    const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
     const resetLink = `${frontendUrl}/?reset=${encodeURIComponent(email)}`;
 
     // Envoyer l'email de réinitialisation

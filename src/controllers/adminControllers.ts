@@ -968,7 +968,7 @@ export async function resetUserPassword(req: Request, res: Response) {
     // Récupérer les infos pour l'email
     const userEmail = decrypt(user.email);
     const userName = decrypt(user.name);
-    const frontendUrl = process.env.FRONTEND_URL || "https://qvarry.com";
+    const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
     const resetLink = `${frontendUrl}/?reset=${encodeURIComponent(userEmail)}`;
 
     // Envoyer l'email de réinitialisation

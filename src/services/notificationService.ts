@@ -3,6 +3,8 @@ import NotificationModel, {
   INotification,
   NotificationType,
 } from "../models/notifications";
+import PushTokenModel from "../models/pushToken";
+import { getTokensByUserId, removeInvalidTokens } from "./pushTokenService";
 import { webSocketService } from "./webSocketService"; // Correction de l'import nommé
 import dataArchiveService from "./dataArchiveService";
 import { logger } from "./loggerService";
@@ -113,6 +115,7 @@ class NotificationService {
 
   /**
    * Envoie une notification push via Firebase Cloud Messaging
+   * Supporte le multi-appareils via la collection PushToken
    */
   static async sendPushNotification(
     userId: mongoose.Types.ObjectId | string,
@@ -135,13 +138,12 @@ class NotificationService {
     }
 
     try {
-      // Récupérer le token FCM de l'utilisateur
-      const User = mongoose.model("User");
-      const user = await User.findById(userId).select("fcmToken").lean();
+      // Récupérer tous les tokens FCM de l'utilisateur (multi-appareils)
+      const tokens = await getTokensByUserId(userIdStr);
 
-      if (!user || !(user as any).fcmToken) {
+      if (tokens.length === 0) {
         notifLogger.warn(
-          `[SOS-CRITICAL] Push notification could not be sent to user ${userIdStr} - FCM token not found`,
+          `[SOS-CRITICAL] Push notification could not be sent to user ${userIdStr} - No FCM tokens found`,
         );
         return {
           sent: false,
@@ -150,11 +152,9 @@ class NotificationService {
         };
       }
 
-      const fcmToken = (user as any).fcmToken;
-
-      // Construire le message FCM
-      const message = {
-        token: fcmToken,
+      // Construire les messages FCM pour chaque token/appareil
+      const messages = tokens.map((tokenDoc) => ({
+        token: tokenDoc.token,
         notification: {
           title,
           body,
@@ -163,60 +163,69 @@ class NotificationService {
           ...data,
           userId: userIdStr,
         },
-        android: {
-          priority: "high" as const,
-          notification: {
-            sound: "default",
-            priority: "high" as const,
-          },
-        },
-        apns: {
-          payload: {
-            aps: {
-              sound: "default",
-              contentAvailable: true,
-            },
-          },
-        },
-      };
+        ...(tokenDoc.platform === "android"
+          ? {
+              android: {
+                priority: "high" as const,
+                notification: {
+                  sound: "default",
+                  priority: "high" as const,
+                },
+              },
+            }
+          : {}),
+        ...(tokenDoc.platform === "ios"
+          ? {
+              apns: {
+                payload: {
+                  aps: {
+                    sound: "default",
+                    contentAvailable: true,
+                  },
+                },
+              },
+            }
+          : {}),
+      }));
 
-      // Envoyer le message
-      const response = await firebaseAdmin.messaging().send(message);
+      // Envoi batch via sendEach (sendAll est deprecated)
+      const response = await firebaseAdmin.messaging().sendEach(messages);
 
-      notifLogger.info("Notification push envoyée avec succès", {
+      // Gérer les tokens invalides
+      const tokensToDelete: string[] = [];
+      response.responses.forEach((resp: any, idx: number) => {
+        if (!resp.success) {
+          const errorCode = resp.error?.code;
+          if (
+            errorCode === "messaging/invalid-registration-token" ||
+            errorCode === "messaging/registration-token-not-registered"
+          ) {
+            tokensToDelete.push(tokens[idx].deviceId);
+          }
+        }
+      });
+
+      // Supprimer les tokens invalides de la collection PushToken
+      if (tokensToDelete.length > 0) {
+        await removeInvalidTokens(tokensToDelete);
+        notifLogger.warn("Tokens FCM invalides supprimés", {
+          userId: userIdStr,
+          count: tokensToDelete.length,
+        });
+      }
+
+      notifLogger.info("Notifications push envoyées", {
         userId: userIdStr,
-        messageId: response,
+        sent: response.successCount,
+        failed: response.failureCount,
+        totalDevices: tokens.length,
       });
 
       return {
-        sent: true,
+        sent: response.successCount > 0,
         method: "fcm",
       };
     } catch (error: any) {
-      // Gérer les tokens invalides
-      if (
-        error.code === "messaging/invalid-registration-token" ||
-        error.code === "messaging/registration-token-not-registered"
-      ) {
-        notifLogger.warn("Token FCM invalide ou expiré, suppression du token", {
-          userId: userIdStr,
-          error: error.code,
-        });
-
-        // Supprimer le token invalide
-        try {
-          const User = mongoose.model("User");
-          await User.updateOne({ _id: userId }, { $unset: { fcmToken: "" } });
-        } catch (updateError) {
-          notifLogger.error("Erreur lors de la suppression du token FCM", {
-            error:
-              updateError instanceof Error
-                ? updateError.message
-                : String(updateError),
-          });
-        }
-      }
-
       notifLogger.error("Erreur lors de l'envoi de la notification push", {
         userId: userIdStr,
         error: error.message,

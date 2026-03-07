@@ -38,6 +38,15 @@ import {
   handleAdminSosCancelSession,
   handleAdminSosHistory,
   handleAdminSosStats,
+  handleAdminSosHeartbeat,
+  handleAdminSosExtendSession,
+  handleAdminSosForceEscalation,
+  handleAdminSosActivateSession,
+  handleAdminSosConfirmSafe,
+  handleAdminSosAddParticipant,
+  handleAdminSosRemoveParticipant,
+  handleAdminSosTriggerSms,
+  handleAdminSosSendNotification,
 } from "../controllers/adminSosControllers";
 
 const router = Router();
@@ -118,5 +127,48 @@ router.post(
 );
 router.get("/sos/history", handleAdminSosHistory);
 router.get("/sos/stats", handleAdminSosStats);
+
+// ─── SOS MODE - ACTIONS ADMIN (DROIT ABSOLU) ────────────────────────────
+router.post(
+  "/sos/sessions/:sessionId/heartbeat",
+  validateObjectId("sessionId"),
+  handleAdminSosHeartbeat,
+);
+router.post(
+  "/sos/sessions/:sessionId/extend",
+  validateObjectId("sessionId"),
+  handleAdminSosExtendSession,
+);
+router.post(
+  "/sos/sessions/:sessionId/force-escalation",
+  validateObjectId("sessionId"),
+  handleAdminSosForceEscalation,
+);
+router.post("/sos/sessions/activate", handleAdminSosActivateSession);
+router.post(
+  "/sos/sessions/:sessionId/confirm-safe",
+  validateObjectId("sessionId"),
+  handleAdminSosConfirmSafe,
+);
+router.post(
+  "/sos/sessions/:sessionId/add-participant",
+  validateObjectId("sessionId"),
+  handleAdminSosAddParticipant,
+);
+router.post(
+  "/sos/sessions/:sessionId/remove-participant",
+  validateObjectId("sessionId"),
+  handleAdminSosRemoveParticipant,
+);
+router.post(
+  "/sos/sessions/:sessionId/trigger-sms",
+  validateObjectId("sessionId"),
+  handleAdminSosTriggerSms,
+);
+router.post(
+  "/sos/sessions/:sessionId/send-notification",
+  validateObjectId("sessionId"),
+  handleAdminSosSendNotification,
+);
 
 export default router;
