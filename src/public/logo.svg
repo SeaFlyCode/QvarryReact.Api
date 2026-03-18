@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200">
+
+<!-- cercle fond -->
+<circle cx="100" cy="100" r="95" fill="#ffffff" stroke="#2e7d32" stroke-width="8"/>
+
+<!-- carte -->
+<path d="M40 130 L80 115 L120 130 L160 115 L160 155 L120 170 L80 155 L40 170 Z"
+fill="#4CAF50"/>
+
+<!-- pin -->
+<path d="M100 35
+C75 35 55 55 55 80
+C55 110 100 145 100 145
+C100 145 145 110 145 80
+C145 55 125 35 100 35Z"
+fill="#8BC34A"/>
+
+<!-- trou du pin -->
+<circle cx="100" cy="80" r="12" fill="#ffffff"/>
+
+</svg>

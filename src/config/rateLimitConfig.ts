@@ -52,7 +52,6 @@ const config = {
     general: 300, // Routes générales
     highTraffic: 500, // Fiches, listes, points
     social: 100, // Contacts, messages, partages
-    wsConnection: 30, // Connexions WebSocket
     refreshToken: 10, // Refresh token
     admin: 60, // Routes admin
     security: 30, // Routes sécurité
@@ -217,28 +216,6 @@ export const socialLimiter = rateLimit({
   message: "Trop de requêtes, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
-});
-
-/**
- * Rate limiter pour les WebSocket (protection contre abus de connexions)
- */
-export const wsConnectionLimiter = rateLimit({
-  windowMs: 60 * 1000,
-  max: getLimit("wsConnection"),
-  message: "Trop de connexions WebSocket, veuillez réessayer plus tard.",
-  standardHeaders: true,
-  legacyHeaders: false,
-  skipSuccessfulRequests: false,
-  handler: (req, res) => {
-    rateLimitLogger.warn("WS rate limit dépassé", {
-      ip: anonymizeIp(req.ip || ""),
-    });
-    res.status(429).json({
-      error: "Trop de connexions WebSocket",
-      code: "WS_RATE_LIMIT_EXCEEDED",
-      retryAfter: 60,
-    });
-  },
 });
 
 /**

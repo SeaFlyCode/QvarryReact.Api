@@ -3,14 +3,13 @@ import { Server } from "http";
 import jwt from "jsonwebtoken";
 import url from "url";
 import {
-  sendMessage,
-  getMessages,
-  markMessageAsRead,
-  replyToMessage,
-  editMessage,
-  deleteMessage,
-} from "../controllers/messagesControllers";
-import { decrypt as decryptCommunication } from "../utils/communicationEncryptionUtils";
+  createMessageOp,
+  getMessagesOp,
+  markMessageAsReadOp,
+  replyToMessageOp,
+  editMessageOp,
+  deleteMessageOp,
+} from "./messageOperationsService";
 import ConversationModel from "../models/conversations";
 import { redisSessionService } from "./redisSessionService";
 import { logger } from "./loggerService";
@@ -96,16 +95,18 @@ async function checkConversationParticipation(
 
   // Nettoyer le cache si trop d'entrées
   if (conversationParticipationCache.size > MAX_CACHE_ENTRIES) {
-    const entriesToDelete =
-      conversationParticipationCache.size - MAX_CACHE_ENTRIES * 0.8;
-    let deleted = 0;
+    const target = Math.floor(MAX_CACHE_ENTRIES * 0.8);
+    // Phase 1 : supprimer les entrées expirées en priorité
     for (const [key, value] of conversationParticipationCache.entries()) {
-      if (deleted >= entriesToDelete) break;
-      // Supprimer les entrées expirées en priorité
+      if (conversationParticipationCache.size <= target) break;
       if (now - value.timestamp > PARTICIPATION_CACHE_TTL) {
         conversationParticipationCache.delete(key);
-        deleted++;
       }
+    }
+    // Phase 2 : si encore trop plein, supprimer les plus anciennes (LRU — Map préserve l'ordre d'insertion)
+    for (const [key] of conversationParticipationCache.entries()) {
+      if (conversationParticipationCache.size <= target) break;
+      conversationParticipationCache.delete(key);
     }
   }
 
@@ -140,7 +141,14 @@ const BLOCK_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_TRACKED_IPS = 10000; // CRIT-08: Limite du nombre d'IPs trackées pour éviter une fuite mémoire
 
 /**
- * Vérifie si une IP peut se connecter (rate limiting)
+ * Vérifie si une IP peut se connecter (rate limiting WebSocket natif).
+ *
+ * NOTE FIX-3 : Le middleware Express `wsConnectionLimiter` (express-rate-limit)
+ * a été supprimé car il était inefficace pour les WebSockets.
+ * Les upgrades WS sont traités via `server.on("upgrade")` AVANT le pipeline
+ * Express, donc un `app.use("/ws", wsConnectionLimiter)` n'interceptait jamais
+ * les connexions WS réelles. Le rate limiting WS est géré ici directement,
+ * au niveau du handler `server.on("upgrade")`.
  */
 function canConnect(ip: string): { allowed: boolean; reason?: string } {
   const now = new Date();
@@ -233,14 +241,35 @@ class WebSocketService {
   > = new Map(); // userId -> conversationId -> clients
 
   /**
+   * FIX-1: Helper sécurisé pour envoyer des messages aux clients WS
+   * Évite qu'une erreur sur un client crashe toute l'itération d'un broadcast
+   */
+  private safeSend(client: AuthenticatedWebSocket, payload: string): void {
+    try {
+      client.send(payload);
+    } catch (err) {
+      wsLogger.error("safeSend - échec envoi au client", {
+        userId: client.userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
    * Initialiser le serveur WebSocket
    */
   initialize(server: Server): void {
     // WebSocket pour les notifications (noServer: true pour gérer manuellement l'upgrade)
-    this.notificationsWss = new WebSocketServer({ noServer: true });
+    this.notificationsWss = new WebSocketServer({
+      noServer: true,
+      maxPayload: 64 * 1024,
+    });
 
     // WebSocket pour les messages
-    this.messagesWss = new WebSocketServer({ noServer: true });
+    this.messagesWss = new WebSocketServer({
+      noServer: true,
+      maxPayload: 64 * 1024,
+    });
 
     wsLogger.info("WebSocket Server initialized", {
       paths: ["/ws/notifications", "/ws/messages"],
@@ -361,100 +390,143 @@ class WebSocketService {
       client.isAlive = true;
     });
 
-    // Extraire le token du query string
-    const query = url.parse(request.url, true).query;
-    const token = query.token as string;
+    // FIX-7: Listener d'erreur pour éviter les uncaught exceptions sur le client
+    client.on("error", (err) => {
+      wsLogger.error("Notifications - Erreur client WebSocket", {
+        userId: client.userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
-    if (!token) {
-      wsLogger.error("Notifications - Connexion refusée : pas de token");
-      client.close(4001, "Authentication required");
-      return;
-    }
+    // FIX-2: Auth handshake via premier message applicatif (token JWT)
+    // Le token arrive dans le premier message { type: "auth", token: "..." }
+    // Timeout 5s → fermeture avec 4001 "Auth timeout"
+    const AUTH_TIMEOUT_MS = 5000;
+    const authTimeout = setTimeout(() => {
+      wsLogger.warn("Notifications - Auth timeout, fermeture", {
+        ip: anonymizeIp(ip),
+      });
+      client.close(4001, "Auth timeout");
+    }, AUTH_TIMEOUT_MS);
 
-    try {
-      // Vérifier le token JWT
-      if (!process.env.JWT_SECRET) {
-        wsLogger.error("SECURITY - JWT_SECRET non défini");
-        throw new Error("Configuration de sécurité manquante");
-      }
+    client.once("message", async (rawMsg: Buffer) => {
+      clearTimeout(authTimeout);
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET, {
-        algorithms: ["HS256"],
-      }) as {
-        id: string;
-        type?: string;
-        jti?: string;
-      };
-
-      // WS-008: Vérifier que le token est bien de type 'websocket'
-      if (decoded.type !== "websocket") {
-        wsLogger.error(
-          'Notifications - Token invalide: type attendu "websocket"',
-        );
-        client.close(4002, "Invalid token type");
+      let authData: any;
+      try {
+        authData = JSON.parse(rawMsg.toString());
+      } catch {
+        wsLogger.error("Notifications - Premier message non JSON");
+        client.close(4001, "Auth required");
         return;
       }
 
-      // AUTH-004 CORRIGÉ: Vérifier que le token est à usage unique
-      if (decoded.jti) {
-        const isTokenValid = await redisSessionService.consumeWsToken(
-          decoded.jti,
-        );
-        if (!isTokenValid) {
-          wsLogger.error("Notifications - Token déjà utilisé", {
-            jti: decoded.jti.substring(0, 8) + "...",
-          });
-          client.close(4003, "Token already used");
+      if (!authData || authData.type !== "auth" || !authData.token) {
+        wsLogger.error("Notifications - Premier message n'est pas un auth");
+        client.close(4001, "Auth required");
+        return;
+      }
+
+      const token: string = authData.token;
+
+      try {
+        // Vérifier le token JWT
+        if (!process.env.JWT_SECRET) {
+          wsLogger.error("SECURITY - JWT_SECRET non défini");
+          throw new Error("Configuration de sécurité manquante");
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+          algorithms: ["HS256"],
+        }) as {
+          id: string;
+          type?: string;
+          jti?: string;
+          wsType?: string;
+        };
+
+        // WS-008: Vérifier que le token est bien de type 'websocket'
+        if (decoded.type !== "websocket") {
+          wsLogger.error(
+            'Notifications - Token invalide: type attendu "websocket"',
+          );
+          client.close(4002, "Invalid token type");
           return;
         }
-        wsLogger.info("Notifications - Token à usage unique validé", {
-          jti: decoded.jti.substring(0, 8) + "...",
-        });
-      }
 
-      client.userId = decoded.id;
+        // Vérifier que le token est destiné aux notifications
+        if (decoded.wsType && decoded.wsType !== "notifications") {
+          wsLogger.error(
+            'Notifications - Token invalide: wsType attendu "notifications"',
+            {
+              wsType: decoded.wsType,
+            },
+          );
+          client.close(4002, "Invalid token type for this connection");
+          return;
+        }
 
-      // Ajouter le client à la map
-      if (!this.clients.has(client.userId)) {
-        this.clients.set(client.userId, new Set());
-      }
-      const userClientsSet = this.clients.get(client.userId);
-      if (userClientsSet) {
-        userClientsSet.add(client);
-      }
-
-      wsLogger.info("Notifications - Client connecté", {
-        userId: client.userId,
-      });
-
-      // Envoyer un message de confirmation
-      client.send(
-        JSON.stringify({
-          type: "connected",
-          message: "WebSocket notifications connecté avec succès",
-          userId: client.userId,
-        }),
-      );
-
-      // Gérer la fermeture
-      client.on("close", () => {
-        if (client.userId) {
-          const userClients = this.clients.get(client.userId);
-          if (userClients) {
-            userClients.delete(client);
-            if (userClients.size === 0) {
-              this.clients.delete(client.userId);
-            }
+        // AUTH-004 CORRIGÉ: Vérifier que le token est à usage unique
+        if (decoded.jti) {
+          const isTokenValid = await redisSessionService.consumeWsToken(
+            decoded.jti,
+          );
+          if (!isTokenValid) {
+            wsLogger.error("Notifications - Token déjà utilisé", {
+              jti: decoded.jti.substring(0, 8) + "...",
+            });
+            client.close(4003, "Token already used");
+            return;
           }
-          wsLogger.info("Notifications - Client déconnecté", {
-            userId: client.userId,
+          wsLogger.info("Notifications - Token à usage unique validé", {
+            jti: decoded.jti.substring(0, 8) + "...",
           });
         }
-      });
-    } catch (error) {
-      wsLogger.error("Notifications - Token invalide", { error });
-      client.close(4002, "Invalid token");
-    }
+
+        client.userId = decoded.id;
+
+        // Ajouter le client à la map
+        if (!this.clients.has(client.userId)) {
+          this.clients.set(client.userId, new Set());
+        }
+        const userClientsSet = this.clients.get(client.userId);
+        if (userClientsSet) {
+          userClientsSet.add(client);
+        }
+
+        wsLogger.info("Notifications - Client connecté", {
+          userId: client.userId,
+        });
+
+        // Envoyer un message de confirmation
+        client.send(
+          JSON.stringify({
+            type: "connected",
+            message: "WebSocket notifications connecté avec succès",
+            userId: client.userId,
+          }),
+        );
+
+        // Gérer la fermeture
+        client.on("close", () => {
+          if (client.userId) {
+            const userClients = this.clients.get(client.userId);
+            if (userClients) {
+              userClients.delete(client);
+              if (userClients.size === 0) {
+                this.clients.delete(client.userId);
+              }
+            }
+            wsLogger.info("Notifications - Client déconnecté", {
+              userId: client.userId,
+            });
+          }
+        });
+      } catch (error) {
+        wsLogger.error("Notifications - Token invalide", { error });
+        client.close(4002, "Invalid token");
+      }
+    });
   }
 
   /**
@@ -487,461 +559,501 @@ class WebSocketService {
       client.isAlive = true;
     });
 
-    // Extraire le token et les paramètres du query string
-    const query = url.parse(request.url, true).query;
-    const token = query.token as string;
-    const conversationId = query.conv as string;
-    const userId = query.user as string;
+    // FIX-7: Listener d'erreur pour éviter les uncaught exceptions sur le client
+    client.on("error", (err) => {
+      wsLogger.error("Messages - Erreur client WebSocket", {
+        userId: client.userId,
+        conversationId: client.conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    });
 
-    if (!token || !conversationId || !userId) {
-      wsLogger.error(
-        "Messages - Connexion refusée : paramètres manquants (token, conv, user)",
-      );
+    // FIX-2: conv reste en query string, user disparaît, token via premier message
+    const query = url.parse(request.url, true).query;
+    const conversationId = query.conv as string;
+
+    if (!conversationId) {
+      wsLogger.error("Messages - Connexion refusée : paramètre conv manquant");
       client.close(4001, "Missing parameters");
       return;
     }
 
-    try {
-      // Vérifier le token JWT
-      if (!process.env.JWT_SECRET) {
-        wsLogger.error("SECURITY - JWT_SECRET non défini");
-        throw new Error("Configuration de sécurité manquante");
-      }
+    // FIX-2: Auth handshake via premier message applicatif (token JWT)
+    // Timeout 5s → fermeture avec 4001 "Auth timeout"
+    const AUTH_TIMEOUT_MS = 5000;
+    const authTimeout = setTimeout(() => {
+      wsLogger.warn("Messages - Auth timeout, fermeture", {
+        ip: anonymizeIp(ip),
+      });
+      client.close(4001, "Auth timeout");
+    }, AUTH_TIMEOUT_MS);
 
-      const decoded = jwt.verify(token, process.env.JWT_SECRET, {
-        algorithms: ["HS256"],
-      }) as {
-        id: string;
-        type?: string;
-        jti?: string;
-      };
+    client.once("message", async (rawMsg: Buffer) => {
+      clearTimeout(authTimeout);
 
-      // WS-008: Vérifier que le token est bien de type 'websocket'
-      if (decoded.type !== "websocket") {
-        wsLogger.error('Messages - Token invalide: type attendu "websocket"');
-        client.close(4002, "Invalid token type");
+      let authData: any;
+      try {
+        authData = JSON.parse(rawMsg.toString());
+      } catch {
+        wsLogger.error("Messages - Premier message non JSON");
+        client.close(4001, "Auth required");
         return;
       }
 
-      // AUTH-004 CORRIGÉ: Vérifier que le token est à usage unique
-      if (decoded.jti) {
-        const isTokenValid = await redisSessionService.consumeWsToken(
-          decoded.jti,
-        );
-        if (!isTokenValid) {
-          wsLogger.error("Messages - Token déjà utilisé", {
-            jti: decoded.jti.substring(0, 8) + "...",
-          });
-          client.close(4003, "Token already used");
+      if (!authData || authData.type !== "auth" || !authData.token) {
+        wsLogger.error("Messages - Premier message n'est pas un auth");
+        client.close(4001, "Auth required");
+        return;
+      }
+
+      const token: string = authData.token;
+
+      try {
+        // Vérifier le token JWT
+        if (!process.env.JWT_SECRET) {
+          wsLogger.error("SECURITY - JWT_SECRET non défini");
+          throw new Error("Configuration de sécurité manquante");
+        }
+
+        const decoded = jwt.verify(token, process.env.JWT_SECRET, {
+          algorithms: ["HS256"],
+        }) as {
+          id: string;
+          type?: string;
+          jti?: string;
+          wsType?: string;
+        };
+
+        // WS-008: Vérifier que le token est bien de type 'websocket'
+        if (decoded.type !== "websocket") {
+          wsLogger.error('Messages - Token invalide: type attendu "websocket"');
+          client.close(4002, "Invalid token type");
           return;
         }
-        wsLogger.info("Messages - Token à usage unique validé", {
-          jti: decoded.jti.substring(0, 8) + "...",
-        });
-      }
 
-      // Vérifier que l'userId du token correspond à celui de la requête
-      if (decoded.id !== userId) {
-        wsLogger.error("Messages - Token/userId mismatch");
-        client.close(4002, "Token mismatch");
-        return;
-      }
-
-      client.userId = decoded.id;
-      client.conversationId = conversationId;
-
-      // WS-001: Vérifier que l'utilisateur est bien participant de la conversation
-      // Note: participants est un tableau de sous-documents avec userId, pas de simples ObjectIds
-      const conversation = await ConversationModel.findOne({
-        _id: conversationId,
-        "participants.userId": client.userId,
-      }).lean();
-
-      if (!conversation) {
-        wsLogger.error(
-          "Messages - Accès refusé: utilisateur n'est pas participant de la conversation",
-          {
-            userId: client.userId,
-            conversationId,
-          },
-        );
-        client.close(4003, "Not a participant");
-        return;
-      }
-
-      // Ajouter le client à la map des messages (par conversation)
-      if (!this.messageClients.has(client.userId)) {
-        this.messageClients.set(client.userId, new Map());
-      }
-      const userConversations = this.messageClients.get(client.userId);
-      if (userConversations) {
-        if (!userConversations.has(conversationId)) {
-          userConversations.set(conversationId, new Set());
-        }
-        const conversationClients = userConversations.get(conversationId);
-        if (conversationClients) {
-          conversationClients.add(client);
-        }
-      }
-
-      wsLogger.info("Messages - Client connecté", {
-        userId: client.userId,
-        conversationId,
-      });
-
-      // Envoyer un message de confirmation
-      client.send(
-        JSON.stringify({
-          type: "connected",
-          message: "WebSocket messages connecté avec succès",
-          userId: client.userId,
-          conversationId: conversationId,
-        }),
-      );
-
-      // Gérer les messages entrants
-      client.on("message", async (message: Buffer) => {
-        try {
-          // WS-003: Rate limiting par message
-          const now = Date.now();
-          if (
-            now - (client.messageCountResetTime || 0) >
-            MESSAGE_RATE_LIMIT_WINDOW_MS
-          ) {
-            client.messageCount = 0;
-            client.messageCountResetTime = now;
-          }
-
-          client.messageCount = (client.messageCount || 0) + 1;
-
-          if (client.messageCount > MAX_MESSAGES_PER_MINUTE) {
-            wsLogger.warn("Messages - Rate limit atteint", {
-              userId: client.userId,
-              messagesPerMin: client.messageCount,
-            });
-            client.send(
-              JSON.stringify({
-                type: "error",
-                code: "RATE_LIMIT_EXCEEDED",
-                message: "Trop de messages envoyés. Veuillez ralentir.",
-              }),
-            );
-            return;
-          }
-
-          // Limite de taille des messages (WS-005 préventif)
-          const MAX_MESSAGE_SIZE = 64 * 1024; // 64KB
-          if (message.length > MAX_MESSAGE_SIZE) {
-            wsLogger.warn("Messages - Message trop volumineux", {
-              userId: client.userId,
-              sizeBytes: message.length,
-            });
-            client.send(
-              JSON.stringify({
-                type: "error",
-                code: "MESSAGE_TOO_LARGE",
-                message: "Message trop volumineux",
-              }),
-            );
-            return;
-          }
-
-          let data: any;
-          try {
-            data = JSON.parse(message.toString());
-          } catch (_parseError) {
-            wsLogger.warn("Messages - JSON invalide", {
-              userId: client.userId,
-            });
-            client.send(
-              JSON.stringify({
-                type: "error",
-                code: "INVALID_JSON",
-                message: "Format JSON invalide",
-              }),
-            );
-            return;
-          }
-
-          // WS-006: Validation de schéma - types de message autorisés
-          const ALLOWED_MESSAGE_TYPES = [
-            "message",
-            "getMessages",
-            "markMessageAsRead",
-            "replyToMessage",
-            "editMessage",
-            "deleteMessage",
-          ];
-          if (
-            !data ||
-            typeof data !== "object" ||
-            !data.type ||
-            !ALLOWED_MESSAGE_TYPES.includes(data.type)
-          ) {
-            wsLogger.warn("Messages - Type de message invalide", {
-              userId: client.userId,
-              messageType: data?.type,
-            });
-            client.send(
-              JSON.stringify({
-                type: "error",
-                code: "INVALID_MESSAGE_TYPE",
-                message: "Type de message non supporté",
-              }),
-            );
-            return;
-          }
-
-          // WS-006: Validation des champs selon le type
-          if (
-            data.type === "message" &&
-            (!data.content ||
-              typeof data.content !== "string" ||
-              data.content.length > 10000)
-          ) {
-            client.send(
-              JSON.stringify({
-                type: "error",
-                code: "INVALID_CONTENT",
-                message: "Contenu du message invalide ou trop long",
-              }),
-            );
-            return;
-          }
-
-          // WS-001 CORRIGÉ + HIGH-6: Vérification de participation à CHAQUE message (avec cache)
-          // Cela empêche un utilisateur retiré d'une conversation de continuer à envoyer des messages
-          if (!client.userId) {
-            wsLogger.error("Messages - userId manquant");
-            client.close(4002, "Invalid session");
-            return;
-          }
-
-          const isParticipant = await checkConversationParticipation(
-            client.userId,
-            conversationId,
+        // Vérifier que le token est destiné aux messages
+        if (decoded.wsType && decoded.wsType !== "messages") {
+          wsLogger.error(
+            'Messages - Token invalide: wsType attendu "messages"',
+            {
+              wsType: decoded.wsType,
+            },
           );
+          client.close(4002, "Invalid token type for this connection");
+          return;
+        }
 
-          if (!isParticipant) {
-            wsLogger.warn(
-              "Messages - Accès révoqué: utilisateur n'est plus participant",
-              {
-                userId: client.userId,
-                conversationId,
-              },
-            );
-            client.send(
-              JSON.stringify({
-                type: "error",
-                code: "ACCESS_REVOKED",
-                message: "Vous n'êtes plus participant de cette conversation",
-              }),
-            );
-            // Fermer la connexion car l'utilisateur n'a plus accès
-            client.close(4003, "Access revoked");
+        // AUTH-004 CORRIGÉ: Vérifier que le token est à usage unique
+        if (decoded.jti) {
+          const isTokenValid = await redisSessionService.consumeWsToken(
+            decoded.jti,
+          );
+          if (!isTokenValid) {
+            wsLogger.error("Messages - Token déjà utilisé", {
+              jti: decoded.jti.substring(0, 8) + "...",
+            });
+            client.close(4003, "Token already used");
             return;
           }
-
-          wsLogger.info("Messages - Message reçu", {
-            userId: client.userId,
-            conversationId,
-            messageType: data.type,
+          wsLogger.info("Messages - Token à usage unique validé", {
+            jti: decoded.jti.substring(0, 8) + "...",
           });
-
-          // Utilisation de toute la logique du messagesController
-          if (data.type === "message") {
-            // Envoi d'un message
-            const fakeReq: any = {
-              user: { id: client.userId },
-              body: {
-                conversationId: conversationId,
-                content: data.content,
-                type: data.messageType || "text",
-                metadata: data.metadata || undefined,
-              },
-            };
-            const fakeRes: any = {
-              status: (code: number) => ({
-                json: (obj: any) => {
-                  if (code === 201 && obj.messageId) {
-                    // Récupérer le message complet depuis la base
-                    import("../models/messages").then(
-                      async ({ default: Message }) => {
-                        const fullMsg = await Message.findById(
-                          obj.messageId,
-                        ).lean();
-                        if (
-                          fullMsg &&
-                          typeof fullMsg === "object" &&
-                          "_id" in fullMsg
-                        ) {
-                          // S'assurer que le champ _id est bien présent et sous forme de string
-                          (fullMsg as any)._id = String((fullMsg as any)._id);
-                          // Déchiffrement du contenu avant envoi WebSocket
-                          if (fullMsg.content) {
-                            fullMsg.content = decryptCommunication(
-                              fullMsg.content,
-                            );
-                          }
-                          // Renommer le champ type du message pour éviter la collision
-                          const messageType = fullMsg.type;
-                          delete (fullMsg as any).type;
-                          this.broadcastToConversation(conversationId, {
-                            type: "new_message",
-                            messageType: messageType,
-                            ...fullMsg,
-                          });
-                        }
-                      },
-                    );
-                  } else {
-                    client.send(
-                      JSON.stringify({ type: "error", details: obj }),
-                    );
-                  }
-                },
-              }),
-            };
-            await sendMessage(fakeReq, fakeRes);
-          } else if (data.type === "getMessages") {
-            // Récupération des messages
-            const fakeReq: any = {
-              user: { id: client.userId },
-              params: { conversationId: conversationId },
-              query: data.query || {},
-            };
-            const fakeRes: any = {
-              status: (_code: number) => ({
-                json: (obj: any) => {
-                  client.send(JSON.stringify({ type: "messages", ...obj }));
-                },
-              }),
-            };
-            await getMessages(fakeReq, fakeRes);
-          } else if (data.type === "markMessageAsRead") {
-            // Marquer un message comme lu
-            const fakeReq: any = {
-              user: { id: client.userId },
-              body: {
-                messageId: data.messageId,
-                conversationId: conversationId,
-              },
-            };
-            const fakeRes: any = {
-              status: (_code: number) => ({
-                json: (obj: any) => {
-                  client.send(JSON.stringify({ type: "message_read", ...obj }));
-                },
-              }),
-            };
-            await markMessageAsRead(fakeReq, fakeRes);
-          } else if (data.type === "replyToMessage") {
-            // Répondre à un message
-            const fakeReq: any = {
-              user: { id: client.userId },
-              body: {
-                conversationId: conversationId,
-                messageId: data.messageId,
-                content: data.content,
-              },
-            };
-            const fakeRes: any = {
-              status: (_code: number) => ({
-                json: (obj: any) => {
-                  client.send(
-                    JSON.stringify({ type: "message_reply", ...obj }),
-                  );
-                },
-              }),
-            };
-            await replyToMessage(fakeReq, fakeRes);
-          } else if (data.type === "editMessage") {
-            // Modifier un message
-            const fakeReq: any = {
-              user: { id: client.userId },
-              body: {
-                messageId: data.messageId,
-                content: data.content,
-              },
-            };
-            const fakeRes: any = {
-              status: (_code: number) => ({
-                json: (obj: any) => {
-                  client.send(
-                    JSON.stringify({ type: "message_edited", ...obj }),
-                  );
-                },
-              }),
-            };
-            await editMessage(fakeReq, fakeRes);
-          } else if (data.type === "deleteMessage") {
-            // Supprimer un message
-            const fakeReq: any = {
-              user: { id: client.userId },
-              body: {
-                messageId: data.messageId,
-              },
-            };
-            const fakeRes: any = {
-              status: (_code: number) => ({
-                json: (obj: any) => {
-                  client.send(
-                    JSON.stringify({ type: "message_deleted", ...obj }),
-                  );
-                },
-              }),
-            };
-            await deleteMessage(fakeReq, fakeRes);
-          } else {
-            client.send(
-              JSON.stringify({
-                type: "error",
-                details: "Type de message non supporté",
-              }),
-            );
-          }
-        } catch (error) {
-          wsLogger.error("Messages - Erreur parsing message", { error });
         }
-      });
 
-      // Gérer la fermeture
-      client.on("close", () => {
-        if (client.userId) {
-          const userConversations = this.messageClients.get(client.userId);
-          if (userConversations) {
-            const conversationClients = userConversations.get(conversationId);
-            if (conversationClients) {
-              conversationClients.delete(client);
-              if (conversationClients.size === 0) {
-                userConversations.delete(conversationId);
+        client.userId = decoded.id;
+        client.conversationId = conversationId;
+
+        // WS-001: Vérifier que l'utilisateur est bien participant de la conversation
+        // Note: participants est un tableau de sous-documents avec userId, pas de simples ObjectIds
+        const conversation = await ConversationModel.findOne({
+          _id: conversationId,
+          "participants.userId": client.userId,
+        }).lean();
+
+        if (!conversation) {
+          wsLogger.error(
+            "Messages - Accès refusé: utilisateur n'est pas participant de la conversation",
+            {
+              userId: client.userId,
+              conversationId,
+            },
+          );
+          client.close(4003, "Not a participant");
+          return;
+        }
+
+        // Ajouter le client à la map des messages (par conversation)
+        if (!this.messageClients.has(client.userId)) {
+          this.messageClients.set(client.userId, new Map());
+        }
+        const userConversations = this.messageClients.get(client.userId);
+        if (userConversations) {
+          if (!userConversations.has(conversationId)) {
+            userConversations.set(conversationId, new Set());
+          }
+          const conversationClients = userConversations.get(conversationId);
+          if (conversationClients) {
+            conversationClients.add(client);
+          }
+        }
+
+        wsLogger.info("Messages - Client connecté", {
+          userId: client.userId,
+          conversationId,
+        });
+
+        // Envoyer un message de confirmation
+        client.send(
+          JSON.stringify({
+            type: "connected",
+            message: "WebSocket messages connecté avec succès",
+            userId: client.userId,
+            conversationId: conversationId,
+          }),
+        );
+
+        // Gérer les messages entrants
+        client.on("message", async (message: Buffer) => {
+          try {
+            // WS-003: Rate limiting par message
+            const now = Date.now();
+            if (
+              now - (client.messageCountResetTime || 0) >
+              MESSAGE_RATE_LIMIT_WINDOW_MS
+            ) {
+              client.messageCount = 0;
+              client.messageCountResetTime = now;
+            }
+
+            client.messageCount = (client.messageCount || 0) + 1;
+
+            if (client.messageCount > MAX_MESSAGES_PER_MINUTE) {
+              wsLogger.warn("Messages - Rate limit atteint", {
+                userId: client.userId,
+                messagesPerMin: client.messageCount,
+              });
+              client.send(
+                JSON.stringify({
+                  type: "error",
+                  code: "RATE_LIMIT_EXCEEDED",
+                  message: "Trop de messages envoyés. Veuillez ralentir.",
+                }),
+              );
+              return;
+            }
+
+            // Limite de taille des messages (WS-005 préventif)
+            const MAX_MESSAGE_SIZE = 64 * 1024; // 64KB
+            if (message.length > MAX_MESSAGE_SIZE) {
+              wsLogger.warn("Messages - Message trop volumineux", {
+                userId: client.userId,
+                sizeBytes: message.length,
+              });
+              client.send(
+                JSON.stringify({
+                  type: "error",
+                  code: "MESSAGE_TOO_LARGE",
+                  message: "Message trop volumineux",
+                }),
+              );
+              return;
+            }
+
+            let data: any;
+            try {
+              data = JSON.parse(message.toString());
+            } catch (_parseError) {
+              wsLogger.warn("Messages - JSON invalide", {
+                userId: client.userId,
+              });
+              client.send(
+                JSON.stringify({
+                  type: "error",
+                  code: "INVALID_JSON",
+                  message: "Format JSON invalide",
+                }),
+              );
+              return;
+            }
+
+            // WS-006: Validation de schéma - types de message autorisés
+            const ALLOWED_MESSAGE_TYPES = [
+              "message",
+              "getMessages",
+              "markMessageAsRead",
+              "replyToMessage",
+              "editMessage",
+              "deleteMessage",
+            ];
+            if (
+              !data ||
+              typeof data !== "object" ||
+              !data.type ||
+              !ALLOWED_MESSAGE_TYPES.includes(data.type)
+            ) {
+              wsLogger.warn("Messages - Type de message invalide", {
+                userId: client.userId,
+                messageType: data?.type,
+              });
+              client.send(
+                JSON.stringify({
+                  type: "error",
+                  code: "INVALID_MESSAGE_TYPE",
+                  message: "Type de message non supporté",
+                }),
+              );
+              return;
+            }
+
+            // WS-006: Validation des champs selon le type
+            if (
+              data.type === "message" &&
+              (!data.content ||
+                typeof data.content !== "string" ||
+                data.content.length > 10000)
+            ) {
+              client.send(
+                JSON.stringify({
+                  type: "error",
+                  code: "INVALID_CONTENT",
+                  message: "Contenu du message invalide ou trop long",
+                }),
+              );
+              return;
+            }
+
+            // WS-001 CORRIGÉ + HIGH-6: Vérification de participation à CHAQUE message (avec cache)
+            // Cela empêche un utilisateur retiré d'une conversation de continuer à envoyer des messages
+            if (!client.userId) {
+              wsLogger.error("Messages - userId manquant");
+              client.close(4002, "Invalid session");
+              return;
+            }
+
+            const isParticipant = await checkConversationParticipation(
+              client.userId,
+              conversationId,
+            );
+
+            if (!isParticipant) {
+              wsLogger.warn(
+                "Messages - Accès révoqué: utilisateur n'est plus participant",
+                {
+                  userId: client.userId,
+                  conversationId,
+                },
+              );
+              client.send(
+                JSON.stringify({
+                  type: "error",
+                  code: "ACCESS_REVOKED",
+                  message: "Vous n'êtes plus participant de cette conversation",
+                }),
+              );
+              // Fermer la connexion car l'utilisateur n'a plus accès
+              client.close(4003, "Access revoked");
+              return;
+            }
+
+            wsLogger.info("Messages - Message reçu", {
+              userId: client.userId,
+              conversationId,
+              messageType: data.type,
+            });
+
+            // FIX-4: Appels directs aux fonctions du service (suppression des fake req/res)
+            if (data.type === "message") {
+              // Envoi d'un message
+              try {
+                const result = await createMessageOp(
+                  client.userId,
+                  conversationId,
+                  data.content,
+                  data.messageType || "text",
+                  data.metadata || undefined,
+                );
+                // Le message retourné contient le content en clair — broadcast direct
+                const { type: msgType, ...msgWithoutType } = result.message;
+                this.broadcastToConversation(
+                  conversationId,
+                  {
+                    type: "new_message",
+                    messageType: msgType,
+                    ...msgWithoutType,
+                  },
+                  undefined,
+                  result.participantIds,
+                  result.message.content,
+                );
+              } catch (err) {
+                client.send(
+                  JSON.stringify({
+                    type: "error",
+                    details:
+                      err instanceof Error
+                        ? err.message
+                        : "Erreur envoi message",
+                  }),
+                );
+              }
+            } else if (data.type === "getMessages") {
+              // Récupération des messages
+              try {
+                const result = await getMessagesOp(
+                  client.userId,
+                  conversationId,
+                  data.query || {},
+                );
+                client.send(JSON.stringify({ type: "messages", ...result }));
+              } catch (err) {
+                client.send(
+                  JSON.stringify({
+                    type: "error",
+                    details:
+                      err instanceof Error
+                        ? err.message
+                        : "Erreur récupération messages",
+                  }),
+                );
+              }
+            } else if (data.type === "markMessageAsRead") {
+              // Marquer un message comme lu
+              try {
+                const result = await markMessageAsReadOp(
+                  client.userId,
+                  data.messageId,
+                  conversationId,
+                );
+                client.send(
+                  JSON.stringify({ type: "message_read", ...result }),
+                );
+              } catch (err) {
+                client.send(
+                  JSON.stringify({
+                    type: "error",
+                    details:
+                      err instanceof Error
+                        ? err.message
+                        : "Erreur marquage message lu",
+                  }),
+                );
+              }
+            } else if (data.type === "replyToMessage") {
+              // Répondre à un message
+              try {
+                await replyToMessageOp(
+                  client.userId,
+                  data.messageId,
+                  data.content,
+                );
+                client.send(
+                  JSON.stringify({ type: "message_reply", success: true }),
+                );
+              } catch (err) {
+                client.send(
+                  JSON.stringify({
+                    type: "error",
+                    details:
+                      err instanceof Error ? err.message : "Erreur réponse",
+                  }),
+                );
+              }
+            } else if (data.type === "editMessage") {
+              // Modifier un message
+              try {
+                await editMessageOp(
+                  client.userId,
+                  data.messageId,
+                  data.content,
+                );
+                client.send(
+                  JSON.stringify({ type: "message_edited", success: true }),
+                );
+              } catch (err) {
+                client.send(
+                  JSON.stringify({
+                    type: "error",
+                    details:
+                      err instanceof Error
+                        ? err.message
+                        : "Erreur modification message",
+                  }),
+                );
+              }
+            } else if (data.type === "deleteMessage") {
+              // Supprimer un message
+              try {
+                await deleteMessageOp(client.userId, data.messageId);
+                client.send(
+                  JSON.stringify({ type: "message_deleted", success: true }),
+                );
+              } catch (err) {
+                client.send(
+                  JSON.stringify({
+                    type: "error",
+                    details:
+                      err instanceof Error
+                        ? err.message
+                        : "Erreur suppression message",
+                  }),
+                );
+              }
+            } else {
+              client.send(
+                JSON.stringify({
+                  type: "error",
+                  details: "Type de message non supporté",
+                }),
+              );
+            }
+          } catch (error) {
+            wsLogger.error("Messages - Erreur parsing message", { error });
+          }
+        });
+
+        // Gérer la fermeture
+        client.on("close", () => {
+          if (client.userId) {
+            const userConversations = this.messageClients.get(client.userId);
+            if (userConversations) {
+              const conversationClients = userConversations.get(conversationId);
+              if (conversationClients) {
+                conversationClients.delete(client);
+                if (conversationClients.size === 0) {
+                  userConversations.delete(conversationId);
+                }
+              }
+              if (userConversations.size === 0) {
+                this.messageClients.delete(client.userId);
               }
             }
-            if (userConversations.size === 0) {
-              this.messageClients.delete(client.userId);
-            }
+            wsLogger.info("Messages - Client déconnecté", {
+              userId: client.userId,
+              conversationId,
+            });
           }
-          wsLogger.info("Messages - Client déconnecté", {
-            userId: client.userId,
-            conversationId,
-          });
-        }
-      });
-    } catch (error) {
-      wsLogger.error("Messages - Token invalide", { error });
-      client.close(4002, "Invalid token");
-    }
+        });
+      } catch (error) {
+        wsLogger.error("Messages - Token invalide", { error });
+        client.close(4002, "Invalid token");
+      }
+    });
   }
 
   /**
    * Diffuser un message à tous les participants d'une conversation
    * WS-002: Ne diffuse qu'aux clients qui ont été validés comme participants
    * lors de leur connexion (voir WS-001 dans handleMessageConnection)
+   *
+   * FIX-5: cachedParticipantIds et cachedSenderName optionnels pour éviter
+   * des requêtes MongoDB supplémentaires dans notifyConversationUpdate
    */
   private broadcastToConversation(
     conversationId: string,
     message: any,
     excludeUserId?: string,
+    cachedParticipantIds?: string[],
+    cachedSenderName?: string,
   ): void {
     let totalSent = 0;
     const notifiedUsers: string[] = [];
@@ -957,7 +1069,7 @@ class WebSocketService {
             client.readyState === WebSocket.OPEN &&
             client.conversationId === conversationId
           ) {
-            client.send(JSON.stringify(message));
+            this.safeSend(client, JSON.stringify(message));
             totalSent++;
             notifiedUsers.push(userId);
             wsLogger.info("Message broadcast to user in conversation", {
@@ -976,58 +1088,82 @@ class WebSocketService {
     // Notifier TOUS les participants de la conversation via le WebSocket de notifications
     // pour qu'ils puissent mettre à jour leur liste de conversations
     if (message.type === "new_message") {
-      this.notifyConversationUpdate(conversationId, message, excludeUserId);
+      this.notifyConversationUpdate(
+        conversationId,
+        message,
+        excludeUserId,
+        cachedParticipantIds,
+        cachedSenderName,
+      );
     }
   }
 
   /**
    * Notifier tous les participants d'une conversation qu'il y a eu une mise à jour
    * Utilisé pour mettre à jour la liste des conversations en temps réel
+   *
+   * FIX-5: cachedParticipantIds et cachedSenderName optionnels pour éviter
+   * 2 requêtes MongoDB par broadcast si les données sont déjà disponibles.
    */
   async notifyConversationUpdate(
     conversationId: string,
     message: any,
     excludeUserId?: string,
+    cachedParticipantIds?: string[],
+    cachedSenderName?: string,
   ): Promise<void> {
     try {
-      // Récupérer tous les participants de la conversation
-      const Conversation = (await import("../models/conversations")).default;
-      const conversation = await Conversation.findById(conversationId).lean();
+      let participantIds: string[];
+      let senderName: string;
 
-      if (!conversation) return;
+      if (cachedParticipantIds) {
+        // FIX-5: Utiliser les participantIds déjà disponibles (évite 1 requête MongoDB)
+        participantIds = cachedParticipantIds.filter(
+          (id) => id !== excludeUserId,
+        );
+      } else {
+        // Récupérer tous les participants de la conversation
+        const Conversation = (await import("../models/conversations")).default;
+        const conversation = await Conversation.findById(conversationId).lean();
+        if (!conversation) return;
+        participantIds = conversation.participants
+          .map((p: any) => p.userId.toString())
+          .filter((id: string) => id !== excludeUserId);
+      }
 
-      const participantIds = conversation.participants
-        .map((p: any) => p.userId.toString())
-        .filter((id: string) => id !== excludeUserId);
+      if (cachedSenderName !== undefined) {
+        // FIX-5: Utiliser le nom d'expéditeur déjà disponible (évite 1 requête MongoDB)
+        senderName = cachedSenderName;
+      } else {
+        // Récupérer le nom d'affichage de l'expéditeur
+        senderName = "Un utilisateur";
+        if (message.senderId) {
+          try {
+            const { decrypt } = await import("../utils/masterEncryptionUtils");
+            const User = (await import("../models/users")).default;
+            const sender = await User.findById(message.senderId)
+              .select("name surname pseudo showPseudo")
+              .lean();
 
-      // Récupérer le nom d'affichage de l'expéditeur
-      let senderName = "Un utilisateur";
-      if (message.senderId) {
-        try {
-          const { decrypt } = await import("../utils/masterEncryptionUtils");
-          const User = (await import("../models/users")).default;
-          const sender = await User.findById(message.senderId)
-            .select("name surname pseudo showPseudo")
-            .lean();
-
-          if (sender) {
-            // Si showPseudo est activé et pseudo existe, utiliser le pseudo
-            if ((sender as any).showPseudo && (sender as any).pseudo) {
-              try {
-                senderName = decrypt((sender as any).pseudo);
-              } catch {
-                // Fallback sur le prénom
+            if (sender) {
+              // Si showPseudo est activé et pseudo existe, utiliser le pseudo
+              if ((sender as any).showPseudo && (sender as any).pseudo) {
+                try {
+                  senderName = decrypt((sender as any).pseudo);
+                } catch {
+                  // Fallback sur le prénom
+                  senderName = decrypt((sender as any).name);
+                }
+              } else {
+                // Utiliser le prénom
                 senderName = decrypt((sender as any).name);
               }
-            } else {
-              // Utiliser le prénom
-              senderName = decrypt((sender as any).name);
             }
+          } catch (e) {
+            wsLogger.error("Failed to retrieve sender name", {
+              error: e instanceof Error ? e.message : String(e),
+            });
           }
-        } catch (e) {
-          wsLogger.error("Failed to retrieve sender name", {
-            error: e instanceof Error ? e.message : String(e),
-          });
         }
       }
 
@@ -1059,7 +1195,7 @@ class WebSocketService {
 
         userClients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
-            client.send(updateMessage);
+            this.safeSend(client, updateMessage);
             wsLogger.info("Conversation update sent to user", { userId });
           }
         });
@@ -1107,7 +1243,7 @@ class WebSocketService {
 
     conversationClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(messageStr);
+        this.safeSend(client, messageStr);
         wsLogger.info("Message sent to user in conversation", {
           userId,
           conversationId,
@@ -1134,7 +1270,7 @@ class WebSocketService {
 
     userClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
+        this.safeSend(client, message);
         wsLogger.info("Notification sent to user", { userId });
       }
     });
@@ -1155,7 +1291,12 @@ class WebSocketService {
    */
   notifySyncUpdate(
     userId: string,
-    changes: { points: number; fiches: number; lists: number },
+    changes: {
+      points: number;
+      fiches: number;
+      lists: number;
+      sosContacts: number;
+    },
   ): void {
     const userClients = this.clients.get(userId);
 
@@ -1175,6 +1316,7 @@ class WebSocketService {
           points: changes.points,
           fiches: changes.fiches,
           lists: changes.lists,
+          sosContacts: changes.sosContacts,
         },
         timestamp: new Date().toISOString(),
       },
@@ -1182,7 +1324,7 @@ class WebSocketService {
 
     userClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
+        this.safeSend(client, message);
       }
     });
 
@@ -1191,6 +1333,7 @@ class WebSocketService {
       points: changes.points,
       fiches: changes.fiches,
       lists: changes.lists,
+      sosContacts: changes.sosContacts,
     });
   }
 
@@ -1238,7 +1381,7 @@ class WebSocketService {
 
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(message);
+          this.safeSend(client, message);
           wsLogger.info("Message read notification sent", { userId });
         }
       });
@@ -1356,7 +1499,7 @@ class WebSocketService {
 
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(message);
+          this.safeSend(client, message);
           wsLogger.info("New conversation notification sent", { userId });
         }
       });
@@ -1392,7 +1535,7 @@ class WebSocketService {
 
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(message);
+          this.safeSend(client, message);
           wsLogger.info("Group deleted notification sent", { userId: odId });
         }
       });
@@ -1430,7 +1573,7 @@ class WebSocketService {
 
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(message);
+          this.safeSend(client, message);
           wsLogger.info("Group update notification sent", {
             userId: odId,
             updateType,
@@ -1463,7 +1606,8 @@ class WebSocketService {
         conversationClients.forEach((client) => {
           if (client.readyState === WebSocket.OPEN) {
             // Envoyer un message d'erreur avant de fermer
-            client.send(
+            this.safeSend(
+              client,
               JSON.stringify({
                 type: "error",
                 code: "ACCESS_REVOKED",
@@ -1502,12 +1646,34 @@ class WebSocketService {
 
     userClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
-        client.send(message);
+        this.safeSend(client, message);
         wsLogger.info("Member removed notification sent", {
           userId: removedUserId,
         });
       }
     });
+  }
+
+  /**
+   * Diffuser un nouveau message à tous les clients WebSocket d'une conversation.
+   * Appelé depuis le contrôleur REST (envoi mobile) pour notifier l'IHM web en temps réel.
+   * Reproduit exactement le comportement du handler WS interne.
+   *
+   * @param conversationId - ID de la conversation
+   * @param message        - Objet message déchiffré (content en clair)
+   * @param senderUserId   - ID de l'expéditeur (exclu du broadcast WS messages
+   *                         car il a déjà le message côté client)
+   */
+  broadcastNewMessage(
+    conversationId: string,
+    message: any,
+    senderUserId: string,
+  ): void {
+    this.broadcastToConversation(
+      conversationId,
+      { type: "new_message", ...message },
+      senderUserId,
+    );
   }
 
   /**
@@ -1538,7 +1704,7 @@ class WebSocketService {
 
       userClients.forEach((client) => {
         if (client.readyState === WebSocket.OPEN) {
-          client.send(message);
+          this.safeSend(client, message);
           wsLogger.info("Group name change notification sent", {
             userId: odId,
           });

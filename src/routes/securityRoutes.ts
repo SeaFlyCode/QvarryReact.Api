@@ -1,7 +1,6 @@
 // server/src/routes/securityRoutes.ts
 import express from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
-import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 import {
   getUserSessions,
   revokeSession,
@@ -18,7 +17,17 @@ router.use(authMiddleware);
 router.get("/sessions", getUserSessions);
 
 // DELETE /api/security/sessions/:tokenId - Révoquer une session spécifique
-router.delete("/sessions/:tokenId", validateObjectId("tokenId"), revokeSession);
+router.delete(
+  "/sessions/:tokenId",
+  (req, res, next) => {
+    const tokenId = req.params.tokenId;
+    if (!tokenId || !/^[a-f0-9]{32}$/.test(tokenId)) {
+      return res.status(400).json({ error: "ID de session invalide" });
+    }
+    next();
+  },
+  revokeSession,
+);
 
 // POST /api/security/sessions/revoke-all - Révoquer toutes les autres sessions
 router.post("/sessions/revoke-all", revokeAllOtherSessions);

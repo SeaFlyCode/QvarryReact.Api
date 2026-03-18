@@ -1,8 +1,3 @@
-/**
- * Tests unitaires pour websocketController
- * Teste la génération de tokens WebSocket temporaires
- */
-
 jest.mock("jsonwebtoken");
 jest.mock("crypto");
 
@@ -21,16 +16,22 @@ describe("websocketController", () => {
       req = mockRequest();
       res = mockResponse();
 
-      // Mock crypto.randomBytes pour JTI
-      (crypto.randomBytes as jest.Mock).mockReturnValue({
-        toString: jest.fn().mockReturnValue("a1b2c3d4e5f6g7h8"),
-      });
+      // Mock crypto.randomBytes — appelé 2 fois par requête (un JTI par token)
+      (crypto.randomBytes as jest.Mock)
+        .mockReturnValueOnce({
+          toString: jest.fn().mockReturnValue("notifications-jti-1"),
+        })
+        .mockReturnValueOnce({
+          toString: jest.fn().mockReturnValue("messages-jti-1"),
+        });
 
-      // Mock jwt.sign
-      (jwt.sign as jest.Mock).mockReturnValue("ws-token-mock-12345");
+      // Mock jwt.sign — appelé 2 fois par requête
+      (jwt.sign as jest.Mock)
+        .mockReturnValueOnce("ws-notifications-token-mock")
+        .mockReturnValueOnce("ws-messages-token-mock");
     });
 
-    it("devrait générer un token WebSocket avec succès", () => {
+    it("devrait générer deux tokens WebSocket avec succès", () => {
       req.user = {
         id: "507f1f77bcf86cd799439011",
         isAdmin: false,
@@ -38,12 +39,32 @@ describe("websocketController", () => {
 
       getWebSocketToken(req as Request, res as Response);
 
-      expect(jwt.sign).toHaveBeenCalledWith(
+      // Vérifier que jwt.sign a été appelé 2 fois
+      expect(jwt.sign).toHaveBeenCalledTimes(2);
+
+      // Token notifications
+      expect(jwt.sign).toHaveBeenNthCalledWith(
+        1,
         {
           id: "507f1f77bcf86cd799439011",
           type: "websocket",
           isAdmin: false,
-          jti: "a1b2c3d4e5f6g7h8",
+          jti: "notifications-jti-1",
+          wsType: "notifications",
+        },
+        process.env.JWT_SECRET,
+        { expiresIn: "5m" },
+      );
+
+      // Token messages
+      expect(jwt.sign).toHaveBeenNthCalledWith(
+        2,
+        {
+          id: "507f1f77bcf86cd799439011",
+          type: "websocket",
+          isAdmin: false,
+          jti: "messages-jti-1",
+          wsType: "messages",
         },
         process.env.JWT_SECRET,
         { expiresIn: "5m" },
@@ -51,12 +72,13 @@ describe("websocketController", () => {
 
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith({
-        token: "ws-token-mock-12345",
+        notificationsToken: "ws-notifications-token-mock",
+        messagesToken: "ws-messages-token-mock",
         expiresIn: 300,
       });
     });
 
-    it("devrait générer un token WebSocket pour un admin", () => {
+    it("devrait générer des tokens pour un admin", () => {
       req.user = {
         id: "admin123",
         isAdmin: true,
@@ -64,11 +86,25 @@ describe("websocketController", () => {
 
       getWebSocketToken(req as Request, res as Response);
 
-      expect(jwt.sign).toHaveBeenCalledWith(
+      expect(jwt.sign).toHaveBeenCalledTimes(2);
+      expect(jwt.sign).toHaveBeenNthCalledWith(
+        1,
         expect.objectContaining({
           id: "admin123",
           type: "websocket",
           isAdmin: true,
+          wsType: "notifications",
+        }),
+        process.env.JWT_SECRET,
+        { expiresIn: "5m" },
+      );
+      expect(jwt.sign).toHaveBeenNthCalledWith(
+        2,
+        expect.objectContaining({
+          id: "admin123",
+          type: "websocket",
+          isAdmin: true,
+          wsType: "messages",
         }),
         process.env.JWT_SECRET,
         { expiresIn: "5m" },
@@ -83,9 +119,7 @@ describe("websocketController", () => {
       getWebSocketToken(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(401);
-      expect(res.json).toHaveBeenCalledWith({
-        error: "Non authentifié",
-      });
+      expect(res.json).toHaveBeenCalledWith({ error: "Non authentifié" });
       expect(jwt.sign).not.toHaveBeenCalled();
     });
 
@@ -95,9 +129,7 @@ describe("websocketController", () => {
       getWebSocketToken(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(401);
-      expect(res.json).toHaveBeenCalledWith({
-        error: "Non authentifié",
-      });
+      expect(res.json).toHaveBeenCalledWith({ error: "Non authentifié" });
     });
 
     it("devrait gérer l'absence de JWT_SECRET", () => {
@@ -117,6 +149,8 @@ describe("websocketController", () => {
 
     it("devrait gérer les erreurs de jwt.sign", () => {
       req.user = { id: "user123" };
+      // Réinitialiser pour écraser les mockReturnValueOnce du beforeEach
+      (jwt.sign as jest.Mock).mockReset();
       (jwt.sign as jest.Mock).mockImplementation(() => {
         throw new Error("JWT Error");
       });
@@ -129,32 +163,14 @@ describe("websocketController", () => {
       });
     });
 
-    it("devrait générer un JTI unique pour chaque token", () => {
+    it("devrait générer des JTI uniques pour chaque paire de tokens", () => {
       req.user = { id: "user123" };
 
-      (crypto.randomBytes as jest.Mock)
-        .mockReturnValueOnce({
-          toString: jest.fn().mockReturnValue("jti-1"),
-        })
-        .mockReturnValueOnce({
-          toString: jest.fn().mockReturnValue("jti-2"),
-        });
-
       getWebSocketToken(req as Request, res as Response);
-      expect(jwt.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ jti: "jti-1" }),
-        expect.any(String),
-        expect.any(Object),
-      );
 
-      jest.clearAllMocks();
-
-      getWebSocketToken(req as Request, res as Response);
-      expect(jwt.sign).toHaveBeenCalledWith(
-        expect.objectContaining({ jti: "jti-2" }),
-        expect.any(String),
-        expect.any(Object),
-      );
+      // crypto.randomBytes appelé 2 fois (un par token)
+      expect(crypto.randomBytes).toHaveBeenCalledTimes(2);
+      expect(crypto.randomBytes).toHaveBeenCalledWith(16);
     });
 
     it("devrait définir isAdmin à false par défaut", () => {
@@ -162,7 +178,14 @@ describe("websocketController", () => {
 
       getWebSocketToken(req as Request, res as Response);
 
-      expect(jwt.sign).toHaveBeenCalledWith(
+      expect(jwt.sign).toHaveBeenNthCalledWith(
+        1,
+        expect.objectContaining({ isAdmin: false }),
+        expect.any(String),
+        expect.any(Object),
+      );
+      expect(jwt.sign).toHaveBeenNthCalledWith(
+        2,
         expect.objectContaining({ isAdmin: false }),
         expect.any(String),
         expect.any(Object),

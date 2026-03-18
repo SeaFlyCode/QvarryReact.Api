@@ -193,20 +193,26 @@ class RefreshTokenService {
   /**
    * Révoquer un refresh token
    */
-  async revokeToken(tokenId: string, reason: string = "used"): Promise<void> {
+  async revokeToken(
+    tokenId: string,
+    reason: string = "used",
+    userId?: string,
+  ): Promise<boolean> {
     // Si c'est une rotation (used), on ne révoque pas - on va mettre à jour le hash
     if (reason === "used") {
-      return; // La rotation est gérée par rotateToken()
+      return true; // La rotation est gérée par rotateToken()
     }
 
-    const result = await RefreshTokenModel.updateOne(
-      { tokenId },
-      {
-        revoked: true,
-        revokedAt: new Date(),
-        revokedReason: reason,
-      },
-    );
+    const filter: any = { tokenId };
+    if (userId) {
+      filter.userId = userId;
+    }
+
+    const result = await RefreshTokenModel.updateOne(filter, {
+      revoked: true,
+      revokedAt: new Date(),
+      revokedReason: reason,
+    });
 
     if (result.modifiedCount > 0) {
       await auditService.log({
@@ -214,7 +220,10 @@ class RefreshTokenService {
         level: "info",
         details: { tokenId, reason },
       });
+      return true;
     }
+
+    return false;
   }
 
   /**

@@ -227,10 +227,14 @@ export async function handleMobileSyncPush(req: Request, res: Response) {
         const syncedLists = result.synced.filter(
           (c) => c.type === "list",
         ).length;
+        const syncedSosContacts = result.synced.filter(
+          (c) => c.type === "sosContact",
+        ).length;
         webSocketService.notifySyncUpdate(userId, {
           points: syncedPoints,
           fiches: syncedFiches,
           lists: syncedLists,
+          sosContacts: syncedSosContacts,
         });
       } catch (wsError) {
         mobileSyncCtrlLogger.warn(
@@ -374,34 +378,19 @@ export async function handleMobileSyncStatus(req: Request, res: Response) {
       });
     }
 
-    // Compter rapidement les changements sans charger toutes les données
-    const result = await mobileSyncService.getIncrementalChanges(
-      userId,
-      sinceDate,
-    );
+    // Comptage optimisé sans charger les données
+    const counts = await mobileSyncService.countChanges(userId, sinceDate);
 
     res.status(200).json({
       success: true,
-      hasChanges: result.totalChanges > 0,
-      changeCount: result.totalChanges,
-      lastSyncDate: result.lastSyncDate,
+      hasChanges: counts.total > 0,
+      changeCount: counts.total,
+      lastSyncDate: new Date().toISOString(),
       breakdown: {
-        points:
-          result.points.created.length +
-          result.points.updated.length +
-          result.points.deleted.length,
-        fiches:
-          result.fiches.created.length +
-          result.fiches.updated.length +
-          result.fiches.deleted.length,
-        lists:
-          result.lists.created.length +
-          result.lists.updated.length +
-          result.lists.deleted.length,
-        sosContacts:
-          result.sosContacts.created.length +
-          result.sosContacts.updated.length +
-          result.sosContacts.deleted.length,
+        points: counts.points,
+        fiches: counts.fiches,
+        lists: counts.lists,
+        sosContacts: counts.sosContacts,
       },
     });
   } catch (error) {

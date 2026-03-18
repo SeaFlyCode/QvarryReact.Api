@@ -70,7 +70,15 @@ export async function revokeSession(req: Request, res: Response) {
       });
     }
 
-    await refreshTokenService.revokeToken(tokenId, "user_revoked");
+    const revoked = await refreshTokenService.revokeToken(
+      tokenId,
+      "user_revoked",
+      userId,
+    );
+
+    if (!revoked) {
+      return res.status(404).json({ error: "Session non trouvée" });
+    }
 
     await auditService.log({
       userId,

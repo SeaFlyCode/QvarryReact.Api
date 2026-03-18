@@ -49,6 +49,15 @@ jest.mock("../../controllers/adminSosControllers", () => ({
   handleAdminSosCancelSession: jest.fn(),
   handleAdminSosHistory: jest.fn(),
   handleAdminSosStats: jest.fn(),
+  handleAdminSosHeartbeat: jest.fn(),
+  handleAdminSosExtendSession: jest.fn(),
+  handleAdminSosForceEscalation: jest.fn(),
+  handleAdminSosActivateSession: jest.fn(),
+  handleAdminSosConfirmSafe: jest.fn(),
+  handleAdminSosAddParticipant: jest.fn(),
+  handleAdminSosRemoveParticipant: jest.fn(),
+  handleAdminSosTriggerSms: jest.fn(),
+  handleAdminSosSendNotification: jest.fn(),
 }));
 
 import router from "../../routes/adminRoutes";
@@ -79,7 +88,7 @@ describe("adminRoutes", () => {
 
   it("should have the correct number of routes", () => {
     const routes = getRoutes();
-    expect(routes.length).toBe(30);
+    expect(routes.length).toBe(39);
   });
 
   // STATISTIQUES

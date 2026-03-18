@@ -11,7 +11,7 @@ import AuditLogModel from "../models/auditLogs";
 import { auditService } from "../services/auditService";
 import { securityAlertService } from "../services/securityAlertService";
 import { refreshTokenService } from "../services/refreshTokenService";
-import { decrypt } from "../utils/masterEncryptionUtils";
+import { decrypt, hashEmail } from "../utils/masterEncryptionUtils";
 import { maskEmail } from "../utils/logUtils";
 import mongoose from "mongoose";
 import { logger } from "../services/loggerService";
@@ -293,7 +293,10 @@ async function computeGlobalStats() {
  */
 export async function getRegistrationStats(req: Request, res: Response) {
   try {
-    const days = parseInt(req.query.days as string) || 30;
+    const days = Math.min(
+      Math.max(parseInt(req.query.days as string) || 30, 1),
+      365,
+    );
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     startDate.setHours(0, 0, 0, 0);
@@ -349,7 +352,10 @@ export async function getRegistrationStats(req: Request, res: Response) {
  */
 export async function getActivityStats(req: Request, res: Response) {
   try {
-    const days = parseInt(req.query.days as string) || 30;
+    const days = Math.min(
+      Math.max(parseInt(req.query.days as string) || 30, 1),
+      365,
+    );
     const startDate = new Date();
     startDate.setDate(startDate.getDate() - days);
     startDate.setHours(0, 0, 0, 0);
@@ -997,7 +1003,7 @@ export async function resetUserPassword(req: Request, res: Response) {
       userAgent: req.get("user-agent"),
       details: {
         targetUserId: userId,
-        targetUserEmail: userEmail,
+        targetUserEmailHash: hashEmail(userEmail),
       },
     });
 
@@ -1689,7 +1695,11 @@ export async function rejectUser(req: Request, res: Response) {
       level: "warning",
       ipAddress: req.ip,
       userAgent: req.get("user-agent"),
-      details: { rejectedUserId: userId, rejectedUserEmail: userEmail, reason },
+      details: {
+        rejectedUserId: userId,
+        rejectedUserEmailHash: hashEmail(userEmail),
+        reason,
+      },
     });
 
     adminLogger.info("[ADMIN] Utilisateur refusé", {

@@ -1148,12 +1148,62 @@ describe("SosService", () => {
   });
 
   describe("deleteContact", () => {
-    it("should delete a contact", async () => {
-      const mockDeleteResult = { deletedCount: 1 };
+    it("should soft-delete a permanent contact", async () => {
+      const mockContact = {
+        _id: mockContactId,
+        userId: mockUserId,
+        version: 1,
+        // No sessionId → permanent contact
+      };
 
+      (SosContactModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockContact);
+      (SosContactModel.findOneAndUpdate as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue({
+          ...mockContact,
+          deletedAt: new Date(),
+          version: 2,
+        });
+
+      const result = await sosService.deleteContact(mockUserId, mockContactId);
+
+      expect(result).toBe(true);
+      expect(SosContactModel.findOne).toHaveBeenCalledWith({
+        _id: expect.any(mongoose.Types.ObjectId),
+        userId: expect.any(mongoose.Types.ObjectId),
+      });
+      expect(SosContactModel.findOneAndUpdate).toHaveBeenCalledWith(
+        {
+          _id: expect.any(mongoose.Types.ObjectId),
+          userId: expect.any(mongoose.Types.ObjectId),
+          sessionId: { $exists: false },
+        },
+        {
+          $set: {
+            deletedAt: expect.any(Date),
+            version: 2,
+          },
+        },
+        { new: true },
+      );
+    });
+
+    it("should hard-delete a temporary (session) contact", async () => {
+      const mockContact = {
+        _id: mockContactId,
+        userId: mockUserId,
+        sessionId: "session-123",
+        version: 1,
+      };
+
+      (SosContactModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockContact);
       (SosContactModel.deleteOne as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(mockDeleteResult);
+        .mockResolvedValue({ deletedCount: 1 });
 
       const result = await sosService.deleteContact(mockUserId, mockContactId);
 
@@ -1165,11 +1215,9 @@ describe("SosService", () => {
     });
 
     it("should return false if contact not found", async () => {
-      const mockDeleteResult = { deletedCount: 0 };
-
-      (SosContactModel.deleteOne as jest.Mock) = jest
+      (SosContactModel.findOne as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(mockDeleteResult);
+        .mockResolvedValue(null);
 
       const result = await sosService.deleteContact(mockUserId, mockContactId);
 

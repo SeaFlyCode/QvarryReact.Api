@@ -15,6 +15,7 @@ import { webSocketService } from "../services/webSocketService";
 import User from "../models/users";
 import dataArchiveService from "../services/dataArchiveService";
 import { logger } from "../services/loggerService";
+import ContactModel from "../models/contacts";
 
 const convoLogger = logger.child({ service: "conversations" });
 
@@ -266,6 +267,26 @@ export async function createGroupConversation(req: Request, res: Response) {
     ) {
       return res.status(400).json({ error: "Nom et participantIds requis" });
     }
+
+    // SEC: Vérifier que tous les participants sont des contacts acceptés du créateur
+    const acceptedContacts = await ContactModel.find({
+      userId: userId,
+      contactId: { $in: participantIds },
+      status: "accepted",
+      isBlocked: false,
+    }).select("contactId");
+    const acceptedContactIds = new Set(
+      acceptedContacts.map((c) => c.contactId.toString()),
+    );
+    const unauthorizedParticipants = participantIds.filter(
+      (id: string) => !acceptedContactIds.has(id),
+    );
+    if (unauthorizedParticipants.length > 0) {
+      return res.status(403).json({
+        error: "Certains participants ne sont pas dans vos contacts",
+      });
+    }
+
     // Chiffrer le nom du groupe avec communicationEncryption
     const encryptedName = encryptCommunication(name);
     // Construire la liste des participants (le créateur est admin)

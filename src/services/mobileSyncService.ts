@@ -16,6 +16,7 @@ import { decrypt } from "../utils/masterEncryptionUtils";
 import { decryptWithKey, encryptWithKey } from "../utils/userEncryptionUtils";
 import { getErrorMessage } from "../utils/errorUtils";
 import { logger } from "../services/loggerService";
+import { validateFicheData } from "../services/validationService";
 
 const mobileSyncLogger = logger.child({ service: "mobile-sync" });
 
@@ -111,6 +112,7 @@ export interface SyncedSosContact {
   isDefault: boolean;
   createdAt: string;
   updatedAt: string;
+  version?: number;
 }
 
 export interface SyncedSosSession {
@@ -369,6 +371,7 @@ class MobileSyncService {
       isDefault: contact.isDefault || false,
       createdAt: contact.createdAt?.toISOString() || new Date().toISOString(),
       updatedAt: contact.updatedAt?.toISOString() || new Date().toISOString(),
+      version: contact.version || 1,
     };
   }
 
@@ -408,6 +411,8 @@ class MobileSyncService {
         ListModel.find({ userId, deletedAt: null }).lean(),
         SosContactModel.find({
           userId: new mongoose.Types.ObjectId(userId),
+          sessionId: { $exists: false }, // Uniquement les contacts permanents
+          deletedAt: null, // Exclure les contacts soft-deleted
         }).lean(),
         SosSessionModel.findOne({
           userId: new mongoose.Types.ObjectId(userId),
@@ -520,7 +525,9 @@ class MobileSyncService {
         }).lean(),
         SosContactModel.find({
           userId: new mongoose.Types.ObjectId(userId),
+          sessionId: { $exists: false }, // Uniquement les contacts permanents
           updatedAt: { $gt: since },
+          deletedAt: null, // Exclure les contacts soft-deleted
         }).lean(),
       ]);
 
@@ -637,6 +644,18 @@ class MobileSyncService {
       l._id.toString(),
     );
 
+    // Détection des suppressions de contacts SOS (soft-delete)
+    const deletedSosContactsDocs = await SosContactModel.find({
+      userId: new mongoose.Types.ObjectId(userId),
+      sessionId: { $exists: false }, // Uniquement les contacts permanents
+      deletedAt: { $ne: null, $gt: since },
+    })
+      .select("_id")
+      .lean();
+    const deletedSosContacts: string[] = deletedSosContactsDocs.map((c) =>
+      c._id.toString(),
+    );
+
     const result: SyncResult = {
       points: {
         created: createdPoints,
@@ -656,7 +675,7 @@ class MobileSyncService {
       sosContacts: {
         created: createdSosContacts,
         updated: modifiedSosContacts,
-        deleted: [], // Hard-delete, pas détectable en incrémental
+        deleted: deletedSosContacts, // Maintenant détectable avec soft-delete
       },
       activeSosSession: activeSosSession
         ? this.transformSosSession(activeSosSession)
@@ -673,7 +692,8 @@ class MobileSyncService {
         modifiedLists.length +
         deletedLists.length +
         createdSosContacts.length +
-        modifiedSosContacts.length,
+        modifiedSosContacts.length +
+        deletedSosContacts.length,
     };
 
     mobileSyncLogger.info("Sync incrémentale terminée", {
@@ -885,6 +905,74 @@ class MobileSyncService {
 
     switch (change.action) {
       case "create": {
+        // Valider les données avant la création
+        const validation = validateFicheData(data);
+        if (!validation.isValid) {
+          mobileSyncLogger.warn("Validation échouée pour création de fiche", {
+            userId,
+            errors: validation.errors,
+            localId: change.localId,
+          });
+          throw new Error(
+            `Validation échouée: ${validation.errors.join(", ")}`,
+          );
+        }
+
+        // Chiffrer les tableaux element par element comme le flow PC
+        let encryptedEquipementConseille: string[] = [];
+        if (
+          Array.isArray(data.equipement_conseille) &&
+          data.equipement_conseille.length > 0
+        ) {
+          try {
+            encryptedEquipementConseille = data.equipement_conseille.map(
+              (item: string) => encryptWithKey(item, userKey),
+            );
+          } catch (error) {
+            mobileSyncLogger.error(
+              "Erreur chiffrement equipement_conseille (create)",
+              {
+                error: getErrorMessage(error),
+              },
+            );
+            encryptedEquipementConseille = [];
+          }
+        }
+
+        let encryptedSurface: string[] = [];
+        if (Array.isArray(data.surface) && data.surface.length > 0) {
+          try {
+            encryptedSurface = data.surface.map((item: string) =>
+              encryptWithKey(item, userKey),
+            );
+          } catch (error) {
+            mobileSyncLogger.error("Erreur chiffrement surface (create)", {
+              error: getErrorMessage(error),
+            });
+            encryptedSurface = [];
+          }
+        }
+
+        let encryptedTypeGaleries: string[] = [];
+        if (
+          Array.isArray(data.type_galeries) &&
+          data.type_galeries.length > 0
+        ) {
+          try {
+            encryptedTypeGaleries = data.type_galeries.map((item: string) =>
+              encryptWithKey(item, userKey),
+            );
+          } catch (error) {
+            mobileSyncLogger.error(
+              "Erreur chiffrement type_galeries (create)",
+              {
+                error: getErrorMessage(error),
+              },
+            );
+            encryptedTypeGaleries = [];
+          }
+        }
+
         const encryptedData = {
           userId: new mongoose.Types.ObjectId(userId),
           name: encryptWithKey(data.name, userKey),
@@ -917,9 +1005,9 @@ class MobileSyncService {
             data.points_ids?.map(
               (id: string) => new mongoose.Types.ObjectId(id),
             ) || [],
-          equipement_conseille: data.equipement_conseille || [],
-          surface: data.surface || [],
-          type_galeries: data.type_galeries || [],
+          equipement_conseille: encryptedEquipementConseille,
+          surface: encryptedSurface,
+          type_galeries: encryptedTypeGaleries,
           center_cavite: data.center_cavite || undefined,
           version: 1,
         };
@@ -935,6 +1023,22 @@ class MobileSyncService {
 
       case "update": {
         if (!change.id) throw new Error("ID manquant pour update");
+
+        // Valider les données avant la mise à jour
+        const validation = validateFicheData(data);
+        if (!validation.isValid) {
+          mobileSyncLogger.warn(
+            "Validation échouée pour mise à jour de fiche",
+            {
+              userId,
+              ficheId: change.id,
+              errors: validation.errors,
+            },
+          );
+          throw new Error(
+            `Validation échouée: ${validation.errors.join(", ")}`,
+          );
+        }
 
         const existingFiche = await FicheModel.findOne({
           _id: change.id,
@@ -1011,11 +1115,67 @@ class MobileSyncService {
           updateData.points_ids = data.points_ids.map(
             (id: string) => new mongoose.Types.ObjectId(id),
           );
-        if (data.equipement_conseille !== undefined)
-          updateData.equipement_conseille = data.equipement_conseille;
-        if (data.surface !== undefined) updateData.surface = data.surface;
-        if (data.type_galeries !== undefined)
-          updateData.type_galeries = data.type_galeries;
+        // Chiffrer les tableaux element par element comme le flow PC
+        if (data.equipement_conseille !== undefined) {
+          if (
+            Array.isArray(data.equipement_conseille) &&
+            data.equipement_conseille.length > 0
+          ) {
+            try {
+              updateData.equipement_conseille = data.equipement_conseille.map(
+                (item: string) => encryptWithKey(item, userKey),
+              );
+            } catch (error) {
+              mobileSyncLogger.error(
+                "Erreur chiffrement equipement_conseille (update)",
+                {
+                  error: getErrorMessage(error),
+                },
+              );
+              updateData.equipement_conseille = [];
+            }
+          } else {
+            updateData.equipement_conseille = [];
+          }
+        }
+        if (data.surface !== undefined) {
+          if (Array.isArray(data.surface) && data.surface.length > 0) {
+            try {
+              updateData.surface = data.surface.map((item: string) =>
+                encryptWithKey(item, userKey),
+              );
+            } catch (error) {
+              mobileSyncLogger.error("Erreur chiffrement surface (update)", {
+                error: getErrorMessage(error),
+              });
+              updateData.surface = [];
+            }
+          } else {
+            updateData.surface = [];
+          }
+        }
+        if (data.type_galeries !== undefined) {
+          if (
+            Array.isArray(data.type_galeries) &&
+            data.type_galeries.length > 0
+          ) {
+            try {
+              updateData.type_galeries = data.type_galeries.map(
+                (item: string) => encryptWithKey(item, userKey),
+              );
+            } catch (error) {
+              mobileSyncLogger.error(
+                "Erreur chiffrement type_galeries (update)",
+                {
+                  error: getErrorMessage(error),
+                },
+              );
+              updateData.type_galeries = [];
+            }
+          } else {
+            updateData.type_galeries = [];
+          }
+        }
         if (data.center_cavite !== undefined)
           updateData.center_cavite = data.center_cavite;
 
@@ -1212,11 +1372,38 @@ class MobileSyncService {
       case "delete": {
         if (!change.id) throw new Error("ID manquant pour delete");
 
-        // Hard-delete pour les contacts SOS (pas de soft-delete)
-        await SosContactModel.deleteOne({
+        // Vérifier si le contact est temporaire ou permanent
+        const existingContact = await SosContactModel.findOne({
           _id: new mongoose.Types.ObjectId(change.id),
           userId: new mongoose.Types.ObjectId(userId),
         });
+
+        if (!existingContact) {
+          throw new Error(`Contact SOS ${change.id} non trouvé`);
+        }
+
+        // Si le contact est temporaire (avec sessionId), faire un hard-delete
+        if (existingContact.sessionId) {
+          await SosContactModel.deleteOne({
+            _id: new mongoose.Types.ObjectId(change.id),
+            userId: new mongoose.Types.ObjectId(userId),
+          });
+        } else {
+          // Sinon, soft-delete pour les contacts permanents
+          await SosContactModel.updateOne(
+            {
+              _id: new mongoose.Types.ObjectId(change.id),
+              userId: new mongoose.Types.ObjectId(userId),
+              sessionId: { $exists: false }, // Uniquement les contacts permanents
+            },
+            {
+              $set: {
+                deletedAt: new Date(),
+                version: (existingContact.version || 1) + 1,
+              },
+            },
+          );
+        }
 
         synced.push(change);
         break;
@@ -1255,6 +1442,93 @@ class MobileSyncService {
       { $set: { deletedAt: new Date() } },
     );
     return result.modifiedCount > 0;
+  }
+
+  /**
+   * Compte rapidement les changements depuis une date donnée
+   * (optimisé: ne charge/déchiffre pas les données, utilise countDocuments)
+   */
+  async countChanges(
+    userId: string,
+    since: Date,
+  ): Promise<{
+    points: number;
+    fiches: number;
+    lists: number;
+    sosContacts: number;
+    total: number;
+  }> {
+    const [
+      pointsCount,
+      fichesCount,
+      listsCount,
+      sosContactsCount,
+      deletedPointsCount,
+      deletedFichesCount,
+      deletedListsCount,
+      deletedSosContactsCount,
+    ] = await Promise.all([
+      // Comptage des points créés/modifiés
+      PointModel.countDocuments({
+        userId,
+        updatedAt: { $gt: since },
+        deletedAt: null,
+      }),
+      // Comptage des fiches créées/modifiées
+      FicheModel.countDocuments({
+        userId,
+        date_modification: { $gt: since },
+        deletedAt: null,
+      }),
+      // Comptage des listes créées/modifiées
+      ListModel.countDocuments({
+        userId,
+        updatedAt: { $gt: since },
+        deletedAt: null,
+      }),
+      // Comptage des contacts SOS créés/modifiés
+      SosContactModel.countDocuments({
+        userId: new mongoose.Types.ObjectId(userId),
+        sessionId: { $exists: false }, // Uniquement les contacts permanents
+        updatedAt: { $gt: since },
+        deletedAt: null,
+      }),
+      // Comptage des points supprimés
+      PointModel.countDocuments({
+        userId,
+        deletedAt: { $ne: null, $gt: since },
+      }),
+      // Comptage des fiches supprimées
+      FicheModel.countDocuments({
+        userId,
+        deletedAt: { $ne: null, $gt: since },
+      }),
+      // Comptage des listes supprimées
+      ListModel.countDocuments({
+        userId,
+        deletedAt: { $ne: null, $gt: since },
+      }),
+      // Comptage des contacts SOS supprimés
+      SosContactModel.countDocuments({
+        userId: new mongoose.Types.ObjectId(userId),
+        sessionId: { $exists: false }, // Uniquement les contacts permanents
+        deletedAt: { $ne: null, $gt: since },
+      }),
+    ]);
+
+    const totalPoints = pointsCount + deletedPointsCount;
+    const totalFiches = fichesCount + deletedFichesCount;
+    const totalLists = listsCount + deletedListsCount;
+    const totalSosContacts = sosContactsCount + deletedSosContactsCount;
+    const total = totalPoints + totalFiches + totalLists + totalSosContacts;
+
+    return {
+      points: totalPoints,
+      fiches: totalFiches,
+      lists: totalLists,
+      sosContacts: totalSosContacts,
+      total,
+    };
   }
 }
 

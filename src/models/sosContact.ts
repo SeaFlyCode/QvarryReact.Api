@@ -17,6 +17,10 @@ export interface ISosContact extends Document {
   isDefault: boolean; // Contact par défaut (alerté en priorité)
   lastSmsSentAt?: Date; // Dernier SMS envoyé à ce contact
 
+  // Soft-delete et versionning
+  deletedAt?: Date | null; // Date de suppression (soft-delete)
+  version?: number; // Version pour gestion des conflits
+
   // Timestamps Mongoose
   createdAt: Date;
   updatedAt: Date;
@@ -67,6 +71,14 @@ const sosContactSchema: Schema<ISosContact> = new Schema(
     lastSmsSentAt: {
       type: Date,
     },
+    deletedAt: {
+      type: Date,
+      default: null,
+    },
+    version: {
+      type: Number,
+      default: 1,
+    },
   },
   {
     timestamps: true,
@@ -77,6 +89,8 @@ const sosContactSchema: Schema<ISosContact> = new Schema(
 sosContactSchema.index({ userId: 1, isDefault: -1, createdAt: -1 });
 // Un même numéro par utilisateur ET par session (permet le même numéro en permanent et en session)
 sosContactSchema.index({ userId: 1, phone: 1, sessionId: 1 }, { unique: true });
+// Index pour accélérer les requêtes de soft-delete
+sosContactSchema.index({ deletedAt: 1 });
 
 const SosContactModel: Model<ISosContact> =
   mongoose.models.SosContact ||

@@ -383,16 +383,14 @@ describe("mobileSyncControllers", () => {
 
     it("devrait retourner le statut de synchronisation", async () => {
       const mockResult = {
-        points: { created: [{ id: "point-1" }], updated: [], deleted: [] },
-        fiches: { created: [], updated: [{ id: "fiche-1" }], deleted: [] },
-        lists: { created: [], updated: [], deleted: [] },
-        sosContacts: { created: [], updated: [], deleted: [] },
-        activeSosSession: null,
-        lastSyncDate: "2026-02-27T10:00:00Z",
-        totalChanges: 2,
+        points: 1,
+        fiches: 1,
+        lists: 0,
+        sosContacts: 0,
+        total: 2,
       };
 
-      (mobileSyncService.getIncrementalChanges as jest.Mock).mockResolvedValue(
+      (mobileSyncService.countChanges as jest.Mock).mockResolvedValue(
         mockResult,
       );
 
@@ -440,16 +438,14 @@ describe("mobileSyncControllers", () => {
 
     it("devrait retourner hasChanges: false si aucun changement", async () => {
       const mockResult = {
-        points: { created: [], updated: [], deleted: [] },
-        fiches: { created: [], updated: [], deleted: [] },
-        lists: { created: [], updated: [], deleted: [] },
-        sosContacts: { created: [], updated: [], deleted: [] },
-        activeSosSession: null,
-        lastSyncDate: "2026-02-27T10:00:00Z",
-        totalChanges: 0,
+        points: 0,
+        fiches: 0,
+        lists: 0,
+        sosContacts: 0,
+        total: 0,
       };
 
-      (mobileSyncService.getIncrementalChanges as jest.Mock).mockResolvedValue(
+      (mobileSyncService.countChanges as jest.Mock).mockResolvedValue(
         mockResult,
       );
 

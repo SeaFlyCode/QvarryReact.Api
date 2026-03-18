@@ -37,6 +37,10 @@ export async function handleCreateFiche(req: Request, res: Response) {
     // Validation des données
     const validation = validateFicheData(req.body);
     if (!validation.isValid) {
+      fichesLogger.warn("Validation échouée lors de la création d'une fiche", {
+        userId: req.user?.id,
+        errors: validation.errors,
+      });
       return res.status(400).json({
         message: "Validation échouée",
         errors: validation.errors,
@@ -44,6 +48,9 @@ export async function handleCreateFiche(req: Request, res: Response) {
     }
 
     if (!req.user?.id) {
+      fichesLogger.warn(
+        "Tentative d'accès non authentifié à la création de fiche",
+      );
       return res.status(401).json({
         message: "Utilisateur non authentifié",
       });
@@ -131,6 +138,9 @@ export async function handleUpdateFiche(req: Request, res: Response) {
     const updateData = req.body;
 
     if (!userId) {
+      fichesLogger.warn(
+        "Tentative d'accès non authentifié à la mise à jour de fiche",
+      );
       return res.status(401).json({ message: "Utilisateur non authentifié" });
     }
 
@@ -141,9 +151,28 @@ export async function handleUpdateFiche(req: Request, res: Response) {
       return res.status(404).json({ message: "Fiche non trouvée." });
     }
 
-    // Mettre à jour les champs
+    // SEC: Allowlist des champs modifiables pour éviter l'injection de champs arbitraires
+    const ALLOWED_UPDATE_FIELDS = [
+      "name",
+      "ville",
+      "type",
+      "etat",
+      "accessibilite",
+      "difficulte_acces",
+      "risque_oxygene",
+      "acces_souterrain",
+      "praticite_souterrain",
+      "etat_general",
+      "commentaire",
+      "points_ids",
+      "equipement_conseille",
+      "surface",
+      "type_galeries",
+      "interets",
+      "center_cavite",
+    ];
     Object.keys(updateData).forEach((key) => {
-      if (key !== "_id" && key !== "userId" && key !== "date_creation") {
+      if (ALLOWED_UPDATE_FIELDS.includes(key)) {
         (fiche as any)[key] = updateData[key];
       }
     });

@@ -419,7 +419,6 @@ export async function handleMobileRegister(req: Request, res: Response) {
       success: true,
       message: "Compte créé ! Vérifiez votre email.",
       userId: createdUser._id,
-      contact_code: `@${contact_code}`,
       requiresEmailVerification: true,
     });
   } catch (error) {

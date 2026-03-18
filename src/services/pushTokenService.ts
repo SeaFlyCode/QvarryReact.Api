@@ -135,6 +135,7 @@ export async function getTokensByUserId(userId: string): Promise<IPushToken[]> {
   }
 }
 
+// Reserved for future batch notification use (e.g., group notifications)
 /**
  * Récupère tous les tokens FCM de plusieurs utilisateurs en une seule requête
  * Retourne un Map pour un accès rapide par userId

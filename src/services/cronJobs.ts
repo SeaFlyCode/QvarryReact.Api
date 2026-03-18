@@ -2,6 +2,7 @@ import cron from "node-cron";
 import { cleanupExpiredShares } from "./dataShareService";
 import NotificationModel from "../models/notifications";
 import { refreshTokenService } from "./refreshTokenService";
+import { cleanupOldTokens } from "./pushTokenService";
 import { logger } from "./loggerService";
 
 // Create child logger for cron service
@@ -9,6 +10,7 @@ const cronLogger = logger.child({ service: "cron" });
 
 // ─── Flags de verrouillage pour empêcher les exécutions simultanées ───
 let isDataShareCleanupRunning = false;
+let isPushTokenCleanupRunning = false;
 let isNotificationCleanupRunning = false;
 let isRefreshTokenCleanupRunning = false;
 
@@ -44,6 +46,40 @@ export function startDataShareCleanupJob(): void {
   });
 
   cronLogger.info("Data share cleanup job scheduled (daily at 3:00 AM)");
+}
+
+/**
+ * Job de nettoyage automatique des push tokens obsolètes
+ * Exécuté tous les jours à 3h30 du matin
+ */
+export function startPushTokenCleanupJob(): void {
+  // Cron expression: "30 3 * * *" = Tous les jours à 3h30
+  cron.schedule("30 3 * * *", async () => {
+    if (isPushTokenCleanupRunning) {
+      cronLogger.info("Push token cleanup already running, skipping");
+      return;
+    }
+    isPushTokenCleanupRunning = true;
+    try {
+      cronLogger.info("Starting push token cleanup");
+      const deletedCount = await cleanupOldTokens(90);
+
+      if (deletedCount > 0) {
+        cronLogger.info("Push token cleanup completed", { deletedCount });
+      } else {
+        cronLogger.info("No old push tokens to clean");
+      }
+    } catch (error) {
+      cronLogger.error("Push token cleanup failed", {
+        error: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? error.stack : undefined,
+      });
+    } finally {
+      isPushTokenCleanupRunning = false;
+    }
+  });
+
+  cronLogger.info("Push token cleanup job scheduled (daily at 3:30 AM)");
 }
 
 /**

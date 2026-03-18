@@ -63,40 +63,6 @@ export function maskConnectionString(connStr: string): string {
 
 /**
  * Sanitise un objet pour les logs en masquant les champs sensibles
+ * Re-export depuis loggerService pour éviter la duplication
  */
-export function sanitizeLogData(
-  data: Record<string, any>,
-): Record<string, any> {
-  if (!data || typeof data !== "object") return data;
-
-  const sanitized: Record<string, any> = {};
-
-  for (const [key, value] of Object.entries(data)) {
-    const lowerKey = key.toLowerCase();
-
-    // Masquer les champs sensibles
-    if (
-      lowerKey.includes("password") ||
-      lowerKey.includes("secret") ||
-      lowerKey.includes("token") ||
-      lowerKey.includes("authorization")
-    ) {
-      sanitized[key] = "***";
-    } else if (lowerKey.includes("cookie")) {
-      sanitized[key] = "***";
-    } else if (lowerKey === "ip" || lowerKey === "ipaddress") {
-      sanitized[key] = anonymizeIp(String(value || ""));
-    } else if (lowerKey === "email") {
-      sanitized[key] = maskEmail(String(value || ""));
-    } else if (lowerKey === "deviceid") {
-      sanitized[key] = maskDeviceId(String(value || ""));
-    } else if (typeof value === "object" && value !== null) {
-      // Récursif pour les objets imbriqués
-      sanitized[key] = sanitizeLogData(value);
-    } else {
-      sanitized[key] = value;
-    }
-  }
-
-  return sanitized;
-}
+export { sanitizeLogData } from "../services/loggerService";

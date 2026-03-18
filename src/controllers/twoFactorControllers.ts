@@ -254,6 +254,12 @@ export async function disableTwoFactor(
         .json({ error: "Mot de passe requis pour désactiver la 2FA" });
     }
 
+    if (!code) {
+      return res.status(400).json({
+        error: "Code 2FA ou code de récupération requis pour désactiver la 2FA",
+      });
+    }
+
     const user = await UserModel.findById(userId);
     if (!user) {
       return res.status(404).json({ error: "Utilisateur non trouvé" });
@@ -279,43 +285,41 @@ export async function disableTwoFactor(
     }
 
     // Vérifier le code 2FA ou un code de récupération
-    if (code) {
-      if (!user.two_factor_secret) {
-        return res.status(400).json({ error: "Secret 2FA manquant" });
-      }
-      const decryptedSecret = decrypt(user.two_factor_secret);
-      const totpVerify = new TOTP({
-        secret: Secret.fromBase32(decryptedSecret),
-        algorithm: "SHA1",
-        digits: 6,
-        period: 30,
-      });
-      const delta = totpVerify.validate({ token: code, window: 1 });
-      const isValidTotp = delta !== null;
+    if (!user.two_factor_secret) {
+      return res.status(400).json({ error: "Secret 2FA manquant" });
+    }
+    const decryptedSecret = decrypt(user.two_factor_secret);
+    const totpVerify = new TOTP({
+      secret: Secret.fromBase32(decryptedSecret),
+      algorithm: "SHA1",
+      digits: 6,
+      period: 30,
+    });
+    const delta = totpVerify.validate({ token: code, window: 1 });
+    const isValidTotp = delta !== null;
 
-      if (!isValidTotp) {
-        // Essayer comme code de récupération
-        const codeNormalized = code.replace(/-/g, "").toUpperCase();
-        let recoveryCodeUsed = false;
+    if (!isValidTotp) {
+      // Essayer comme code de récupération
+      const codeNormalized = code.replace(/-/g, "").toUpperCase();
+      let recoveryCodeUsed = false;
 
-        if (user.two_factor_recovery_codes) {
-          for (let i = 0; i < user.two_factor_recovery_codes.length; i++) {
-            const isMatch = await bcrypt.compare(
-              codeNormalized,
-              user.two_factor_recovery_codes[i],
-            );
-            if (isMatch) {
-              recoveryCodeUsed = true;
-              break;
-            }
+      if (user.two_factor_recovery_codes) {
+        for (let i = 0; i < user.two_factor_recovery_codes.length; i++) {
+          const isMatch = await bcrypt.compare(
+            codeNormalized,
+            user.two_factor_recovery_codes[i],
+          );
+          if (isMatch) {
+            recoveryCodeUsed = true;
+            break;
           }
         }
+      }
 
-        if (!recoveryCodeUsed) {
-          return res
-            .status(400)
-            .json({ error: "Code 2FA ou code de récupération invalide" });
-        }
+      if (!recoveryCodeUsed) {
+        return res
+          .status(400)
+          .json({ error: "Code 2FA ou code de récupération invalide" });
       }
     }
 

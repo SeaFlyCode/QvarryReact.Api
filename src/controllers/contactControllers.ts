@@ -155,7 +155,9 @@ export const addContact = async (
             reverseContact,
           );
         } catch (_error) {
-          // Session refresh silencieux
+          contactLogger.debug("Erreur silencieuse ignorée", {
+            error: _error instanceof Error ? _error.message : String(_error),
+          });
         }
       }
 

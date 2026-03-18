@@ -1,7 +1,12 @@
 import { Request, Response } from "express";
 import NotificationModel from "../models/notifications";
+import { NotificationType } from "../models/notifications";
 import mongoose from "mongoose";
-import { createNotification } from "../services/notificationService";
+import {
+  createNotification,
+  deleteNotification as deleteNotificationService,
+} from "../services/notificationService";
+import dataArchiveService from "../services/dataArchiveService";
 import { logger } from "../services/loggerService";
 
 const notifCtrlLogger = logger.child({ service: "notifications-controller" });
@@ -173,14 +178,21 @@ export const deleteNotification = async (req: Request, res: Response) => {
 
     const { notificationId } = req.params;
 
-    const notification = await NotificationModel.findOneAndDelete({
+    // Vérifier que la notification appartient bien à l'utilisateur avant de déléguer
+    const exists = await NotificationModel.findOne({
       _id: new mongoose.Types.ObjectId(notificationId),
       userId: new mongoose.Types.ObjectId(userId),
     });
 
-    if (!notification) {
+    if (!exists) {
       return res.status(404).json({ message: "Notification non trouvée" });
     }
+
+    // Déléguer au service qui gère l'archivage avant suppression
+    await deleteNotificationService(
+      new mongoose.Types.ObjectId(notificationId),
+      new mongoose.Types.ObjectId(userId),
+    );
 
     res.json({ message: "Notification supprimée" });
   } catch (error) {
@@ -202,8 +214,30 @@ export const deleteAllRead = async (req: Request, res: Response) => {
       return res.status(401).json({ message: "Non authentifié" });
     }
 
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
+    // Récupérer toutes les notifications lues avant suppression pour les archiver
+    const readNotifications = await NotificationModel.find({
+      userId: userObjectId,
+      read: true,
+    }).lean();
+
+    // Archiver chaque notification lue avant suppression
+    for (const notification of readNotifications) {
+      await dataArchiveService.archiveAndRecordDeletion(
+        "notification",
+        notification._id as mongoose.Types.ObjectId,
+        notification as Record<string, unknown>,
+        userObjectId,
+        {
+          reason:
+            "Suppression en masse des notifications lues par l'utilisateur",
+        },
+      );
+    }
+
     await NotificationModel.deleteMany({
-      userId: new mongoose.Types.ObjectId(userId),
+      userId: userObjectId,
       read: true,
     });
 
@@ -219,10 +253,11 @@ export const deleteAllRead = async (req: Request, res: Response) => {
 
 /**
  * Créer une notification (fonction utilitaire)
+ * Délègue au service pour déclencher WebSocket/FCM/retry
  */
 export const createNotificationUtil = async (
   userId: string,
-  type: string,
+  type: NotificationType,
   title: string,
   message: string,
   data?: {
@@ -231,14 +266,15 @@ export const createNotificationUtil = async (
     messageId?: string;
     shareId?: string;
     senderId?: string;
+    sosSessionId?: string;
   },
 ) => {
-  try {
-    const notification = new NotificationModel({
-      userId: new mongoose.Types.ObjectId(userId),
-      type,
-      title,
-      message,
+  return createNotification(
+    new mongoose.Types.ObjectId(userId),
+    type,
+    title,
+    message,
+    {
       contactId: data?.contactId
         ? new mongoose.Types.ObjectId(data.contactId)
         : undefined,
@@ -254,17 +290,11 @@ export const createNotificationUtil = async (
       senderId: data?.senderId
         ? new mongoose.Types.ObjectId(data.senderId)
         : undefined,
-    });
-
-    await notification.save();
-    return notification;
-  } catch (error) {
-    notifCtrlLogger.error("Create notification error", {
-      error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
-    });
-    throw error;
-  }
+      sosSessionId: data?.sosSessionId
+        ? new mongoose.Types.ObjectId(data.sosSessionId)
+        : undefined,
+    },
+  );
 };
 
 /**
@@ -273,7 +303,7 @@ export const createNotificationUtil = async (
  */
 export const createTestNotification = async (req: Request, res: Response) => {
   // Protection: désactiver en production
-  if (process.env.NODE_ENV === "production") {
+  if (process.env.NODE_ENV?.toLowerCase() === "production") {
     return res.status(404).json({ message: "Endpoint non disponible" });
   }
 

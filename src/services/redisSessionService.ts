@@ -884,6 +884,53 @@ export class RedisSessionService {
       return this.usedWsTokensMemory.has(tokenJti);
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════
+  // HIGH-003: RATE LIMITING MOBILE (PERSISTÉ EN REDIS)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  /**
+   * Récupère une entrée de rate limit mobile depuis Redis
+   * @param key - Clé Redis (ex: qvarry:mobile_rl:<identifier>)
+   * @returns La valeur JSON sérialisée ou null si absente
+   */
+  async getMobileRateLimit(key: string): Promise<string | null> {
+    if (redis) {
+      try {
+        return await redis.get(key);
+      } catch (error: unknown) {
+        redisLogger.error(
+          "Failed to get mobile rate limit from Redis, using memory fallback",
+          { error: getErrorMessage(error), key },
+        );
+        return null;
+      }
+    }
+    return null;
+  }
+
+  /**
+   * Persiste une entrée de rate limit mobile dans Redis avec TTL
+   * @param key - Clé Redis (ex: qvarry:mobile_rl:<identifier>)
+   * @param value - Valeur JSON sérialisée
+   * @param ttlSeconds - Durée de vie en secondes
+   */
+  async setMobileRateLimit(
+    key: string,
+    value: string,
+    ttlSeconds: number,
+  ): Promise<void> {
+    if (redis) {
+      try {
+        await redis.setex(key, ttlSeconds, value);
+      } catch (error: unknown) {
+        redisLogger.error(
+          "Failed to set mobile rate limit in Redis, using memory fallback",
+          { error: getErrorMessage(error), key },
+        );
+      }
+    }
+  }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

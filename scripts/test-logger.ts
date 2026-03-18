@@ -1,7 +1,7 @@
 // Test rapide du système de logging
-// Exécuter avec: npx ts-node src/test-logger.ts
+// Exécuter avec: npx ts-node scripts/test-logger.ts
 
-import { logger, sanitizeLogData } from "./services/loggerService";
+import { logger, sanitizeLogData } from "../src/services/loggerService";
 
 console.log("\n=".repeat(60));
 console.log("🧪 TEST DU SYSTÈME DE LOGGING");

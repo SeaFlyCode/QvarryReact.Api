@@ -77,6 +77,7 @@ describe("messagesControllers", () => {
     // Mock webSocketService methods
     (webSocketService.notifyNewConversation as any) = jest.fn();
     (webSocketService.notifyMessagesRead as any) = jest.fn();
+    (webSocketService.broadcastNewMessage as any) = jest.fn();
     (memoryStorage.updateConversationLastMessage as jest.Mock).mockReturnValue(
       undefined,
     );
@@ -137,7 +138,21 @@ describe("messagesControllers", () => {
       expect(Message.create).toHaveBeenCalled();
       expect(mockConversation.save).toHaveBeenCalled();
       expect(res.status).toHaveBeenCalledWith(201);
-      expect(res.json).toHaveBeenCalledWith({ messageId: MSG_ID });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          messageId: MSG_ID,
+          message: expect.objectContaining({
+            _id: String(MSG_ID),
+            conversationId: CONV_ID,
+            senderId: String(USER_ID_1),
+            content: "Hello world",
+            type: "text",
+            readBy: [USER_ID_1],
+            replies: [],
+            metadata: null,
+          }),
+        }),
+      );
     });
 
     it("devrait rejeter si utilisateur non authentifié", async () => {

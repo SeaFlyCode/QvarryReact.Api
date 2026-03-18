@@ -72,7 +72,11 @@ export function getRequestContext(): RequestContext | undefined {
 export function setRequestContext(updates: Partial<RequestContext>): void {
   const currentContext = correlationStore.getStore();
   if (!currentContext) {
-    console.warn(
+    // Lazy import pour éviter les dépendances circulaires
+    // (loggerService importe correlationMiddleware via require au démarrage)
+    const { logger } = require("../services/loggerService");
+    const correlationLogger = logger.child({ service: "correlation" });
+    correlationLogger.warn(
       "[correlationMiddleware] Tentative de mise à jour du contexte en dehors d'une requête",
     );
     return;

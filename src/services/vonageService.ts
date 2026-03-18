@@ -223,14 +223,14 @@ class VonageService {
           to: to.substring(0, 6) + "***",
           messageId: message["message-id"],
         });
-        // TODO: Implement Vonage delivery receipt webhook at /api/webhooks/vonage/delivery
-        // Vonage supports delivery receipts via webhook but it's not implemented yet
-        // For now, we only confirm that Vonage accepted the SMS, not that it was delivered
+        // SMS accepté par Vonage - le webhook /api/webhooks/vonage/delivery
+        // recevra la confirmation de livraison réelle via delivery receipt
+        // Pour vérifier la livraison, voir checkDeliveryStatus(messageId)
         return {
           success: true,
           messageId: message["message-id"],
           to,
-          deliveryConfirmed: false, // Delivery receipts not yet implemented
+          deliveryConfirmed: false, // Delivery receipts sont traités par webhook
         };
       } else {
         const errorText = message?.["error-text"] || "Erreur inconnue";
@@ -346,6 +346,43 @@ class VonageService {
         deliveryConfirmed: false,
       };
     });
+  }
+
+  /**
+   * Vérifier le statut de livraison d'un SMS via le modèle SmsDeliveryReceipt
+   * @param messageId - ID du message Vonage
+   * @returns Le statut de livraison ou null si pas encore reçu
+   */
+  async checkDeliveryStatus(messageId: string): Promise<{
+    status: string;
+    receivedAt: Date;
+    errorCode?: string;
+  } | null> {
+    try {
+      // Import dynamique pour éviter les dépendances circulaires
+      const { default: SmsDeliveryReceiptModel } =
+        await import("../models/smsDeliveryReceipt");
+
+      const receipt = await SmsDeliveryReceiptModel.findOne({ messageId })
+        .sort({ receivedAt: -1 }) // Le plus récent en premier
+        .lean();
+
+      if (!receipt) {
+        return null;
+      }
+
+      return {
+        status: receipt.status,
+        receivedAt: receipt.receivedAt,
+        errorCode: receipt.errorCode,
+      };
+    } catch (error) {
+      vonageLogger.error("Erreur lors de la vérification du statut SMS", {
+        messageId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      return null;
+    }
   }
 }
 

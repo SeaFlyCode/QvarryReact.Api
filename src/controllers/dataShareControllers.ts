@@ -274,11 +274,19 @@ export const handleShareData = async (
       if (sender.showPseudo && sender.pseudo) {
         try {
           senderName = decrypt(sender.pseudo);
-        } catch (_e) {}
+        } catch (_e) {
+          dataShareLogger.debug("Échec déchiffrement pseudo expéditeur", {
+            senderId: sender._id,
+          });
+        }
       } else if (sender.name) {
         try {
           senderName = decrypt(sender.name);
-        } catch (_e) {}
+        } catch (_e) {
+          dataShareLogger.debug("Échec déchiffrement nom expéditeur", {
+            senderId: sender._id,
+          });
+        }
       }
     }
 

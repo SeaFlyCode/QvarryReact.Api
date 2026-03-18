@@ -1,49 +1,19 @@
 import { Request, Response } from "express";
-import Message, { IMessageReply } from "../models/messages";
 import Conversation from "../models/conversations";
-import { Types } from "mongoose";
-import {
-  encrypt as encryptCommunication,
-  decrypt as decryptCommunication,
-} from "../utils/communicationEncryptionUtils";
-import { createNotification } from "../services/notificationService";
 import { webSocketService } from "../services/webSocketService";
-import { memoryStorage } from "../services/memoryStorageService";
-import User from "../models/users";
 import { logger } from "../services/loggerService";
+import {
+  createMessageOp,
+  getMessagesOp,
+  markMessageAsReadOp,
+  replyToMessageOp,
+  editMessageOp,
+  deleteMessageOp,
+} from "../services/messageOperationsService";
+import Message from "../models/messages";
+import { Types } from "mongoose";
 
 const messagesLogger = logger.child({ service: "messages" });
-
-/**
- * Fonction utilitaire pour obtenir le nom d'affichage d'un utilisateur
- * Respecte le paramètre showPseudo : si activé et pseudo défini, utilise le pseudo
- */
-async function getDisplayName(userId: string): Promise<string> {
-  const { decrypt } = await import("../utils/masterEncryptionUtils");
-  const user = await User.findById(userId).select(
-    "name surname pseudo showPseudo",
-  );
-
-  if (!user) return "Un utilisateur";
-
-  // Si showPseudo est activé et pseudo existe, utiliser le pseudo
-  if (user.showPseudo && user.pseudo) {
-    try {
-      return decrypt(user.pseudo);
-    } catch (_e) {
-      // Fallback sur le nom si erreur de déchiffrement du pseudo
-    }
-  }
-
-  // Sinon, utiliser le nom complet
-  try {
-    const name = decrypt(user.name);
-    const surname = decrypt(user.surname);
-    return `${name} ${surname}`;
-  } catch (_e) {
-    return "Un utilisateur";
-  }
-}
 
 // Envoyer un message
 export async function sendMessage(req: Request, res: Response) {
@@ -60,165 +30,78 @@ export async function sendMessage(req: Request, res: Response) {
         .status(400)
         .json({ error: "conversationId et content requis" });
     }
-    // Vérifier que l'utilisateur est bien dans la conversation
-    const conversation = await Conversation.findById(conversationId);
-    if (
-      !conversation ||
-      !conversation.participants.some(
-        (p: any) => p.userId.toString() === userId,
-      )
-    ) {
-      return res.status(404).json({ error: "Conversation non trouvée" });
-    }
-    // Chiffrer le contenu du message
-    const encryptedContent = encryptCommunication(content);
-    // Sanitiser et chiffrer les metadata
-    const ALLOWED_METADATA_KEYS = ["mentions", "replyTo", "type", "format"];
-    let encryptedMetadata = undefined;
-    if (metadata) {
-      // Filtrer les clés autorisées uniquement (protection contre injection de champs arbitraires)
-      const sanitizedMetadata: Record<string, any> = {};
-      for (const key of ALLOWED_METADATA_KEYS) {
-        if (key in metadata) {
-          sanitizedMetadata[key] = metadata[key];
-        }
-      }
-      // Chiffrer les mentions si présentes
-      if (sanitizedMetadata.mentions) {
-        encryptedMetadata = {
-          ...sanitizedMetadata,
-          mentions: sanitizedMetadata.mentions.map((id: string) =>
-            encryptCommunication(id),
-          ),
-        };
-      } else {
-        encryptedMetadata = sanitizedMetadata;
-      }
-    }
-    const message = await Message.create({
-      conversationId: new Types.ObjectId(conversationId),
-      senderId: new Types.ObjectId(userId),
-      content: encryptedContent,
-      type: type || "text",
-      readBy: [userId],
-      replies: [],
-      metadata: encryptedMetadata,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    });
-    // Mettre à jour le lastMessage de la conversation
-    conversation.lastMessage = message._id;
-    conversation.updatedAt = new Date();
-    await conversation.save();
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // MISE À JOUR DU CACHE MÉMOIRE
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Mettre à jour le lastMessage dans le cache pour tous les participants
-    const participantIds = conversation.participants.map((p: any) =>
-      p.userId.toString(),
-    );
-    memoryStorage.updateConversationLastMessage(
+    const result = await createMessageOp(
+      userId,
       conversationId,
-      message._id,
-      participantIds,
+      content,
+      type,
+      metadata,
     );
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // RÉACTIVATION DES CONVERSATIONS MASQUÉES
+    // RÉACTIVATION DES CONVERSATIONS MASQUÉES — Notifier via WebSocket
     // ═══════════════════════════════════════════════════════════════════════════
-    // Si des participants ont "supprimé" (masqué) cette conversation,
-    // on les réactive pour qu'ils voient le nouveau message
-    const reactivatedUserIds: string[] = [];
-
-    if (conversation.deletedBy && conversation.deletedBy.length > 0) {
-      // Retirer tous les utilisateurs de deletedBy (sauf l'expéditeur s'il y était)
-      const usersToReactivate = conversation.deletedBy.filter(
-        (id: Types.ObjectId) => id.toString() !== userId,
-      );
-
-      if (usersToReactivate.length > 0) {
-        await Conversation.updateOne(
-          { _id: conversation._id },
-          { $pull: { deletedBy: { $in: usersToReactivate } } },
-        );
-
-        // Préparer les données de conversation pour la notification WebSocket
-        const conversationData = {
-          _id: conversation._id,
-          name: conversation.name,
-          isGroup: conversation.isGroup,
-          creatorId: conversation.creatorId,
-          participants: conversation.participants,
-          lastMessage: message._id,
-          createdAt: conversation.createdAt,
-          updatedAt: new Date(),
-        };
-
-        // Notifier les utilisateurs réactivés via WebSocket
-        for (const reactivatedUserId of usersToReactivate) {
-          const userIdStr = reactivatedUserId.toString();
-          reactivatedUserIds.push(userIdStr);
-
-          messagesLogger.info("Conversation reactivated", {
-            conversationId: conversation._id.toString(),
-            userId: userIdStr,
-          });
-
-          // Envoyer un événement new_conversation pour que la conv réapparaisse
-          webSocketService.notifyNewConversation(
-            [userIdStr],
-            conversationData,
-            "", // Pas de créateur à exclure, on veut notifier cet utilisateur
-          );
-        }
-      }
-    }
-
-    // Créer des notifications pour les autres participants
-    // Note: Les utilisateurs connectés au WebSocket de la conversation
-    // recevront le message en temps réel via conversation_update
-    const otherParticipants = conversation.participants.filter(
-      (p: any) => p.userId.toString() !== userId,
-    );
-
-    const displayName = await getDisplayName(userId);
-
-    // Déchiffrer le nom de la conversation pour les groupes
-    let conversationName = "un groupe";
-    if (conversation.isGroup && conversation.name) {
-      try {
-        conversationName = decryptCommunication(conversation.name);
-      } catch (e) {
-        messagesLogger.error("Decrypt conversation name error", {
-          error: e instanceof Error ? e.message : String(e),
+    for (const reactivatedUserId of result.reactivatedUserIds) {
+      const conversation = await Conversation.findById(conversationId);
+      if (conversation) {
+        messagesLogger.info("Conversation reactivated", {
+          conversationId,
+          userId: reactivatedUserId,
         });
-        conversationName = "un groupe";
+        webSocketService.notifyNewConversation(
+          [reactivatedUserId],
+          {
+            _id: conversation._id,
+            name: conversation.name,
+            isGroup: conversation.isGroup,
+            creatorId: conversation.creatorId,
+            participants: conversation.participants,
+            lastMessage: conversation.lastMessage,
+            createdAt: conversation.createdAt,
+            updatedAt: conversation.updatedAt,
+          },
+          "", // Pas de créateur à exclure, on veut notifier cet utilisateur
+        );
       }
     }
 
-    // Créer une notification pour chaque participant (sauf l'expéditeur)
-    // Note: Même si l'utilisateur est connecté à la conversation, on crée la notification
-    // car la déconnexion WebSocket peut avoir un délai. La notification sera marquée comme lue
-    // quand l'utilisateur ouvrira la conversation.
-    for (const participant of otherParticipants) {
-      await createNotification(
-        participant.userId as Types.ObjectId,
-        "message",
-        conversation.isGroup
-          ? `Nouveau message dans ${conversationName}`
-          : "Nouveau message",
-        `${displayName} vous a envoyé un message`,
+    // ═══════════════════════════════════════════════════════════════════════════
+    // BROADCAST WEBSOCKET — ENVOI DEPUIS API REST (ex : app mobile)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Notifie en temps réel tous les clients WS connectés à cette conversation
+    // (IHM web) afin qu'ils affichent le nouveau message sans rechargement.
+    // L'expéditeur est exclu du broadcast WS (il reçoit le message complet
+    // directement dans la réponse REST ci-dessous).
+    try {
+      webSocketService.broadcastNewMessage(
+        conversationId,
+        result.message,
+        userId,
+      );
+    } catch (wsError) {
+      // Non bloquant : le broadcast WS ne doit pas faire échouer l'envoi du message
+      messagesLogger.warn(
+        "Broadcast WS après envoi REST échoué (non-bloquant)",
         {
-          conversationId: new Types.ObjectId(conversationId),
-          messageId: message._id as Types.ObjectId,
-          senderId: new Types.ObjectId(userId),
+          error: wsError instanceof Error ? wsError.message : String(wsError),
+          conversationId,
+          messageId: result.messageId,
         },
       );
     }
 
-    res.status(201).json({ messageId: message._id });
-  } catch (err) {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // RÉPONSE COMPLÈTE — permet au frontend mobile d'afficher le message
+    // immédiatement sans faire de GET /api/messages/:conversationId
+    // ═══════════════════════════════════════════════════════════════════════════
+    res.status(201).json({
+      messageId: result.messageId,
+      message: result.message,
+    });
+  } catch (err: any) {
+    if (err.statusCode === 404)
+      return res.status(404).json({ error: err.message });
     messagesLogger.error("Erreur envoi message", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
@@ -239,87 +122,17 @@ export async function getMessages(req: Request, res: Response) {
     const { conversationId } = req.params;
     if (!conversationId)
       return res.status(400).json({ error: "conversationId requis" });
-    const conversation = await Conversation.findById(conversationId);
-    if (
-      !conversation ||
-      !conversation.participants.some(
-        (p: any) => p.userId.toString() === userId,
-      )
-    ) {
-      return res.status(404).json({ error: "Conversation non trouvée" });
-    }
 
-    // Paramètres de pagination
-    const limit = Math.min(parseInt(req.query.limit as string) || 20, 50); // Max 50, défaut 20
-    const offset = parseInt(req.query.offset as string) || 0;
-    const beforeId = req.query.beforeId as string; // Pour charger les messages avant un certain ID
-
-    // Construire la requête
-    const query: any = { conversationId: new Types.ObjectId(conversationId) };
-
-    // Si beforeId est fourni, on récupère les messages plus anciens que ce message
-    if (beforeId) {
-      const beforeMessage = await Message.findById(beforeId);
-      if (beforeMessage) {
-        query.createdAt = { $lt: beforeMessage.createdAt };
-      }
-    }
-
-    // Compter le total de messages pour savoir s'il y en a plus
-    const totalCount = await Message.countDocuments({
-      conversationId: new Types.ObjectId(conversationId),
-    }).maxTimeMS(5000);
-
-    // Récupérer les messages (du plus récent au plus ancien)
-    const messages = await Message.find(query)
-      .sort({ createdAt: -1 }) // Du plus récent au plus ancien
-      .skip(beforeId ? 0 : offset) // Si beforeId, pas de skip
-      .limit(limit)
-      .lean()
-      .maxTimeMS(5000);
-
-    // Inverser pour avoir l'ordre chronologique (du plus ancien au plus récent)
-    const orderedMessages = messages.reverse();
-
-    // Adapter la réponse pour les messages supprimés et déchiffrer
-    const result = orderedMessages.map((msg) => {
-      if (msg.metadata?.deleted) {
-        return {
-          _id: msg._id,
-          createdAt: msg.createdAt,
-          senderId: msg.senderId,
-          deleted: true,
-        };
-      }
-      return {
-        ...msg,
-        content: decryptCommunication(msg.content),
-        replies:
-          msg.replies?.map((r: IMessageReply) => ({
-            ...r,
-            content: decryptCommunication(r.content),
-          })) || [],
-        metadata: msg.metadata,
-      };
+    const result = await getMessagesOp(userId, conversationId, {
+      limit: parseInt(req.query.limit as string) || 20,
+      offset: parseInt(req.query.offset as string) || 0,
+      beforeId: req.query.beforeId as string | undefined,
     });
 
-    // Calculer s'il y a plus de messages à charger
-    const currentPosition = offset + messages.length;
-    const hasMore = beforeId
-      ? messages.length === limit // Si on utilise beforeId, hasMore = on a reçu le max demandé
-      : currentPosition < totalCount;
-
-    res.json({
-      messages: result,
-      pagination: {
-        offset,
-        limit,
-        total: totalCount,
-        hasMore,
-        oldestMessageId: result.length > 0 ? result[0]._id : null,
-      },
-    });
-  } catch (err) {
+    res.json(result);
+  } catch (err: any) {
+    if (err.statusCode === 404)
+      return res.status(404).json({ error: err.message });
     messagesLogger.error("Erreur récupération messages", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
@@ -341,44 +154,31 @@ export async function markMessageAsRead(req: Request, res: Response) {
       return res.status(401).json({ error: "Utilisateur non authentifié" });
     const { messageId } = req.params;
     if (!messageId) return res.status(400).json({ error: "messageId requis" });
-    const message = await Message.findById(messageId);
-    if (!message) return res.status(404).json({ error: "Message non trouvé" });
 
-    // SEC-AUDIT: Vérification d'appartenance à la conversation
-    const conversation = await Conversation.findOne({
-      _id: message.conversationId,
-      "participants.userId": userId,
-    });
-    if (!conversation) {
-      return res
-        .status(403)
-        .json({ error: "Accès non autorisé à cette conversation" });
-    }
+    const result = await markMessageAsReadOp(userId, messageId);
 
-    // Vérifier si le message n'est pas déjà lu par cet utilisateur
-    const alreadyRead = message.readBy
-      .map((id: string | Types.ObjectId) => id.toString())
-      .includes(userId);
-
-    if (!alreadyRead) {
-      message.readBy.push(new Types.ObjectId(userId));
-      message.updatedAt = new Date();
-      await message.save();
-
+    if (!result.alreadyRead) {
       // Notifier les participants de la conversation que ce message a été lu
-      const participantIds = conversation.participants.map((p: any) =>
-        p.userId.toString(),
-      );
-      webSocketService.notifyMessagesRead(
-        message.conversationId.toString(),
-        userId,
-        [messageId],
-        participantIds,
-      );
+      // Note: conversationId est récupéré depuis le message dans le service
+      const msg = (await Message.findById(messageId).lean()) as any;
+      if (msg) {
+        webSocketService.notifyMessagesRead(
+          msg.conversationId.toString(),
+          userId,
+          [messageId],
+          result.participantIds,
+        );
+      }
     }
 
     res.json({ success: true });
-  } catch (err) {
+  } catch (err: any) {
+    if (err.statusCode === 404)
+      return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403)
+      return res
+        .status(403)
+        .json({ error: "Accès non autorisé à cette conversation" });
     messagesLogger.error("Erreur marquage message comme lu", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
@@ -400,32 +200,16 @@ export async function replyToMessage(req: Request, res: Response) {
     const { content } = req.body;
     if (!messageId || !content)
       return res.status(400).json({ error: "messageId et content requis" });
-    const message = await Message.findById(messageId);
-    if (!message) return res.status(404).json({ error: "Message non trouvé" });
 
-    // SEC-AUDIT: Vérification d'appartenance à la conversation
-    const conversation = await Conversation.findOne({
-      _id: message.conversationId,
-      "participants.userId": userId,
-    });
-    if (!conversation) {
+    await replyToMessageOp(userId, messageId, content);
+    res.status(201).json({ success: true });
+  } catch (err: any) {
+    if (err.statusCode === 404)
+      return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403)
       return res
         .status(403)
         .json({ error: "Accès non autorisé à cette conversation" });
-    }
-
-    // Chiffrer la réponse
-    const encryptedContent = encryptCommunication(content);
-    const reply: IMessageReply = {
-      userId: new Types.ObjectId(userId),
-      content: encryptedContent,
-      createdAt: new Date(),
-    };
-    message.replies.push(reply);
-    message.updatedAt = new Date();
-    await message.save();
-    res.status(201).json({ success: true });
-  } catch (err) {
     messagesLogger.error("Erreur réponse message", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
@@ -447,17 +231,14 @@ export async function editMessage(req: Request, res: Response) {
     const { content } = req.body;
     if (!messageId || !content)
       return res.status(400).json({ error: "messageId et content requis" });
-    const message = await Message.findById(messageId);
-    if (!message) return res.status(404).json({ error: "Message non trouvé" });
-    if (message.senderId.toString() !== userId) {
-      return res.status(403).json({ error: "Non autorisé" });
-    }
-    message.content = encryptCommunication(content);
-    message.metadata = { ...message.metadata, edited: true };
-    message.updatedAt = new Date();
-    await message.save();
+
+    await editMessageOp(userId, messageId, content);
     res.json({ success: true });
-  } catch (err) {
+  } catch (err: any) {
+    if (err.statusCode === 404)
+      return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403)
+      return res.status(403).json({ error: "Non autorisé" });
     messagesLogger.error("Erreur modification message", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,
@@ -476,16 +257,14 @@ export async function deleteMessage(req: Request, res: Response) {
     if (!userId)
       return res.status(401).json({ error: "Utilisateur non authentifié" });
     const { messageId } = req.params;
-    const message = await Message.findById(messageId);
-    if (!message) return res.status(404).json({ error: "Message non trouvé" });
-    if (message.senderId.toString() !== userId) {
-      return res.status(403).json({ error: "Non autorisé" });
-    }
-    message.metadata = { ...message.metadata, deleted: true };
-    message.updatedAt = new Date();
-    await message.save();
+
+    await deleteMessageOp(userId, messageId);
     res.json({ success: true });
-  } catch (err) {
+  } catch (err: any) {
+    if (err.statusCode === 404)
+      return res.status(404).json({ error: err.message });
+    if (err.statusCode === 403)
+      return res.status(403).json({ error: "Non autorisé" });
     messagesLogger.error("Erreur suppression message", {
       error: err instanceof Error ? err.message : String(err),
       stack: err instanceof Error ? err.stack : undefined,

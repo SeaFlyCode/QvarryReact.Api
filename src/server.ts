@@ -56,7 +56,6 @@ import {
   generalLimiter,
   highTrafficLimiter,
   socialLimiter,
-  wsConnectionLimiter,
   refreshTokenLimiter,
   adminLimiter,
   mobileAuthLimiter,
@@ -86,10 +85,13 @@ import mobileSyncRoutes from "./routes/mobileSyncRoutes";
 import mobileTwoFactorRoutes from "./routes/mobileTwoFactorRoutes";
 import mobileSosRoutes from "./routes/mobileSosRoutes";
 import mobilePushTokenRoutes from "./routes/mobilePushTokenRoutes";
+import webhookRoutes from "./routes/webhookRoutes";
+import publicRoutes from "./routes/publicRoutes";
 import { maintenanceMiddleware } from "./middlewares/maintenanceMiddleware";
 import cookieParser from "cookie-parser";
 import {
   startDataShareCleanupJob,
+  startPushTokenCleanupJob,
   startNotificationCleanupJob,
   startRefreshTokenCleanupJob,
 } from "./services/cronJobs";
@@ -530,9 +532,6 @@ app.use("/api/maintenance", maintenanceLimiter);
 // Routes de notifications (SEC-AUDIT: limiter dédié 60 req/min)
 app.use("/api/notifications", notificationsLimiter);
 
-// WebSocket
-app.use("/ws", wsConnectionLimiter);
-
 // Rate limiter général pour toutes les autres routes /api (FALLBACK)
 app.use("/api", generalLimiter);
 
@@ -579,6 +578,7 @@ app.use("/api", generalLimiter);
 
     // Démarrer les jobs cron
     startDataShareCleanupJob();
+    startPushTokenCleanupJob();
     startNotificationCleanupJob();
     startRefreshTokenCleanupJob();
 
@@ -600,6 +600,17 @@ app.use("/api", generalLimiter);
         VONAGE_SMS_FROM: process.env.VONAGE_SMS_FROM || "Qvarry (default)",
       });
     }
+
+    // Initialiser le service d'attestation d'appareils
+    const DeviceAttestationService =
+      await import("./services/deviceAttestationService");
+    DeviceAttestationService.default.initialize();
+    serverLogger.info(
+      "[SECURITY] Service d'attestation d'appareils initialisé",
+      {
+        enabled: DeviceAttestationService.default.isAttestationEnabled(),
+      },
+    );
 
     startSosEscalationJob();
     startSosCleanupJob();
@@ -632,6 +643,22 @@ app.use("/api", generalLimiter);
         });
       },
     );
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ROUTES WEBHOOK - MONTER AVANT TOUT MIDDLEWARE D'AUTH
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Ces routes sont appelées par des services externes (Vonage)
+    // Pas d'authentification, pas de maintenance check
+    // ═══════════════════════════════════════════════════════════════════════════
+    app.use("/api/webhooks/vonage", webhookRoutes);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // ROUTES PUBLIQUES - RESSOURCES STATIQUES ACCESSIBLES SANS AUTH
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Ces routes servent des fichiers publics (logo, assets)
+    // Pas d'authentification, optimisé pour le cache long terme
+    // ═══════════════════════════════════════════════════════════════════════════
+    app.use("/public", publicRoutes);
 
     // MED-09 FIX: API versioning — Middleware de rétrocompatibilité /api/ → /api/v1/
     // Les routes sont montées sur /api/v1/ et /api/ redirige pour rétrocompatibilité
@@ -987,6 +1014,13 @@ app.use("/api", generalLimiter);
       await import("./services/notificationService");
     NotificationService.initializePushNotifications();
     serverLogger.info("Service de notifications push initialisé");
+
+    // Démarrer le service de retry des notifications en attente (persistant)
+    // Cela permet de réessayer les notifications qui ont échoué même après un redémarrage
+    await NotificationService.retryPendingNotifications();
+    serverLogger.info(
+      "Service de retry des notifications démarré (vérifie les notifications en attente au startup)",
+    );
   } catch (err) {
     serverLogger.critical("Impossible de se connecter à la base de données", {
       error: getErrorMessage(err),

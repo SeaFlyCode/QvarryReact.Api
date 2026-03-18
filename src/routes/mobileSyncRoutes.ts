@@ -9,7 +9,7 @@ import express from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import {
   verifyMobilePlatform,
-  mobileRateLimitMiddleware,
+  mobileSyncRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
 import {
   handleMobileSync,
@@ -27,7 +27,7 @@ const router = express.Router();
 const mobileSyncMiddleware = [
   verifyMobilePlatform,
   authMiddleware,
-  mobileRateLimitMiddleware,
+  mobileSyncRateLimitMiddleware,
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

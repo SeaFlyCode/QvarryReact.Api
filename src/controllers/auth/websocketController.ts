@@ -28,28 +28,40 @@ export const getWebSocketToken = (req: Request, res: Response) => {
       throw new Error("Configuration de sécurité manquante");
     }
 
-    // AUTH-004 CORRIGÉ: Ajout d'un JTI unique pour token à usage unique
-    const tokenJti = crypto.randomBytes(16).toString("hex");
+    // Générer deux JTI distincts — un par connexion WS
+    const notificationsJti = crypto.randomBytes(16).toString("hex");
+    const messagesJti = crypto.randomBytes(16).toString("hex");
 
-    const wsToken = jwt.sign(
-      {
-        id: userId,
-        type: "websocket",
-        isAdmin: req.user?.isAdmin || false,
-        jti: tokenJti, // JTI unique pour validation à usage unique
-      },
+    const commonPayload = {
+      id: userId,
+      type: "websocket",
+      isAdmin: req.user?.isAdmin || false,
+    };
+
+    // Token pour /ws/notifications
+    const notificationsToken = jwt.sign(
+      { ...commonPayload, jti: notificationsJti, wsType: "notifications" },
       process.env.JWT_SECRET,
-      { expiresIn: "5m" }, // Token valide 5 minutes
+      { expiresIn: "5m" },
     );
 
-    wsAuthLogger.info("WebSocket token generated", {
+    // Token pour /ws/messages
+    const messagesToken = jwt.sign(
+      { ...commonPayload, jti: messagesJti, wsType: "messages" },
+      process.env.JWT_SECRET,
+      { expiresIn: "5m" },
+    );
+
+    wsAuthLogger.info("WebSocket tokens generated", {
       userId,
-      jti: tokenJti.substring(0, 8),
+      notificationsJti: notificationsJti.substring(0, 8),
+      messagesJti: messagesJti.substring(0, 8),
       expiresIn: "5m",
     });
 
     return res.status(200).json({
-      token: wsToken,
+      notificationsToken,
+      messagesToken,
       expiresIn: 300, // 5 minutes en secondes
     });
   } catch (error: unknown) {

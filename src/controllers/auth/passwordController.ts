@@ -155,7 +155,12 @@ export async function handleResetPassword(req: Request, res: Response) {
     const [_storedToken, storedCode] = (user.reset_password_token || "").split(
       ":",
     );
-    if (storedCode !== code) {
+    const isCodeValid =
+      storedCode &&
+      code &&
+      storedCode.length === code.length &&
+      crypto.timingSafeEqual(Buffer.from(storedCode), Buffer.from(code));
+    if (!isCodeValid) {
       return res.status(400).json({
         message: "Code invalide.",
         expired: false,

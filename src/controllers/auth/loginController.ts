@@ -294,7 +294,7 @@ export async function handleLoginUser(req: Request, res: Response) {
     // ─────────────────────────────────────────────────────────────────────
     // 9.5 ENVOI D'EMAIL D'ALERTE DE SÉCURITÉ (optionnel, configurable)
     // ─────────────────────────────────────────────────────────────────────
-    loginLogger.info("[AUTH] Vérification des alertes de connexion", {
+    loginLogger.debug("[AUTH] Vérification des alertes de connexion", {
       SEND_LOGIN_ALERTS: process.env.SEND_LOGIN_ALERTS,
       userPreference: user.login_notifications_enabled ?? true,
     });
@@ -353,7 +353,6 @@ export async function handleLoginUser(req: Request, res: Response) {
     const response: any = {
       login: true,
       userId: userId,
-      email: user.email,
       isAdmin: user.is_admin || false,
       redirectToAdmin: isMaintenanceActive && user.is_admin, // Rediriger vers /admin si maintenance active
       sessionCreated: new Date().toISOString(),
@@ -394,7 +393,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
     // ─────────────────────────────────────────────────────────────────────
     // 1. RÉCUPÉRATION DU REFRESH TOKEN
     // ─────────────────────────────────────────────────────────────────────
-    loginLogger.info("[AUTH DEBUG] Cookies reçus", {
+    loginLogger.debug("[AUTH DEBUG] Cookies reçus", {
       cookies: Object.keys(req.cookies || {}),
       hasRefreshToken: !!req.cookies?.[REFRESH_TOKEN_COOKIE_NAME],
     });
@@ -404,7 +403,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
 
     if (!refreshToken) {
       loginLogger.warn("[AUTH] Tentative de refresh sans token", {
-        availableCookies: req.cookies,
+        availableCookies: Object.keys(req.cookies || {}),
       });
       return res.status(401).json({
         error: "Refresh token manquant. Veuillez vous reconnecter.",
@@ -854,7 +853,6 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
     return res.status(200).json({
       login: true,
       userId,
-      email: user.email,
       sessionCreated: new Date().toISOString(),
       tokenExpiresIn: getCookieConfig().jwtMaxAgeMinutes * 60,
     });

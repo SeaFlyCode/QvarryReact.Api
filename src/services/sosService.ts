@@ -316,6 +316,7 @@ class SosService {
           },
           userId: userObjectId,
           sessionId: { $exists: false }, // Uniquement les contacts permanents
+          deletedAt: null, // Exclure les contacts soft-deleted
         })
           .select("_id")
           .lean();
@@ -350,6 +351,7 @@ class SosService {
         const contactCount = await SosContactModel.countDocuments({
           userId: new mongoose.Types.ObjectId(participantId),
           sessionId: { $exists: false },
+          deletedAt: null, // Exclure les contacts soft-deleted
         });
         if (contactCount > 0) {
           hasEmergencyContacts = true;
@@ -1704,11 +1706,13 @@ class SosService {
       allContacts = await SosContactModel.find({
         userId: { $in: participantUserIds },
         sessionId: { $exists: false },
+        deletedAt: null, // Exclure les contacts soft-deleted
       }).lean();
     } else {
       // Utiliser les contacts sélectionnés pour cette session
       allContacts = await SosContactModel.find({
         _id: { $in: session.sessionContactIds },
+        deletedAt: null, // Exclure les contacts soft-deleted
       }).lean();
     }
 
@@ -1858,6 +1862,7 @@ class SosService {
     // Vérifier le nombre max de contacts (5)
     const count = await SosContactModel.countDocuments({
       userId: userObjectId,
+      deletedAt: null, // Ne compter que les contacts actifs
     });
     if (count >= 5) {
       throw new Error("MAX_CONTACTS_REACHED");
@@ -1887,6 +1892,7 @@ class SosService {
   async getContacts(userId: string): Promise<any[]> {
     return SosContactModel.find({
       userId: new mongoose.Types.ObjectId(userId),
+      deletedAt: null, // Exclure les contacts soft-deleted
     })
       .sort({ isDefault: -1, createdAt: -1 })
       .lean();
@@ -1923,15 +1929,48 @@ class SosService {
   }
 
   /**
-   * Supprimer un contact d'urgence
+   * Supprimer un contact d'urgence (soft-delete pour les contacts permanents)
    */
   async deleteContact(userId: string, contactId: string): Promise<boolean> {
-    const result = await SosContactModel.deleteOne({
-      _id: new mongoose.Types.ObjectId(contactId),
-      userId: new mongoose.Types.ObjectId(userId),
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+    const contactObjectId = new mongoose.Types.ObjectId(contactId);
+
+    // Récupérer le contact pour vérifier s'il est temporaire ou permanent
+    const contact = await SosContactModel.findOne({
+      _id: contactObjectId,
+      userId: userObjectId,
     });
 
-    return result.deletedCount > 0;
+    if (!contact) {
+      return false;
+    }
+
+    // Si le contact est temporaire (lié à une session), faire un hard-delete
+    if (contact.sessionId) {
+      const result = await SosContactModel.deleteOne({
+        _id: contactObjectId,
+        userId: userObjectId,
+      });
+      return result.deletedCount > 0;
+    }
+
+    // Sinon, soft-delete pour les contacts permanents
+    const result = await SosContactModel.findOneAndUpdate(
+      {
+        _id: contactObjectId,
+        userId: userObjectId,
+        sessionId: { $exists: false }, // Uniquement les contacts permanents
+      },
+      {
+        $set: {
+          deletedAt: new Date(),
+          version: (contact.version || 1) + 1,
+        },
+      },
+      { new: true },
+    );
+
+    return result !== null;
   }
 
   // ─── MÉTHODES ADMIN ────────────────────────────────────────────────
@@ -2226,6 +2265,7 @@ class SosService {
     // Récupérer les contacts d'urgence de TOUS les participants
     const allContacts = await SosContactModel.find({
       userId: { $in: participantUserIds },
+      deletedAt: null, // Exclure les contacts soft-deleted
     })
       .sort({ isDefault: -1, createdAt: -1 })
       .lean();
@@ -3894,6 +3934,7 @@ class SosService {
       userId: {
         $in: participantUserIds.map((id) => new mongoose.Types.ObjectId(id)),
       },
+      deletedAt: null, // Exclure les contacts soft-deleted
     }).lean();
 
     if (allContacts.length === 0) {

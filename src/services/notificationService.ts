@@ -4,7 +4,12 @@ import NotificationModel, {
   NotificationType,
 } from "../models/notifications";
 import PushTokenModel from "../models/pushToken";
-import { getTokensByUserId, removeInvalidTokens } from "./pushTokenService";
+import PendingNotificationModel from "../models/pendingNotification";
+import {
+  getTokensByUserId,
+  getTokensByUserIds,
+  removeInvalidTokens,
+} from "./pushTokenService";
 import { webSocketService } from "./webSocketService"; // Correction de l'import nommé
 import dataArchiveService from "./dataArchiveService";
 import { logger } from "./loggerService";
@@ -14,7 +19,9 @@ const notifLogger = logger.child({ service: "notification" });
 // ═══════════════════════════════════════════════════════════════════════════
 // FIREBASE ADMIN SDK - Import conditionnel
 // ═══════════════════════════════════════════════════════════════════════════
-let firebaseAdmin: any = null;
+import type * as FirebaseAdmin from "firebase-admin";
+
+let firebaseAdmin: typeof FirebaseAdmin | null = null;
 try {
   firebaseAdmin = require("firebase-admin");
 } catch (error) {
@@ -32,24 +39,13 @@ interface PushNotificationResult {
   error?: string;
 }
 
-interface PendingNotification {
-  userId: string;
-  title: string;
-  message: string;
-  data: any;
-  type: NotificationType;
-  attempts: number;
-  lastAttempt: Date;
-  createdAt: Date;
-}
+// Interface supprimée - désormais gérée par le modèle PendingNotificationModel
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CLASSE DE SERVICE DE NOTIFICATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 class NotificationService {
   private static fcmInitialized: boolean = false;
-  private static pendingNotifications: Map<string, PendingNotification> =
-    new Map();
   private static retryIntervalId: NodeJS.Timeout | null = null;
   private static readonly MAX_RETRY_ATTEMPTS = 5;
   private static readonly RETRY_INTERVAL_MS = 30000; // 30 secondes
@@ -241,40 +237,59 @@ class NotificationService {
   }
 
   /**
-   * Ajoute une notification à la file d'attente de retry
+   * Ajoute une notification à la file d'attente de retry (persistante via MongoDB)
    */
-  private static addToPendingQueue(
+  private static async addToPendingQueue(
     userId: string,
     title: string,
     message: string,
     data: any,
     type: NotificationType,
-  ): void {
-    const notificationKey = `${userId}-${Date.now()}`;
-
-    this.pendingNotifications.set(notificationKey, {
-      userId,
-      title,
-      message,
-      data,
-      type,
-      attempts: 0,
-      lastAttempt: new Date(),
-      createdAt: new Date(),
-    });
-
-    notifLogger.warn(
-      "[SOS-WARNING] Notification ajoutée à la file d'attente de retry",
-      {
-        userId,
+  ): Promise<void> {
+    try {
+      // Créer un document dans MongoDB pour persister la notification
+      const pendingNotification = new PendingNotificationModel({
+        userId: new mongoose.Types.ObjectId(userId),
         type,
-        queueSize: this.pendingNotifications.size,
-      },
-    );
+        title,
+        message,
+        data,
+        attempts: 0,
+        maxAttempts: this.MAX_RETRY_ATTEMPTS,
+        nextRetryAt: new Date(Date.now() + this.RETRY_INTERVAL_MS),
+        status: "pending",
+      });
 
-    // Démarrer le service de retry si pas déjà actif
-    if (!this.retryIntervalId) {
-      this.startRetryService();
+      await pendingNotification.save();
+
+      // Compter les notifications en attente pour le log
+      const queueSize = await PendingNotificationModel.countDocuments({
+        status: "pending",
+      });
+
+      notifLogger.warn(
+        "[SOS-WARNING] Notification ajoutée à la file d'attente de retry",
+        {
+          userId,
+          type,
+          queueSize,
+          nextRetryAt: pendingNotification.nextRetryAt,
+        },
+      );
+
+      // Démarrer le service de retry si pas déjà actif
+      if (!this.retryIntervalId) {
+        this.startRetryService();
+      }
+    } catch (error) {
+      notifLogger.error(
+        "Erreur lors de l'ajout d'une notification à la file de retry",
+        {
+          userId,
+          type,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
     }
   }
 
@@ -294,94 +309,133 @@ class NotificationService {
   }
 
   /**
-   * Réessaie d'envoyer les notifications en attente
+   * Réessaie d'envoyer les notifications en attente (depuis MongoDB)
    */
   static async retryPendingNotifications(): Promise<void> {
-    if (this.pendingNotifications.size === 0) {
-      return;
-    }
+    try {
+      // Récupérer les notifications en attente dont le nextRetryAt est dépassé
+      const now = new Date();
+      const pendingNotifications = await PendingNotificationModel.find({
+        status: "pending",
+        nextRetryAt: { $lte: now },
+      }).lean();
 
-    notifLogger.info("Tentative de renvoi des notifications en attente", {
-      count: this.pendingNotifications.size,
-    });
+      if (pendingNotifications.length === 0) {
+        return;
+      }
 
-    const toRemove: string[] = [];
+      notifLogger.info("Tentative de renvoi des notifications en attente", {
+        count: pendingNotifications.length,
+      });
 
-    for (const [key, notification] of this.pendingNotifications.entries()) {
-      notification.attempts++;
-      notification.lastAttempt = new Date();
+      for (const notification of pendingNotifications) {
+        const userIdStr = notification.userId.toString();
 
-      // Tentative WebSocket
-      let wsSuccess = false;
-      try {
-        if (
-          webSocketService &&
-          typeof webSocketService.sendNotificationToUser === "function"
-        ) {
-          webSocketService.sendNotificationToUser(notification.userId, {
-            type: "notification",
-            notificationType: notification.type,
-            title: notification.title,
-            message: notification.message,
-            ...notification.data,
+        // Tentative WebSocket
+        let wsSuccess = false;
+        try {
+          if (
+            webSocketService &&
+            typeof webSocketService.sendNotificationToUser === "function"
+          ) {
+            webSocketService.sendNotificationToUser(userIdStr, {
+              type: "notification",
+              notificationType: notification.type,
+              title: notification.title,
+              message: notification.message,
+              ...notification.data,
+            });
+            wsSuccess = true;
+            notifLogger.info("Notification retry réussie via WebSocket", {
+              userId: userIdStr,
+              attempts: notification.attempts + 1,
+            });
+            // Supprimer la notification de la file d'attente
+            await PendingNotificationModel.deleteOne({ _id: notification._id });
+            continue;
+          }
+        } catch (error) {
+          notifLogger.debug("Retry WebSocket échoué", {
+            userId: userIdStr,
+            attempts: notification.attempts + 1,
           });
-          wsSuccess = true;
-          notifLogger.info("Notification retry réussie via WebSocket", {
-            userId: notification.userId,
-            attempts: notification.attempts,
-          });
-          toRemove.push(key);
-          continue;
         }
-      } catch (error) {
-        notifLogger.debug("Retry WebSocket échoué", {
-          userId: notification.userId,
-          attempts: notification.attempts,
-        });
-      }
 
-      // Si WebSocket échoue, tenter push notification
-      if (!wsSuccess) {
-        const pushResult = await this.sendPushNotification(
-          notification.userId,
-          notification.title,
-          notification.message,
-          notification.data,
-        );
+        // Si WebSocket échoue, tenter push notification
+        if (!wsSuccess) {
+          const pushResult = await this.sendPushNotification(
+            notification.userId,
+            notification.title,
+            notification.message,
+            notification.data || {},
+          );
 
-        if (pushResult.sent) {
-          notifLogger.info("Notification retry réussie via push", {
-            userId: notification.userId,
-            attempts: notification.attempts,
-          });
-          toRemove.push(key);
-          continue;
+          if (pushResult.sent) {
+            notifLogger.info("Notification retry réussie via push", {
+              userId: userIdStr,
+              attempts: notification.attempts + 1,
+            });
+            // Supprimer la notification de la file d'attente
+            await PendingNotificationModel.deleteOne({ _id: notification._id });
+            continue;
+          }
+        }
+
+        // Incrémenter le nombre de tentatives
+        const newAttempts = notification.attempts + 1;
+
+        // Si max tentatives atteint, marquer comme failed et logger CRITICAL
+        if (newAttempts >= notification.maxAttempts) {
+          notifLogger.error(
+            `[SOS-CRITICAL] Notification could not be delivered after ${notification.maxAttempts} attempts`,
+            {
+              userId: userIdStr,
+              type: notification.type,
+              title: notification.title,
+              elapsedTime: now.getTime() - notification.createdAt.getTime(),
+            },
+          );
+          // Marquer comme failed (sera supprimée automatiquement par le TTL après 24h)
+          await PendingNotificationModel.updateOne(
+            { _id: notification._id },
+            {
+              $set: {
+                status: "failed",
+                attempts: newAttempts,
+              },
+            },
+          );
+        } else {
+          // Mettre à jour le compteur de tentatives et le nextRetryAt
+          await PendingNotificationModel.updateOne(
+            { _id: notification._id },
+            {
+              $set: {
+                attempts: newAttempts,
+                nextRetryAt: new Date(now.getTime() + this.RETRY_INTERVAL_MS),
+              },
+            },
+          );
         }
       }
 
-      // Si max tentatives atteint, logger CRITICAL et supprimer
-      if (notification.attempts >= this.MAX_RETRY_ATTEMPTS) {
-        notifLogger.error(
-          `[SOS-CRITICAL] Notification could not be delivered after ${this.MAX_RETRY_ATTEMPTS} attempts`,
-          {
-            userId: notification.userId,
-            type: notification.type,
-            title: notification.title,
-            elapsedTime: Date.now() - notification.createdAt.getTime(),
-          },
+      // Vérifier s'il reste des notifications en attente
+      const remainingCount = await PendingNotificationModel.countDocuments({
+        status: "pending",
+      });
+
+      // Arrêter le service si plus de notifications en attente
+      if (remainingCount === 0 && this.retryIntervalId) {
+        clearInterval(this.retryIntervalId);
+        this.retryIntervalId = null;
+        notifLogger.info(
+          "Service de retry des notifications arrêté (file vide)",
         );
-        toRemove.push(key);
       }
-    }
-
-    // Supprimer les notifications traitées
-    toRemove.forEach((key) => this.pendingNotifications.delete(key));
-
-    // Arrêter le service si plus de notifications en attente
-    if (this.pendingNotifications.size === 0 && this.retryIntervalId) {
-      clearInterval(this.retryIntervalId);
-      this.retryIntervalId = null;
-      notifLogger.info("Service de retry des notifications arrêté (file vide)");
+    } catch (error) {
+      notifLogger.error("Erreur lors du retry des notifications en attente", {
+        error: error instanceof Error ? error.message : String(error),
+      });
     }
   }
 
@@ -452,7 +506,7 @@ class NotificationService {
         deliveryMethod = wsSuccess ? "websocket+fcm" : "fcm";
       } else if (!wsSuccess) {
         // Aucune méthode n'a fonctionné, ajouter à la file de retry
-        this.addToPendingQueue(userIdStr, title, message, data, type);
+        await this.addToPendingQueue(userIdStr, title, message, data, type);
         deliveryMethod = "queued_for_retry";
       } else if (isSosNotification) {
         // WS succeeded but FCM failed for SOS — log critical (WS delivered but no push backup)
@@ -470,6 +524,149 @@ class NotificationService {
       isSosNotification,
       deliveryMethod,
     });
+  }
+
+  /**
+   * Envoie des notifications push en batch à plusieurs utilisateurs
+   * Récupère tous les tokens en une seule requête MongoDB et envoie via sendEach FCM
+   * Utilisé notamment pour les alertes SOS Stage 1 (tous les utilisateurs Qvarry)
+   *
+   * @param userIds - Liste des IDs utilisateurs destinataires
+   * @param title - Titre de la notification
+   * @param body - Corps de la notification
+   * @param data - Données supplémentaires FCM
+   * @returns Nombre de notifications envoyées et échouées
+   */
+  static async sendBatchPushNotifications(
+    userIds: string[],
+    title: string,
+    body: string,
+    data: Record<string, string>,
+  ): Promise<{ sent: number; failed: number }> {
+    if (!this.fcmInitialized || !firebaseAdmin) {
+      notifLogger.warn(
+        "[SOS-WARNING] sendBatchPushNotifications: FCM non configuré, envoi annulé",
+        { userCount: userIds.length },
+      );
+      return { sent: 0, failed: userIds.length };
+    }
+
+    if (userIds.length === 0) {
+      return { sent: 0, failed: 0 };
+    }
+
+    try {
+      // Récupérer tous les tokens en une seule requête MongoDB (batch)
+      const tokenMap = await getTokensByUserIds(userIds);
+
+      // Construire les messages FCM pour chaque token trouvé
+      const messages: Array<{
+        token: string;
+        notification: { title: string; body: string };
+        data: Record<string, string>;
+        android?: {
+          priority: "high";
+          notification: { sound: string; priority: "high" };
+        };
+        apns?: {
+          payload: { aps: { sound: string; contentAvailable: boolean } };
+        };
+      }> = [];
+
+      // Associer token -> userId pour gérer les tokens invalides ensuite
+      const tokenToDeviceId: Map<number, string> = new Map();
+
+      for (const [userId, tokens] of tokenMap.entries()) {
+        for (const tokenDoc of tokens) {
+          const messageIndex = messages.length;
+          tokenToDeviceId.set(messageIndex, tokenDoc.deviceId);
+
+          messages.push({
+            token: tokenDoc.token,
+            notification: { title, body },
+            data: { ...data, userId },
+            ...(tokenDoc.platform === "android"
+              ? {
+                  android: {
+                    priority: "high" as const,
+                    notification: {
+                      sound: "default",
+                      priority: "high" as const,
+                    },
+                  },
+                }
+              : {}),
+            ...(tokenDoc.platform === "ios"
+              ? {
+                  apns: {
+                    payload: {
+                      aps: {
+                        sound: "default",
+                        contentAvailable: true,
+                      },
+                    },
+                  },
+                }
+              : {}),
+          });
+        }
+      }
+
+      if (messages.length === 0) {
+        notifLogger.warn(
+          "sendBatchPushNotifications: aucun token FCM trouvé pour les utilisateurs",
+          { userCount: userIds.length },
+        );
+        return { sent: 0, failed: userIds.length };
+      }
+
+      // Envoi batch via sendEach (sendAll est deprecated)
+      const response = await firebaseAdmin.messaging().sendEach(messages);
+
+      // Identifier les tokens invalides à supprimer
+      const tokensToDelete: string[] = [];
+      response.responses.forEach((resp: any, idx: number) => {
+        if (!resp.success) {
+          const errorCode = resp.error?.code;
+          if (
+            errorCode === "messaging/invalid-registration-token" ||
+            errorCode === "messaging/registration-token-not-registered"
+          ) {
+            const deviceId = tokenToDeviceId.get(idx);
+            if (deviceId) {
+              tokensToDelete.push(deviceId);
+            }
+          }
+        }
+      });
+
+      // Supprimer les tokens invalides
+      if (tokensToDelete.length > 0) {
+        await removeInvalidTokens(tokensToDelete);
+        notifLogger.warn("Tokens FCM invalides supprimés (batch)", {
+          count: tokensToDelete.length,
+        });
+      }
+
+      notifLogger.info("Notifications push batch envoyées", {
+        userCount: userIds.length,
+        tokenCount: messages.length,
+        sent: response.successCount,
+        failed: response.failureCount,
+      });
+
+      return {
+        sent: response.successCount,
+        failed: response.failureCount,
+      };
+    } catch (error: any) {
+      notifLogger.error("Erreur lors de l'envoi batch des notifications push", {
+        userCount: userIds.length,
+        error: error.message,
+        code: error.code,
+      });
+      return { sent: 0, failed: userIds.length };
+    }
   }
 }
 
