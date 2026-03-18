@@ -422,14 +422,28 @@ describe("Canal Messages — Auth lifecycle", () => {
 
   it("connect → auth avec token valide + participant → reçoit 'connected'", async () => {
     // Debug: vérifier que le mock findOne fonctionne correctement
-    const ConversationMock = jest.requireMock("../../models/conversations").default;
+    const ConversationMock = jest.requireMock(
+      "../../models/conversations",
+    ).default;
     const queryObj = ConversationMock.findOne({ _id: "conv-id" });
     const debugResult = await queryObj.lean();
-    console.log("[DEBUG] findOne().lean() result:", JSON.stringify(debugResult));
+    console.log(
+      "[DEBUG] findOne().lean() result:",
+      JSON.stringify(debugResult),
+    );
 
     // Debug: vérifier consumeWsToken
-    const redisMock = jest.requireMock("../../services/redisSessionService").redisSessionService;
-    console.log("[DEBUG] consumeWsToken mock:", typeof redisMock.consumeWsToken, redisMock.consumeWsToken.getMockImplementation?.()?.toString().slice(0, 50));
+    const redisMock = jest.requireMock(
+      "../../services/redisSessionService",
+    ).redisSessionService;
+    console.log(
+      "[DEBUG] consumeWsToken mock:",
+      typeof redisMock.consumeWsToken,
+      redisMock.consumeWsToken
+        .getMockImplementation?.()
+        ?.toString()
+        .slice(0, 50),
+    );
     const tokenResult = await redisMock.consumeWsToken("test-jti");
     console.log("[DEBUG] consumeWsToken result:", tokenResult);
 
@@ -439,13 +453,33 @@ describe("Canal Messages — Auth lifecycle", () => {
     console.log("[DEBUG] token payload:", JSON.stringify(decoded));
     console.log("[DEBUG] JWT_SECRET:", process.env.JWT_SECRET);
 
+    // Debug: try to verify the token manually
+    try {
+      const verified = require("jsonwebtoken").verify(
+        testToken,
+        process.env.JWT_SECRET,
+        { algorithms: ["HS256"] },
+      );
+      console.log("[DEBUG] jwt.verify OK:", JSON.stringify(verified));
+    } catch (e: any) {
+      console.log("[DEBUG] jwt.verify ERROR:", e.message);
+    }
+
     // Arrange & Act
     const ws = await connectMessageClient(port, "conv-id");
     clients.push(ws);
 
-    // Écouter fermeture pour debug
+    // Écouter les messages et fermetures pour debug
+    ws.on("message", (data) => {
+      console.log("[DEBUG] WS message received:", data.toString());
+    });
     ws.on("close", (code, reason) => {
-      console.log("[DEBUG] WS closed with code:", code, "reason:", reason.toString());
+      console.log(
+        "[DEBUG] WS closed with code:",
+        code,
+        "reason:",
+        reason.toString(),
+      );
     });
 
     const msg = await waitForMessage(ws, 3000);
@@ -454,6 +488,14 @@ describe("Canal Messages — Auth lifecycle", () => {
     expect(msg.type).toBe("connected");
     expect(msg.userId).toBe("user-id");
     expect(msg.conversationId).toBe("conv-id");
+  });
+
+  const msg = await waitForMessage(ws, 3000);
+
+  // Assert
+  expect(msg.type).toBe("connected");
+  expect(msg.userId).toBe("user-id");
+  expect(msg.conversationId).toBe("conv-id");
   it("connect → auth avec wsType='notifications' sur canal messages → fermé avec code 4002", async () => {
     // Arrange : mauvais wsType pour le canal messages
     const ws = await openWs(`ws://127.0.0.1:${port}/ws/messages?conv=conv-id`);

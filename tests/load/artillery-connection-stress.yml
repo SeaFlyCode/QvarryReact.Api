@@ -1,0 +1,123 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ARTILLERY WEBSOCKET - Connection Stress Test
+# ═══════════════════════════════════════════════════════════════════════════
+# Tests ability to handle many concurrent WebSocket connections
+# Focus: Connection scalability, memory usage, connection pooling
+#
+# Usage:
+#   artillery run tests/load/artillery-connection-stress.yml
+# ═══════════════════════════════════════════════════════════════════════════
+
+config:
+  target: "{{ $processEnvironment.API_URL || 'http://localhost:3000' }}"
+
+  # Aggressive connection ramp-up
+  phases:
+    - name: "Ramp up to 100 connections"
+      duration: 60
+      arrivalRate: 1
+      rampTo: 10
+
+    - name: "Ramp to 300 connections"
+      duration: 60
+      arrivalRate: 10
+      rampTo: 25
+
+    - name: "Peak at 500 connections"
+      duration: 120
+      arrivalRate: 25
+      rampTo: 50
+
+    - name: "Hold at 500"
+      duration: 60
+      arrivalRate: 50
+
+    - name: "Gradual cool-down"
+      duration: 60
+      arrivalRate: 50
+      rampTo: 5
+
+  variables:
+    testEmail: "{{ $processEnvironment.TEST_EMAIL || 'loadtest@example.com' }}"
+    testPassword: "{{ $processEnvironment.TEST_PASSWORD || 'LoadTest123!@#' }}"
+
+  processor: "./artillery-functions.js"
+
+  ensure:
+    ws.connection_time.p95: 500 # Connection time < 500ms
+    ws.connection_time.p99: 1000 # 99th percentile < 1s
+    http.codes.200: 90 # At least 90% HTTP success
+
+scenarios:
+  # Long-lived connection test
+  - name: "Long-lived WebSocket Connection"
+    weight: 70
+    flow:
+      # Authenticate
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ testEmail }}"
+            password: "{{ testPassword }}"
+          capture:
+            - json: "$.accessToken"
+              as: "authToken"
+
+      # Get WS token
+      - get:
+          url: "/api/v1/auth/ws-token"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$.notificationsToken"
+              as: "wsToken"
+
+      # Connect and hold
+      - ws:
+          url: "ws://{{ target }}/ws/notifications"
+
+      - send:
+          payload: |
+            {
+              "type": "auth",
+              "token": "{{ wsToken }}"
+            }
+
+      # Hold connection for extended period
+      - loop:
+          - think: 10
+        count: 30 # Hold for ~5 minutes
+
+  # Rapid connect/disconnect test
+  - name: "Rapid Connection Cycling"
+    weight: 30
+    flow:
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ testEmail }}"
+            password: "{{ testPassword }}"
+          capture:
+            - json: "$.accessToken"
+              as: "authToken"
+
+      - get:
+          url: "/api/v1/auth/ws-token"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$.notificationsToken"
+              as: "wsToken"
+
+      # Rapid connect/disconnect cycles
+      - loop:
+          - ws:
+              url: "ws://{{ target }}/ws/notifications"
+          - send:
+              payload: |
+                {
+                  "type": "auth",
+                  "token": "{{ wsToken }}"
+                }
+          - think: 2
+        count: 5

@@ -1,0 +1,171 @@
+{
+  "description": "Test data fixtures for Artillery WebSocket load tests",
+  "version": "1.0.0",
+
+  "users": {
+    "loadtest": {
+      "email": "loadtest@example.com",
+      "password": "LoadTest123!@#",
+      "name": "Load Test User"
+    },
+    "loadtest2": {
+      "email": "loadtest2@example.com",
+      "password": "LoadTest123!@#",
+      "name": "Load Test User 2"
+    }
+  },
+
+  "messages": {
+    "small": [
+      "Hi!",
+      "Thanks",
+      "Got it",
+      "OK",
+      "Sure thing",
+      "Will do",
+      "Great!",
+      "Perfect"
+    ],
+
+    "medium": [
+      "Hello, I wanted to follow up on our conversation from earlier this week.",
+      "Thanks for the update. Could you provide more details about the timeline?",
+      "I've reviewed the document and have a few questions about the implementation.",
+      "Let's schedule a meeting to discuss this further. What times work for you?",
+      "Great work on the presentation! The team was impressed with the results.",
+      "I agree with your proposal. Let's move forward with the next phase.",
+      "Can you send me the latest version of the report when you get a chance?",
+      "The project is progressing well and we're on track to meet the deadline."
+    ],
+
+    "large": [
+      "I wanted to provide a comprehensive update on the current status of our project. Over the past few weeks, we've made significant progress on multiple fronts. The development team has completed the core functionality, including the authentication system, database integration, and API endpoints. We've also implemented robust error handling and logging mechanisms to ensure system reliability. The QA team has been conducting thorough testing and has identified several edge cases that we're currently addressing. Our deployment pipeline is now fully automated, which should streamline future releases. Looking ahead, we have several important milestones on our roadmap, including performance optimization, security audits, and user acceptance testing. I'd like to schedule a meeting next week to discuss priorities and resource allocation for the next quarter.",
+
+      "Following up on our discussion about the WebSocket implementation, I've done some research and have several recommendations to share. First, we should implement proper connection pooling to handle the expected load of concurrent users. Based on our analysis, we anticipate peaks of up to 500 simultaneous connections during business hours. Second, message compression should be enabled by default, which will reduce bandwidth usage by approximately 60-70% for typical text messages. Third, we need to implement rate limiting at both the connection and message levels to prevent abuse and ensure fair resource allocation. I've prepared a detailed technical specification document that outlines the architecture, security considerations, and performance benchmarks. The document also includes recommendations for monitoring and alerting strategies. I'll share this with the team and would appreciate your feedback before we proceed with implementation."
+    ]
+  },
+
+  "messageTypes": ["text", "info", "warning", "success", "error"],
+
+  "metadata": {
+    "priorities": ["low", "normal", "high", "urgent"],
+    "categories": ["info", "warning", "success", "error", "notification"],
+    "tags": ["important", "review", "urgent", "fyi", "action-required"]
+  },
+
+  "notifications": {
+    "types": [
+      {
+        "type": "user.message",
+        "title": "New Message",
+        "body": "You have a new message from {{sender}}"
+      },
+      {
+        "type": "system.update",
+        "title": "System Update",
+        "body": "The system has been updated to version {{version}}"
+      },
+      {
+        "type": "alert.security",
+        "title": "Security Alert",
+        "body": "Unusual login activity detected from {{location}}"
+      },
+      {
+        "type": "conversation.invite",
+        "title": "Conversation Invitation",
+        "body": "{{sender}} invited you to a conversation"
+      }
+    ]
+  },
+
+  "performanceBaselines": {
+    "http": {
+      "login": {
+        "p50": 100,
+        "p95": 300,
+        "p99": 500,
+        "description": "Login endpoint response time (ms)"
+      },
+      "wsToken": {
+        "p50": 50,
+        "p95": 150,
+        "p99": 300,
+        "description": "WebSocket token generation time (ms)"
+      }
+    },
+
+    "websocket": {
+      "connection": {
+        "p50": 50,
+        "p95": 200,
+        "p99": 500,
+        "description": "WebSocket connection establishment time (ms)"
+      },
+      "authentication": {
+        "p50": 30,
+        "p95": 100,
+        "p99": 200,
+        "description": "WebSocket authentication time (ms)"
+      },
+      "messageLatency": {
+        "p50": 20,
+        "p95": 100,
+        "p99": 200,
+        "description": "Message send/receive latency (ms)"
+      }
+    },
+
+    "throughput": {
+      "messagesPerSecond": {
+        "target": 100,
+        "max": 500,
+        "description": "Messages processed per second"
+      },
+      "concurrentConnections": {
+        "target": 200,
+        "max": 500,
+        "description": "Concurrent WebSocket connections"
+      }
+    },
+
+    "successRates": {
+      "http": 0.95,
+      "websocketConnection": 0.98,
+      "messageDelivery": 0.99,
+      "description": "Minimum acceptable success rates (as decimal)"
+    }
+  },
+
+  "rateLimits": {
+    "connections": {
+      "perIp": 10,
+      "window": "1 minute",
+      "description": "Maximum connections per IP per minute"
+    },
+    "messages": {
+      "perUser": 60,
+      "window": "1 minute",
+      "description": "Maximum messages per user per minute"
+    }
+  },
+
+  "testScenarios": {
+    "connectionStress": {
+      "maxConnections": 500,
+      "rampUpDuration": 180,
+      "holdDuration": 120,
+      "description": "Test maximum concurrent connections"
+    },
+    "messageThroughput": {
+      "messagesPerUser": 50,
+      "concurrentUsers": 100,
+      "description": "Test message processing throughput"
+    },
+    "mixedLoad": {
+      "passiveUsers": 70,
+      "activeUsers": 30,
+      "duration": 300,
+      "description": "Realistic mixed user behavior"
+    }
+  }
+}

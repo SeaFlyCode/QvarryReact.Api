@@ -101,6 +101,8 @@ import {
 } from "./services/sosCronJobs";
 import { vonageService } from "./services/vonageService";
 import { webSocketService } from "./services/webSocketService";
+import { redisPubSubService } from "./services/redisPubSubService";
+import { webSocketReconnectionService } from "./services/webSocketReconnectionService";
 
 // Initialiser Express
 const app = express();
@@ -871,6 +873,26 @@ app.use("/api", generalLimiter);
       serverLogger.warn("Signal reçu, arrêt gracieux...", { signal });
 
       // ═══════════════════════════════════════════════════════════════════════
+      // PHASE 4: Graceful shutdown WebSocket - Sauvegarder états et notifier clients
+      // ═══════════════════════════════════════════════════════════════════════
+      try {
+        serverLogger.info("Initiating WebSocket graceful shutdown...");
+        await webSocketService.gracefulShutdown();
+        serverLogger.info("WebSocket graceful shutdown complete");
+
+        // Arrêter le service de monitoring des reconnexions
+        webSocketReconnectionService.stop();
+        serverLogger.info("WebSocket reconnection monitoring stopped");
+      } catch (wsShutdownError) {
+        serverLogger.error("Error during WebSocket graceful shutdown", {
+          error:
+            wsShutdownError instanceof Error
+              ? wsShutdownError.message
+              : wsShutdownError,
+        });
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
       // SOS-CRITICAL: Vérifier les sessions SOS actives avant l'arrêt
       // ═══════════════════════════════════════════════════════════════════════
       try {
@@ -999,6 +1021,8 @@ app.use("/api", generalLimiter);
     const server = app.listen(PORT, () => {
       serverLogger.info("Server listening", {
         url: `http://localhost:${PORT}/api`,
+        instanceId: redisPubSubService.getInstanceId(),
+        pubSubEnabled: redisPubSubService.isEnabled(),
       });
     });
 
@@ -1008,6 +1032,10 @@ app.use("/api", generalLimiter);
       notifications: `ws://localhost:${PORT}/ws/notifications`,
       messages: `ws://localhost:${PORT}/ws/messages`,
     });
+
+    // PHASE 4: Démarrer le service de monitoring des reconnexions
+    webSocketReconnectionService.start();
+    serverLogger.info("WebSocket reconnection monitoring started");
 
     // Initialiser les notifications push (Firebase Cloud Messaging)
     const { NotificationService } =

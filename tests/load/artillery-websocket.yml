@@ -1,0 +1,294 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ARTILLERY WEBSOCKET LOAD TEST - Main Configuration
+# ═══════════════════════════════════════════════════════════════════════════
+# Tests load on WebSocket endpoints with proper authentication flow
+#
+# Usage:
+#   artillery run tests/load/artillery-websocket.yml
+#   artillery run tests/load/artillery-websocket.yml --target http://localhost:3000
+#
+# Generate HTML report:
+#   artillery run tests/load/artillery-websocket.yml --output results.json
+#   artillery report results.json
+# ═══════════════════════════════════════════════════════════════════════════
+
+config:
+  # Target configuration
+  target: "{{ $processEnvironment.API_URL || 'http://localhost:3000' }}"
+
+  # WebSocket-specific configuration
+  ws:
+    # Compression level (0=none, 1-9=zlib levels)
+    perMessageDeflate: 6
+
+  # Test phases - Mixed realistic load
+  phases:
+    # Warm-up phase
+    - name: "Warm-up"
+      duration: 30
+      arrivalRate: 5
+      rampTo: 10
+
+    # Sustained load
+    - name: "Sustained load"
+      duration: 120
+      arrivalRate: 10
+
+    # Spike test
+    - name: "Spike"
+      duration: 30
+      arrivalRate: 50
+
+    # Cool-down
+    - name: "Cool-down"
+      duration: 30
+      arrivalRate: 10
+      rampTo: 2
+
+  # Load test user credentials (ensure this user exists in your test DB)
+  variables:
+    testEmail: "{{ $processEnvironment.TEST_EMAIL || 'loadtest@example.com' }}"
+    testPassword: "{{ $processEnvironment.TEST_PASSWORD || 'LoadTest123!@#' }}"
+
+  # Custom plugins for metrics
+  plugins:
+    metrics-by-endpoint:
+      # Track metrics per endpoint
+      stripQueryString: false
+
+  # Performance expectations (thresholds)
+  ensure:
+    # HTTP endpoints
+    http.response_time.p95: 500 # 95th percentile < 500ms
+    http.response_time.p99: 1000 # 99th percentile < 1s
+    http.codes.200: 95 # At least 95% success rate
+
+    # WebSocket metrics
+    ws.connection_time.p95: 200 # WS connection < 200ms
+    ws.messages_sent: 1000 # At least 1000 messages sent
+
+  # Processor functions
+  processor: "./artillery-functions.js"
+
+# ═══════════════════════════════════════════════════════════════════════════
+# TEST SCENARIOS
+# ═══════════════════════════════════════════════════════════════════════════
+
+scenarios:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Scenario 1: Notifications WebSocket (Read-only, Broadcast)
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: "Notifications WebSocket Flow"
+    weight: 40 # 40% of users are passive notification listeners
+    flow:
+      # Step 1: Authenticate via HTTP
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ testEmail }}"
+            password: "{{ testPassword }}"
+          capture:
+            - json: "$.accessToken"
+              as: "authToken"
+          expect:
+            - statusCode: 200
+
+      # Step 2: Get WebSocket token
+      - get:
+          url: "/api/v1/auth/ws-token"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$.notificationsToken"
+              as: "wsToken"
+          expect:
+            - statusCode: 200
+
+      # Step 3: Connect to notifications WebSocket
+      - ws:
+          url: "ws://{{ target }}/ws/notifications"
+          beforeRequest: "prepareNotificationsWs"
+
+      # Step 4: Send auth message
+      - send:
+          payload: |
+            {
+              "type": "auth",
+              "token": "{{ wsToken }}"
+            }
+
+      # Step 5: Wait for auth confirmation
+      - think: 1
+
+      # Step 6: Listen for notifications (passive)
+      - loop:
+          - think: 5
+        count: 10 # Listen for ~50 seconds
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Scenario 2: Messages WebSocket (Bidirectional, Active)
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: "Messages WebSocket Flow"
+    weight: 30 # 30% of users actively send messages
+    flow:
+      # Step 1: Authenticate
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ testEmail }}"
+            password: "{{ testPassword }}"
+          capture:
+            - json: "$.accessToken"
+              as: "authToken"
+          expect:
+            - statusCode: 200
+
+      # Step 2: Get WebSocket tokens
+      - get:
+          url: "/api/v1/auth/ws-token"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$.messagesToken"
+              as: "wsToken"
+          expect:
+            - statusCode: 200
+
+      # Step 3: Get user conversations
+      - get:
+          url: "/api/v1/conversations"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$[0]._id"
+              as: "conversationId"
+          expect:
+            - statusCode: 200
+
+      # Step 4: Connect to messages WebSocket
+      - ws:
+          url: "ws://{{ target }}/ws/messages/{{ conversationId }}"
+          beforeRequest: "prepareMessagesWs"
+
+      # Step 5: Authenticate
+      - send:
+          payload: |
+            {
+              "type": "auth",
+              "token": "{{ wsToken }}"
+            }
+
+      # Step 6: Wait for auth confirmation
+      - think: 1
+
+      # Step 7: Fetch existing messages
+      - send:
+          payload: |
+            {
+              "type": "getMessages",
+              "query": {
+                "limit": 20
+              }
+            }
+
+      # Step 8: Send messages at realistic intervals
+      - loop:
+          - think:
+              min: 10
+              max: 30 # Wait 10-30 seconds between messages
+          - function: "generateMessage"
+          - send:
+              payload: |
+                {
+                  "type": "message",
+                  "content": "{{ messageContent }}",
+                  "messageType": "text"
+                }
+        count: 5 # Send 5 messages
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Scenario 3: Mixed Activity (Realistic user behavior)
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: "Mixed WebSocket Activity"
+    weight: 30 # 30% have mixed behavior
+    flow:
+      # Authenticate
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ testEmail }}"
+            password: "{{ testPassword }}"
+          capture:
+            - json: "$.accessToken"
+              as: "authToken"
+          expect:
+            - statusCode: 200
+
+      # Get both WS tokens
+      - get:
+          url: "/api/v1/auth/ws-token"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$.notificationsToken"
+              as: "notificationsToken"
+            - json: "$.messagesToken"
+              as: "messagesToken"
+          expect:
+            - statusCode: 200
+
+      # Connect to notifications (passive listening)
+      - ws:
+          url: "ws://{{ target }}/ws/notifications"
+      - send:
+          payload: |
+            {
+              "type": "auth",
+              "token": "{{ notificationsToken }}"
+            }
+
+      # Get conversations
+      - get:
+          url: "/api/v1/conversations"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$[0]._id"
+              as: "conversationId"
+
+      # Connect to messages
+      - ws:
+          url: "ws://{{ target }}/ws/messages/{{ conversationId }}"
+      - send:
+          payload: |
+            {
+              "type": "auth",
+              "token": "{{ messagesToken }}"
+            }
+
+      # Mixed activity: read, write, listen
+      - loop:
+          - think:
+              min: 5
+              max: 15
+          - function: "generateMessage"
+          - send:
+              payload: |
+                {
+                  "type": "message",
+                  "content": "{{ messageContent }}"
+                }
+        count: 3
+
+      # Read messages
+      - send:
+          payload: |
+            {
+              "type": "getMessages",
+              "query": { "limit": 50 }
+            }
+
+      # Continue listening
+      - loop:
+          - think: 5
+        count: 5

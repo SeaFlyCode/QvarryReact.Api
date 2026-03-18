@@ -17,15 +17,24 @@ import { redisSessionService } from "./redisSessionService";
 import { logger } from "./loggerService";
 import { anonymizeIp } from "../utils/logUtils";
 import { z } from "zod";
+import {
+  redisPubSubService,
+  NotificationPayload,
+  MessagePayload,
+} from "./redisPubSubService";
+import { webSocketStateService, ClientState } from "./webSocketStateService";
+import { randomBytes } from "crypto";
 
 const wsLogger = logger.child({ service: "websocket" });
 
 interface AuthenticatedWebSocket extends WebSocket {
   userId?: string;
   conversationId?: string;
+  deviceId?: string; // PHASE 4: Device ID for state persistence
   isAlive?: boolean;
   messageCount?: number;
   messageCountResetTime?: number;
+  lastStateSave?: number; // PHASE 4: Last time state was saved
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -58,6 +67,7 @@ const MESSAGE_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 const MessageContentSchema = z.string().min(1).max(10000);
 const MessageIdSchema = z.string().min(1);
 
+// PHASE 4: Nouveaux types de messages pour la reprise de connexion
 const WsMessageSchemas: Record<string, z.ZodTypeAny> = {
   message: z.object({
     type: z.literal("message"),
@@ -93,11 +103,41 @@ const WsMessageSchemas: Record<string, z.ZodTypeAny> = {
     type: z.literal("deleteMessage"),
     messageId: MessageIdSchema,
   }),
+  // PHASE 4: Resume connection with previous state
+  resume: z.object({
+    type: z.literal("resume"),
+    deviceId: z.string().min(1),
+    lastMessageIds: z.record(z.string(), z.string()).optional(),
+  }),
+  // PHASE 4: Acknowledge message received
+  ack: z.object({
+    type: z.literal("ack"),
+    messageId: MessageIdSchema,
+    conversationId: z.string().optional(),
+  }),
 };
 
 // WS-HEARTBEAT: Intervalle configurable via env var
 const WS_HEARTBEAT_INTERVAL_MS = parseInt(
   process.env.WS_HEARTBEAT_INTERVAL_MS || "30000",
+  10,
+);
+
+// PHASE 4: Intervalle de sauvegarde d'état
+const WS_STATE_SAVE_INTERVAL_MS = parseInt(
+  process.env.WS_STATE_SAVE_INTERVAL || "30000",
+  10,
+);
+
+// PHASE 4: Timeout pour ACK des messages
+const WS_MESSAGE_ACK_TIMEOUT_MS = parseInt(
+  process.env.WS_MESSAGE_ACK_TIMEOUT || "30000",
+  10,
+);
+
+// PHASE 4: Timeout de shutdown gracieux
+const WS_GRACEFUL_SHUTDOWN_TIMEOUT_MS = parseInt(
+  process.env.WS_GRACEFUL_SHUTDOWN_TIMEOUT || "10000",
   10,
 );
 
@@ -148,6 +188,12 @@ class WebSocketService {
   private connectionAttemptsCleanupInterval: ReturnType<
     typeof setInterval
   > | null = null;
+
+  // PHASE 4: Référence au timer de sauvegarde périodique d'état
+  private stateSaveInterval: ReturnType<typeof setInterval> | null = null;
+
+  // PHASE 4: Flag de shutdown gracieux
+  private isShuttingDown = false;
 
   /**
    * FIX-1: Helper sécurisé pour envoyer des messages aux clients WS
@@ -303,6 +349,331 @@ class WebSocketService {
   }
 
   /**
+   * PHASE 4: Générer ou extraire un deviceId pour le client
+   */
+  private getOrGenerateDeviceId(request: any): string {
+    const query = url.parse(request.url, true).query;
+    const deviceId = query.deviceId as string;
+
+    if (deviceId && typeof deviceId === "string" && deviceId.length > 0) {
+      return deviceId;
+    }
+
+    // Générer un deviceId aléatoire si non fourni
+    return randomBytes(16).toString("hex");
+  }
+
+  /**
+   * PHASE 4: Sauvegarder l'état d'un client
+   */
+  private async saveClientState(client: AuthenticatedWebSocket): Promise<void> {
+    if (!client.userId || !client.deviceId) {
+      return;
+    }
+
+    if (!webSocketStateService.isEnabled()) {
+      return;
+    }
+
+    // Collecter les subscriptions (conversations)
+    const subscriptions: string[] = [];
+    const userConversations = this.messageClients.get(client.userId);
+    if (userConversations) {
+      subscriptions.push(...userConversations.keys());
+    }
+
+    // Récupérer l'état existant ou créer un nouveau
+    let state = await webSocketStateService.getClientState(
+      client.userId,
+      client.deviceId,
+    );
+
+    if (!state) {
+      state = {
+        userId: client.userId,
+        deviceId: client.deviceId,
+        subscriptions,
+        lastSeenMessageIds: {},
+        pendingMessages: [],
+        lastActivityAt: new Date(),
+        connectionMetadata: {
+          userAgent: undefined,
+          ipAddress: undefined,
+          platform: undefined,
+        },
+      };
+    } else {
+      // Mettre à jour les subscriptions
+      state.subscriptions = subscriptions;
+      state.lastActivityAt = new Date();
+    }
+
+    await webSocketStateService.saveClientState(
+      client.userId,
+      client.deviceId,
+      state,
+    );
+    client.lastStateSave = Date.now();
+  }
+
+  /**
+   * PHASE 4: Restaurer l'état d'un client à la reconnexion
+   */
+  private async restoreClientState(
+    client: AuthenticatedWebSocket,
+    deviceId: string,
+  ): Promise<boolean> {
+    if (!client.userId || !webSocketStateService.isEnabled()) {
+      return false;
+    }
+
+    const state = await webSocketStateService.getClientState(
+      client.userId,
+      deviceId,
+    );
+
+    if (!state) {
+      wsLogger.info("No previous state found for client", {
+        userId: client.userId,
+        deviceId,
+      });
+      return false;
+    }
+
+    wsLogger.info("Restoring client state", {
+      userId: client.userId,
+      deviceId,
+      subscriptions: state.subscriptions.length,
+      pendingMessages: state.pendingMessages.length,
+      lastActivity: state.lastActivityAt,
+    });
+
+    // Restaurer les subscriptions (rejoindre les conversations)
+    for (const conversationId of state.subscriptions) {
+      // Vérifier que l'utilisateur est toujours participant
+      const isParticipant = await this.checkConversationParticipation(
+        client.userId,
+        conversationId,
+      );
+
+      if (isParticipant) {
+        // Ajouter le client à la map des messages pour cette conversation
+        if (!this.messageClients.has(client.userId)) {
+          this.messageClients.set(client.userId, new Map());
+        }
+        const userConversations = this.messageClients.get(client.userId);
+        if (userConversations) {
+          if (!userConversations.has(conversationId)) {
+            userConversations.set(conversationId, new Set());
+            // S'abonner aux messages de cette conversation
+            await this.subscribeToConversation(conversationId);
+          }
+          const conversationClients = userConversations.get(conversationId);
+          if (conversationClients) {
+            conversationClients.add(client);
+          }
+        }
+      } else {
+        wsLogger.warn("User no longer participant, skipping subscription", {
+          userId: client.userId,
+          conversationId,
+        });
+      }
+    }
+
+    // Envoyer les messages en attente
+    const pendingMessages = state.pendingMessages;
+    if (pendingMessages.length > 0) {
+      wsLogger.info("Delivering pending messages", {
+        userId: client.userId,
+        count: pendingMessages.length,
+      });
+
+      for (const msg of pendingMessages) {
+        // Ne pas ajouter "type" car msg contient déjà un type
+        this.safeSend(
+          client,
+          JSON.stringify({
+            ...msg,
+            isPending: true, // Marquer comme message en attente
+          }),
+        );
+      }
+
+      // Vider la file après envoi
+      await webSocketStateService.clearPendingMessages(client.userId, deviceId);
+    }
+
+    // Envoyer l'événement resumed au client
+    this.safeSend(
+      client,
+      JSON.stringify({
+        type: "resumed",
+        subscriptions: state.subscriptions,
+        lastSeenMessageIds: state.lastSeenMessageIds,
+        missedMessagesCount: pendingMessages.length,
+        lastActivity: state.lastActivityAt,
+      }),
+    );
+
+    return true;
+  }
+
+  /**
+   * PHASE 4: Shutdown gracieux - sauvegarder tous les états et fermer les connexions
+   */
+  async gracefulShutdown(
+    timeoutMs: number = WS_GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+  ): Promise<void> {
+    this.isShuttingDown = true;
+
+    wsLogger.warn("WebSocket graceful shutdown initiated", {
+      timeout: `${timeoutMs}ms`,
+      connectedClients: this.getConnectedClientsCount(),
+    });
+
+    // Arrêter d'accepter de nouvelles connexions
+    if (this.notificationsWss) {
+      this.notificationsWss.close();
+    }
+    if (this.messagesWss) {
+      this.messagesWss.close();
+    }
+
+    // Envoyer un message de shutdown à tous les clients
+    const shutdownMessage = JSON.stringify({
+      type: "server_shutdown",
+      message:
+        process.env.WS_SHUTDOWN_MESSAGE ||
+        "Le serveur redémarre pour maintenance",
+      reconnect: true,
+      timestamp: new Date().toISOString(),
+    });
+
+    // Notifier tous les clients (notifications)
+    this.clients.forEach((userClients) => {
+      userClients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          this.safeSend(client, shutdownMessage);
+        }
+      });
+    });
+
+    // Notifier tous les clients (messages)
+    this.messageClients.forEach((userConversations) => {
+      userConversations.forEach((conversationClients) => {
+        conversationClients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            this.safeSend(client, shutdownMessage);
+          }
+        });
+      });
+    });
+
+    // Sauvegarder tous les états en parallèle
+    const savePromises: Promise<void>[] = [];
+
+    this.messageClients.forEach((_, userId) => {
+      // Pour chaque utilisateur, sauvegarder l'état de chaque device
+      const deviceIds = new Set<string>();
+
+      // Collecter les deviceIds uniques
+      const userConversations = this.messageClients.get(userId);
+      if (userConversations) {
+        userConversations.forEach((conversationClients) => {
+          conversationClients.forEach((client) => {
+            if (client.deviceId) {
+              deviceIds.add(client.deviceId);
+            }
+          });
+        });
+      }
+
+      // Sauvegarder l'état de chaque device
+      deviceIds.forEach((deviceId) => {
+        const savePromise = (async () => {
+          // Trouver un client pour ce device
+          let clientToSave: AuthenticatedWebSocket | undefined;
+
+          userConversations?.forEach((conversationClients) => {
+            conversationClients.forEach((client) => {
+              if (client.deviceId === deviceId && !clientToSave) {
+                clientToSave = client;
+              }
+            });
+          });
+
+          if (clientToSave) {
+            await this.saveClientState(clientToSave);
+          }
+        })();
+
+        savePromises.push(savePromise);
+      });
+    });
+
+    // Attendre que tous les états soient sauvegardés (avec timeout)
+    await Promise.race([
+      Promise.all(savePromises),
+      new Promise((resolve) => setTimeout(resolve, timeoutMs / 2)),
+    ]);
+
+    wsLogger.info("All client states saved", {
+      savedCount: savePromises.length,
+    });
+
+    // Attendre que les clients se déconnectent (avec timeout)
+    await new Promise((resolve) => {
+      const checkInterval = setInterval(() => {
+        const remainingClients = this.getConnectedClientsCount();
+
+        if (remainingClients === 0) {
+          clearInterval(checkInterval);
+          resolve(true);
+        }
+      }, 100);
+
+      // Force resolve après timeout
+      setTimeout(() => {
+        clearInterval(checkInterval);
+        resolve(true);
+      }, timeoutMs);
+    });
+
+    // Fermer les connexions restantes
+    this.clients.forEach((userClients) => {
+      userClients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          client.close(1001, "Server shutdown");
+        }
+      });
+    });
+
+    this.messageClients.forEach((userConversations) => {
+      userConversations.forEach((conversationClients) => {
+        conversationClients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            client.close(1001, "Server shutdown");
+          }
+        });
+      });
+    });
+
+    // Arrêter les timers
+    if (this.stateSaveInterval) {
+      clearInterval(this.stateSaveInterval);
+      this.stateSaveInterval = null;
+    }
+
+    if (this.connectionAttemptsCleanupInterval) {
+      clearInterval(this.connectionAttemptsCleanupInterval);
+      this.connectionAttemptsCleanupInterval = null;
+    }
+
+    wsLogger.info("WebSocket graceful shutdown complete");
+  }
+
+  /**
    * Initialiser le serveur WebSocket
    */
   initialize(server: Server): void {
@@ -320,7 +691,23 @@ class WebSocketService {
 
     wsLogger.info("WebSocket Server initialized", {
       paths: ["/ws/notifications", "/ws/messages"],
+      instanceId: redisPubSubService.getInstanceId(),
+      pubSubEnabled: redisPubSubService.isEnabled(),
     });
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REDIS PUB/SUB - S'ABONNER AUX MESSAGES DES AUTRES INSTANCES
+    // ═══════════════════════════════════════════════════════════════════════════
+    if (redisPubSubService.isEnabled()) {
+      this.setupPubSubHandlers();
+      wsLogger.info(
+        "Redis Pub/Sub handlers configured for WebSocket clustering",
+      );
+    } else {
+      wsLogger.warn(
+        "Redis Pub/Sub disabled - running in single-instance mode (no clustering support)",
+      );
+    }
 
     // Gérer manuellement l'upgrade HTTP vers WebSocket
     server.on("upgrade", (request, socket, head) => {
@@ -425,6 +812,172 @@ class WebSocketService {
       },
       60 * 60 * 1000,
     ); // Toutes les heures
+
+    // PHASE 4: Sauvegarde périodique de l'état des clients connectés
+    if (webSocketStateService.isEnabled()) {
+      this.stateSaveInterval = setInterval(async () => {
+        let savedCount = 0;
+        const savePromises: Promise<void>[] = [];
+
+        // Sauvegarder l'état de tous les clients messages connectés
+        this.messageClients.forEach((userConversations, userId) => {
+          const deviceIds = new Set<string>();
+
+          // Collecter les deviceIds uniques
+          userConversations.forEach((conversationClients) => {
+            conversationClients.forEach((client) => {
+              if (client.deviceId && client.readyState === WebSocket.OPEN) {
+                deviceIds.add(client.deviceId);
+              }
+            });
+          });
+
+          // Sauvegarder chaque device
+          deviceIds.forEach((deviceId) => {
+            // Trouver un client pour ce device
+            let clientToSave: AuthenticatedWebSocket | undefined;
+
+            userConversations.forEach((conversationClients) => {
+              conversationClients.forEach((client) => {
+                if (
+                  client.deviceId === deviceId &&
+                  !clientToSave &&
+                  client.readyState === WebSocket.OPEN
+                ) {
+                  clientToSave = client;
+                }
+              });
+            });
+
+            if (clientToSave) {
+              const lastSave = clientToSave.lastStateSave || 0;
+              const now = Date.now();
+
+              // Sauvegarder seulement si suffisamment de temps s'est écoulé
+              if (now - lastSave >= WS_STATE_SAVE_INTERVAL_MS) {
+                savePromises.push(this.saveClientState(clientToSave));
+                savedCount++;
+              }
+            }
+          });
+        });
+
+        // Attendre toutes les sauvegardes
+        if (savePromises.length > 0) {
+          await Promise.all(savePromises);
+          wsLogger.debug("Periodic state save complete", {
+            savedCount,
+          });
+        }
+      }, WS_STATE_SAVE_INTERVAL_MS);
+
+      wsLogger.info("WebSocket state persistence enabled", {
+        saveInterval: `${WS_STATE_SAVE_INTERVAL_MS}ms`,
+      });
+    }
+  }
+
+  /**
+   * ═══════════════════════════════════════════════════════════════════════════
+   * REDIS PUB/SUB HANDLERS - CLUSTERING WEBSOCKET
+   * ═══════════════════════════════════════════════════════════════════════════
+   * Configuration des handlers pour recevoir les messages des autres instances
+   * ═══════════════════════════════════════════════════════════════════════════
+   */
+  private setupPubSubHandlers(): void {
+    // Handler pour les notifications
+    redisPubSubService.subscribe(
+      "websocket:notifications",
+      (payload: NotificationPayload) => {
+        this.handleRemoteNotification(payload);
+      },
+    );
+
+    // Handler pour les messages (pattern matching sur les conversations)
+    // Note: On s'abonne dynamiquement quand des clients se connectent à une conversation
+    // Voir handleMessageConnection() pour l'abonnement dynamique
+
+    // Handler pour les broadcasts système
+    redisPubSubService.subscribe("websocket:broadcast", (payload: any) => {
+      this.handleRemoteBroadcast(payload);
+    });
+
+    wsLogger.info("Subscribed to Redis Pub/Sub channels", {
+      channels: ["websocket:notifications", "websocket:broadcast"],
+    });
+  }
+
+  /**
+   * Traiter une notification reçue d'une autre instance
+   */
+  private handleRemoteNotification(payload: NotificationPayload): void {
+    const { userId, notification } = payload;
+
+    wsLogger.debug("Received remote notification", {
+      userId,
+      fromInstance: redisPubSubService.getInstanceId(),
+    });
+
+    // Envoyer aux clients locaux uniquement
+    this.sendNotificationToUserLocal(userId, notification);
+  }
+
+  /**
+   * Traiter un message de conversation reçu d'une autre instance
+   */
+  private handleRemoteMessage(payload: MessagePayload): void {
+    const {
+      conversationId,
+      message,
+      excludeUserId,
+      participantIds,
+      senderName,
+    } = payload;
+
+    wsLogger.debug("Received remote message", {
+      conversationId,
+      fromInstance: redisPubSubService.getInstanceId(),
+    });
+
+    // Diffuser aux clients locaux uniquement
+    this.broadcastToConversationLocal(
+      conversationId,
+      message,
+      excludeUserId,
+      participantIds,
+      senderName,
+    );
+  }
+
+  /**
+   * Traiter un broadcast système reçu d'une autre instance
+   */
+  private handleRemoteBroadcast(payload: any): void {
+    const { event, data } = payload;
+
+    wsLogger.info("Received remote broadcast", {
+      event,
+      fromInstance: redisPubSubService.getInstanceId(),
+    });
+
+    // Implémenter selon les besoins (maintenance, restart, etc.)
+  }
+
+  /**
+   * S'abonner dynamiquement aux messages d'une conversation
+   */
+  private async subscribeToConversation(conversationId: string): Promise<void> {
+    if (!redisPubSubService.isEnabled()) return;
+
+    const channel = `websocket:messages:${conversationId}`;
+    await redisPubSubService.subscribe(channel, (payload: MessagePayload) => {
+      this.handleRemoteMessage(payload);
+    });
+
+    wsLogger.debug("Subscribed to conversation channel", {
+      conversationId,
+      channel,
+    });
   }
 
   /**
@@ -554,6 +1107,9 @@ class WebSocketService {
 
         client.userId = decoded.id;
 
+        // PHASE 4: Extraire ou générer le deviceId
+        client.deviceId = this.getOrGenerateDeviceId(request);
+
         // Ajouter le client à la map
         if (!this.clients.has(client.userId)) {
           this.clients.set(client.userId, new Set());
@@ -565,6 +1121,7 @@ class WebSocketService {
 
         wsLogger.info("Notifications - Client connecté", {
           userId: client.userId,
+          deviceId: client.deviceId,
         });
 
         // Envoyer un message de confirmation
@@ -573,6 +1130,7 @@ class WebSocketService {
             type: "connected",
             message: "WebSocket notifications connecté avec succès",
             userId: client.userId,
+            deviceId: client.deviceId,
           }),
         );
 
@@ -748,6 +1306,9 @@ class WebSocketService {
         client.userId = decoded.id;
         client.conversationId = conversationId;
 
+        // PHASE 4: Extraire ou générer le deviceId
+        client.deviceId = this.getOrGenerateDeviceId(request);
+
         // WS-001: Vérifier que l'utilisateur est bien participant de la conversation
         // Note: participants est un tableau de sous-documents avec userId, pas de simples ObjectIds
         const conversation = await ConversationModel.findOne({
@@ -767,6 +1328,12 @@ class WebSocketService {
           return;
         }
 
+        // PHASE 4: Vérifier si c'est une reconnexion avec état existant
+        const existingState = await webSocketStateService.getClientState(
+          client.userId,
+          client.deviceId,
+        );
+
         // Ajouter le client à la map des messages (par conversation)
         if (!this.messageClients.has(client.userId)) {
           this.messageClients.set(client.userId, new Map());
@@ -775,6 +1342,9 @@ class WebSocketService {
         if (userConversations) {
           if (!userConversations.has(conversationId)) {
             userConversations.set(conversationId, new Set());
+
+            // CLUSTERING: S'abonner aux messages de cette conversation depuis les autres instances
+            this.subscribeToConversation(conversationId);
           }
           const conversationClients = userConversations.get(conversationId);
           if (conversationClients) {
@@ -785,17 +1355,28 @@ class WebSocketService {
         wsLogger.info("Messages - Client connecté", {
           userId: client.userId,
           conversationId,
+          deviceId: client.deviceId,
+          hasExistingState: !!existingState,
         });
 
-        // Envoyer un message de confirmation
-        client.send(
-          JSON.stringify({
-            type: "connected",
-            message: "WebSocket messages connecté avec succès",
-            userId: client.userId,
-            conversationId: conversationId,
-          }),
-        );
+        // PHASE 4: Si état existant, restaurer automatiquement
+        if (existingState) {
+          await this.restoreClientState(client, client.deviceId);
+        } else {
+          // Envoyer un message de confirmation standard
+          client.send(
+            JSON.stringify({
+              type: "connected",
+              message: "WebSocket messages connecté avec succès",
+              userId: client.userId,
+              conversationId: conversationId,
+              deviceId: client.deviceId,
+            }),
+          );
+        }
+
+        // PHASE 4: Sauvegarder l'état initial
+        await this.saveClientState(client);
 
         // Gérer les messages entrants
         client.on("message", async (message: Buffer) => {
@@ -869,6 +1450,8 @@ class WebSocketService {
               "replyToMessage",
               "editMessage",
               "deleteMessage",
+              "resume", // PHASE 4
+              "ack", // PHASE 4
             ];
             if (
               !data ||
@@ -1091,6 +1674,64 @@ class WebSocketService {
                   }),
                 );
               }
+            } else if (data.type === "resume") {
+              // PHASE 4: Resume connection avec état sauvegardé
+              wsLogger.info("Messages - Resume request", {
+                userId: client.userId,
+                deviceId: data.deviceId,
+              });
+
+              try {
+                const restored = await this.restoreClientState(
+                  client,
+                  data.deviceId,
+                );
+
+                if (!restored) {
+                  // Pas d'état existant - envoyer sync_required
+                  client.send(
+                    JSON.stringify({
+                      type: "sync_required",
+                      reason: "no_previous_state",
+                      message:
+                        "Aucun état précédent trouvé, synchronisation complète requise",
+                    }),
+                  );
+                }
+              } catch (err) {
+                wsLogger.error("Messages - Resume failed", {
+                  userId: client.userId,
+                  error: err instanceof Error ? err.message : String(err),
+                });
+                client.send(
+                  JSON.stringify({
+                    type: "error",
+                    code: "RESUME_FAILED",
+                    message: "Échec de la reprise de connexion",
+                  }),
+                );
+              }
+            } else if (data.type === "ack") {
+              // PHASE 4: Acknowledge message delivery
+              if (!client.userId || !client.deviceId) {
+                return;
+              }
+
+              wsLogger.debug("Messages - ACK received", {
+                userId: client.userId,
+                messageId: data.messageId,
+                conversationId: data.conversationId || conversationId,
+              });
+
+              // Marquer le message comme livré
+              await webSocketStateService.markMessageDelivered(
+                client.userId,
+                client.deviceId,
+                data.messageId,
+              );
+
+              // Optionnel: Confirmer l'ACK au client
+              // (le client n'attend généralement pas de confirmation)
             } else {
               client.send(
                 JSON.stringify({
@@ -1105,7 +1746,16 @@ class WebSocketService {
         });
 
         // Gérer la fermeture
-        client.on("close", () => {
+        client.on("close", async () => {
+          // PHASE 4: Sauvegarder l'état avant déconnexion
+          if (client.userId && client.deviceId) {
+            await this.saveClientState(client);
+            wsLogger.info("Messages - État sauvegardé avant déconnexion", {
+              userId: client.userId,
+              deviceId: client.deviceId,
+            });
+          }
+
           if (client.userId) {
             const userConversations = this.messageClients.get(client.userId);
             if (userConversations) {
@@ -1140,8 +1790,41 @@ class WebSocketService {
    *
    * FIX-5: cachedParticipantIds et cachedSenderName optionnels pour éviter
    * des requêtes MongoDB supplémentaires dans notifyConversationUpdate
+   *
+   * CLUSTERING: Publie aussi via Redis Pub/Sub pour les autres instances
    */
   private broadcastToConversation(
+    conversationId: string,
+    message: any,
+    excludeUserId?: string,
+    cachedParticipantIds?: string[],
+    cachedSenderName?: string,
+  ): void {
+    // Diffuser localement
+    this.broadcastToConversationLocal(
+      conversationId,
+      message,
+      excludeUserId,
+      cachedParticipantIds,
+      cachedSenderName,
+    );
+
+    // Publier pour les autres instances (si clustering activé)
+    if (redisPubSubService.isEnabled()) {
+      redisPubSubService.publishMessage(
+        conversationId,
+        message,
+        excludeUserId,
+        cachedParticipantIds,
+        cachedSenderName,
+      );
+    }
+  }
+
+  /**
+   * Version locale uniquement (sans Redis Pub/Sub)
+   */
+  private broadcastToConversationLocal(
     conversationId: string,
     message: any,
     excludeUserId?: string,
@@ -1173,7 +1856,7 @@ class WebSocketService {
         });
       }
     });
-    wsLogger.info("Message broadcast complete", {
+    wsLogger.info("Message broadcast complete (local)", {
       conversationId,
       totalSent,
     });
@@ -1345,8 +2028,22 @@ class WebSocketService {
 
   /**
    * Envoyer une notification à un utilisateur spécifique
+   * CLUSTERING: Publie aussi via Redis Pub/Sub pour les autres instances
    */
   sendNotificationToUser(userId: string, notification: any): void {
+    // Envoyer localement
+    this.sendNotificationToUserLocal(userId, notification);
+
+    // Publier pour les autres instances (si clustering activé)
+    if (redisPubSubService.isEnabled()) {
+      redisPubSubService.publishNotification(userId, notification);
+    }
+  }
+
+  /**
+   * Version locale uniquement (sans Redis Pub/Sub)
+   */
+  private sendNotificationToUserLocal(userId: string, notification: any): void {
     const userClients = this.clients.get(userId);
 
     if (!userClients || userClients.size === 0) {
@@ -1362,7 +2059,7 @@ class WebSocketService {
     userClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         this.safeSend(client, message);
-        wsLogger.info("Notification sent to user", { userId });
+        wsLogger.info("Notification sent to user (local)", { userId });
       }
     });
   }

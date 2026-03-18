@@ -1,0 +1,95 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# ARTILLERY WEBSOCKET - Message Throughput Test
+# ═══════════════════════════════════════════════════════════════════════════
+# Tests message processing throughput and latency under load
+# Focus: Messages/second, latency distribution, message queue performance
+#
+# Usage:
+#   artillery run tests/load/artillery-throughput.yml
+# ═══════════════════════════════════════════════════════════════════════════
+
+config:
+  target: "{{ $processEnvironment.API_URL || 'http://localhost:3000' }}"
+
+  phases:
+    # Start with moderate message load
+    - name: "Moderate message load"
+      duration: 60
+      arrivalRate: 20
+
+    # Increase to high message load
+    - name: "High message load"
+      duration: 120
+      arrivalRate: 50
+
+    # Peak throughput test
+    - name: "Peak throughput"
+      duration: 60
+      arrivalRate: 100
+
+  variables:
+    testEmail: "{{ $processEnvironment.TEST_EMAIL || 'loadtest@example.com' }}"
+    testPassword: "{{ $processEnvironment.TEST_PASSWORD || 'LoadTest123!@#' }}"
+
+  processor: "./artillery-functions.js"
+
+  ensure:
+    ws.send_rate: 100 # At least 100 messages/sec
+    ws.message_latency.p95: 100 # Message latency < 100ms
+    ws.message_latency.p99: 200 # 99th percentile < 200ms
+
+scenarios:
+  # High-frequency message sender
+  - name: "Rapid Message Sender"
+    flow:
+      # Auth flow
+      - post:
+          url: "/api/v1/auth/login"
+          json:
+            email: "{{ testEmail }}"
+            password: "{{ testPassword }}"
+          capture:
+            - json: "$.accessToken"
+              as: "authToken"
+
+      - get:
+          url: "/api/v1/auth/ws-token"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$.messagesToken"
+              as: "wsToken"
+
+      # Get conversation
+      - get:
+          url: "/api/v1/conversations"
+          headers:
+            Authorization: "Bearer {{ authToken }}"
+          capture:
+            - json: "$[0]._id"
+              as: "conversationId"
+
+      # Connect
+      - ws:
+          url: "ws://{{ target }}/ws/messages/{{ conversationId }}"
+
+      - send:
+          payload: |
+            {
+              "type": "auth",
+              "token": "{{ wsToken }}"
+            }
+
+      # Rapid fire messages (respecting rate limit of 60/min = 1/sec)
+      - loop:
+          - think: 1 # 1 second between messages
+          - function: "generateVariedMessage"
+          - send:
+              payload: |
+                {
+                  "type": "message",
+                  "content": "{{ messageContent }}",
+                  "messageType": "{{ messageType }}",
+                  "metadata": {{ messageMetadata }}
+                }
+        count: 50 # Send 50 messages

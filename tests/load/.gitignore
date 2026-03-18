@@ -1,0 +1,15 @@
+# Ignore Artillery test results and reports
+*.json
+*.html
+
+# Keep test configuration and fixtures
+!test-data.json
+!package.json
+
+# Ignore logs
+*.log
+
+# Ignore temporary files
+.DS_Store
+*.tmp
+*.temp

@@ -1,0 +1,175 @@
+# ═══════════════════════════════════════════════════════════════════════════
+# QVARRY API - ARTILLERY WEBSOCKET LOAD TESTING CONFIGURATION
+# ═══════════════════════════════════════════════════════════════════════════
+# Tests de charge pour les endpoints WebSocket avec compression
+#
+# Usage:
+#   npm run test:load                    # Tests basiques
+#   npm run test:load:stress             # Tests de stress
+#   artillery run artillery-websocket.yml --environment local
+#
+# Documentation: docs/api/06_services/websocket-load-testing.md
+# ═══════════════════════════════════════════════════════════════════════════
+
+config:
+  target: "http://localhost:3000"
+  # Configuration des phases de test (par défaut : basic)
+  phases:
+    - name: "Warm-up"
+      duration: 10
+      arrivalRate: 1
+      rampTo: 5
+    - name: "Sustained load"
+      duration: 30
+      arrivalRate: 5
+    - name: "Ramp down"
+      duration: 10
+      arrivalRate: 5
+      rampTo: 1
+
+  # Variables d'environnement
+  variables:
+    testPassword: "TestPassword123!"
+
+  # Processors personnalisés (fonctions JavaScript)
+  processor: "./scripts/artillery-functions.js"
+
+  # Métriques à collecter
+  ensure:
+    # Latence P99 < 500ms
+    p99: 500
+    # Latence médiane < 100ms
+    median: 100
+    # Taux d'erreur < 1%
+    maxErrorRate: 1
+
+# ═══════════════════════════════════════════════════════════════════════════
+# ENVIRONNEMENTS (Targets)
+# ═══════════════════════════════════════════════════════════════════════════
+
+environments:
+  local:
+    target: "http://localhost:3000"
+    phases:
+      - name: "Basic test"
+        duration: 30
+        arrivalRate: 5
+
+  stress:
+    target: "http://localhost:3000"
+    phases:
+      - name: "Ramp up"
+        duration: 30
+        arrivalRate: 1
+        rampTo: 20
+      - name: "Peak load"
+        duration: 60
+        arrivalRate: 20
+      - name: "Ramp down"
+        duration: 20
+        arrivalRate: 20
+        rampTo: 5
+
+# ═══════════════════════════════════════════════════════════════════════════
+# SCÉNARIOS DE TEST
+# ═══════════════════════════════════════════════════════════════════════════
+
+scenarios:
+  # ─────────────────────────────────────────────────────────────────────────
+  # Scénario 1 : Test de connexion HTTP basique (sanity check)
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: "API Health Check"
+    weight: 10
+    flow:
+      - get:
+          url: "/health"
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Scénario 2 : Test d'authentification et obtention de ws-token
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: "WebSocket Token Generation"
+    weight: 40
+    flow:
+      # 1. Créer un utilisateur
+      - post:
+          url: "/api/v1/auth/register"
+          json:
+            email: "loadtest-{{ $randomString() }}@qvarry.test"
+            password: "{{ testPassword }}"
+            name: "Load Test User {{ $randomNumber() }}"
+          capture:
+            - json: "$.tokens.access"
+              as: "accessToken"
+
+      # 2. Obtenir un ws-token
+      - post:
+          url: "/api/v1/auth/ws-token"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          capture:
+            - json: "$.notificationsToken"
+              as: "wsNotifToken"
+            - json: "$.messagesToken"
+              as: "wsMessagesToken"
+            - json: "$.expiresIn"
+              as: "tokenTTL"
+
+      # 3. Vérifier que les tokens sont bien présents
+      - think: 1
+
+  # ─────────────────────────────────────────────────────────────────────────
+  # Scénario 3 : Test de création de conversation
+  # ─────────────────────────────────────────────────────────────────────────
+  - name: "Conversation Creation Flow"
+    weight: 50
+    flow:
+      # 1. Créer deux utilisateurs
+      - post:
+          url: "/api/v1/auth/register"
+          json:
+            email: "sender-{{ $randomString() }}@qvarry.test"
+            password: "{{ testPassword }}"
+            name: "Sender {{ $randomNumber() }}"
+          capture:
+            - json: "$.tokens.access"
+              as: "senderToken"
+            - json: "$.user.id"
+              as: "senderId"
+
+      - post:
+          url: "/api/v1/auth/register"
+          json:
+            email: "receiver-{{ $randomString() }}@qvarry.test"
+            password: "{{ testPassword }}"
+            name: "Receiver {{ $randomNumber() }}"
+          capture:
+            - json: "$.tokens.access"
+              as: "receiverToken"
+            - json: "$.user.id"
+              as: "receiverId"
+
+      # 2. Créer une conversation
+      - post:
+          url: "/api/v1/conversations"
+          headers:
+            Authorization: "Bearer {{ senderToken }}"
+          json:
+            participants:
+              - "{{ senderId }}"
+              - "{{ receiverId }}"
+            title: "Load Test Conversation"
+          capture:
+            - json: "$.conversation.id"
+              as: "conversationId"
+
+      # 3. Obtenir un ws-token
+      - post:
+          url: "/api/v1/auth/ws-token"
+          headers:
+            Authorization: "Bearer {{ senderToken }}"
+          capture:
+            - json: "$.messagesToken"
+              as: "wsMessagesToken"
+
+      # 4. Pause de 2 secondes
+      - think: 2
