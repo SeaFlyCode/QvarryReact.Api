@@ -11,9 +11,12 @@ import {
   deleteMessageOp,
 } from "./messageOperationsService";
 import ConversationModel from "../models/conversations";
+import { decrypt } from "../utils/masterEncryptionUtils";
+import UserModel from "../models/users";
 import { redisSessionService } from "./redisSessionService";
 import { logger } from "./loggerService";
 import { anonymizeIp } from "../utils/logUtils";
+import { z } from "zod";
 
 const wsLogger = logger.child({ service: "websocket" });
 
@@ -49,6 +52,56 @@ const MAX_MESSAGES_PER_MINUTE = 60;
 const MESSAGE_RATE_LIMIT_WINDOW_MS = 60 * 1000;
 
 // ═══════════════════════════════════════════════════════════════════════════
+// SCHÉMAS DE VALIDATION ZOD PAR TYPE DE MESSAGE
+// ═══════════════════════════════════════════════════════════════════════════
+
+const MessageContentSchema = z.string().min(1).max(10000);
+const MessageIdSchema = z.string().min(1);
+
+const WsMessageSchemas: Record<string, z.ZodTypeAny> = {
+  message: z.object({
+    type: z.literal("message"),
+    content: MessageContentSchema,
+    messageType: z.string().optional(),
+    metadata: z.any().optional(),
+  }),
+  getMessages: z.object({
+    type: z.literal("getMessages"),
+    query: z
+      .object({
+        limit: z.number().int().min(1).max(100).optional(),
+        offset: z.number().int().min(0).optional(),
+        before: z.string().optional(),
+      })
+      .optional(),
+  }),
+  markMessageAsRead: z.object({
+    type: z.literal("markMessageAsRead"),
+    messageId: MessageIdSchema,
+  }),
+  replyToMessage: z.object({
+    type: z.literal("replyToMessage"),
+    messageId: MessageIdSchema,
+    content: MessageContentSchema,
+  }),
+  editMessage: z.object({
+    type: z.literal("editMessage"),
+    messageId: MessageIdSchema,
+    content: MessageContentSchema,
+  }),
+  deleteMessage: z.object({
+    type: z.literal("deleteMessage"),
+    messageId: MessageIdSchema,
+  }),
+};
+
+// WS-HEARTBEAT: Intervalle configurable via env var
+const WS_HEARTBEAT_INTERVAL_MS = parseInt(
+  process.env.WS_HEARTBEAT_INTERVAL_MS || "30000",
+  10,
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HIGH-6: CACHE POUR PARTICIPATION AUX CONVERSATIONS
 // ═══════════════════════════════════════════════════════════════════════════
 interface ConversationParticipationCache {
@@ -56,74 +109,8 @@ interface ConversationParticipationCache {
   timestamp: number;
 }
 
-const conversationParticipationCache = new Map<
-  string,
-  ConversationParticipationCache
->();
 const PARTICIPATION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
 const MAX_CACHE_ENTRIES = 10000; // Limite pour éviter fuite mémoire
-
-/**
- * Vérifie si un utilisateur est participant d'une conversation (avec cache)
- */
-async function checkConversationParticipation(
-  userId: string,
-  conversationId: string,
-): Promise<boolean> {
-  const cacheKey = `${userId}:${conversationId}`;
-  const now = Date.now();
-
-  // Vérifier le cache
-  const cached = conversationParticipationCache.get(cacheKey);
-  if (cached && now - cached.timestamp < PARTICIPATION_CACHE_TTL) {
-    return cached.isParticipant;
-  }
-
-  // Cache miss - requête DB
-  const conversation = await ConversationModel.findOne({
-    _id: conversationId,
-    "participants.userId": userId,
-  }).lean();
-
-  const isParticipant = !!conversation;
-
-  // Mettre en cache le résultat
-  conversationParticipationCache.set(cacheKey, {
-    isParticipant,
-    timestamp: now,
-  });
-
-  // Nettoyer le cache si trop d'entrées
-  if (conversationParticipationCache.size > MAX_CACHE_ENTRIES) {
-    const target = Math.floor(MAX_CACHE_ENTRIES * 0.8);
-    // Phase 1 : supprimer les entrées expirées en priorité
-    for (const [key, value] of conversationParticipationCache.entries()) {
-      if (conversationParticipationCache.size <= target) break;
-      if (now - value.timestamp > PARTICIPATION_CACHE_TTL) {
-        conversationParticipationCache.delete(key);
-      }
-    }
-    // Phase 2 : si encore trop plein, supprimer les plus anciennes (LRU — Map préserve l'ordre d'insertion)
-    for (const [key] of conversationParticipationCache.entries()) {
-      if (conversationParticipationCache.size <= target) break;
-      conversationParticipationCache.delete(key);
-    }
-  }
-
-  return isParticipant;
-}
-
-/**
- * Invalider le cache de participation pour une conversation
- * (à appeler quand les membres changent)
- */
-export function invalidateConversationCache(conversationId: string): void {
-  for (const key of conversationParticipationCache.keys()) {
-    if (key.endsWith(`:${conversationId}`)) {
-      conversationParticipationCache.delete(key);
-    }
-  }
-}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITING POUR WEBSOCKET (CONNEXIONS)
@@ -135,101 +122,9 @@ interface ConnectionAttempt {
   blockedUntil?: Date;
 }
 
-const connectionAttempts = new Map<string, ConnectionAttempt>();
 const MAX_CONNECTIONS_PER_MINUTE = 10;
 const BLOCK_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_TRACKED_IPS = 10000; // CRIT-08: Limite du nombre d'IPs trackées pour éviter une fuite mémoire
-
-/**
- * Vérifie si une IP peut se connecter (rate limiting WebSocket natif).
- *
- * NOTE FIX-3 : Le middleware Express `wsConnectionLimiter` (express-rate-limit)
- * a été supprimé car il était inefficace pour les WebSockets.
- * Les upgrades WS sont traités via `server.on("upgrade")` AVANT le pipeline
- * Express, donc un `app.use("/ws", wsConnectionLimiter)` n'interceptait jamais
- * les connexions WS réelles. Le rate limiting WS est géré ici directement,
- * au niveau du handler `server.on("upgrade")`.
- */
-function canConnect(ip: string): { allowed: boolean; reason?: string } {
-  const now = new Date();
-
-  // CRIT-08: Protection mémoire — limiter le nombre d'IPs trackées
-  if (
-    connectionAttempts.size >= MAX_TRACKED_IPS &&
-    !connectionAttempts.has(ip)
-  ) {
-    // Purger les entrées non bloquées les plus anciennes
-    for (const [trackedIp, attempt] of connectionAttempts.entries()) {
-      if (!attempt.blockedUntil || attempt.blockedUntil < now) {
-        connectionAttempts.delete(trackedIp);
-      }
-      if (connectionAttempts.size < MAX_TRACKED_IPS * 0.8) break;
-    }
-  }
-
-  const attempt = connectionAttempts.get(ip);
-
-  if (!attempt) {
-    connectionAttempts.set(ip, { count: 1, firstAttempt: now });
-    return { allowed: true };
-  }
-
-  // Si bloqué
-  if (attempt.blockedUntil && attempt.blockedUntil > now) {
-    const remainingMinutes = Math.ceil(
-      (attempt.blockedUntil.getTime() - now.getTime()) / 60000,
-    );
-    return {
-      allowed: false,
-      reason: `Trop de tentatives de connexion. Réessayez dans ${remainingMinutes} minute(s).`,
-    };
-  }
-
-  // Réinitialiser si plus d'une minute s'est écoulée
-  const timeSinceFirst = now.getTime() - attempt.firstAttempt.getTime();
-  if (timeSinceFirst > 60000) {
-    connectionAttempts.set(ip, { count: 1, firstAttempt: now });
-    return { allowed: true };
-  }
-
-  // Incrémenter le compteur
-  attempt.count++;
-
-  if (attempt.count > MAX_CONNECTIONS_PER_MINUTE) {
-    attempt.blockedUntil = new Date(now.getTime() + BLOCK_DURATION_MS);
-    connectionAttempts.set(ip, attempt);
-    wsLogger.warn("WS RATE LIMIT - IP bloquée", {
-      ip: anonymizeIp(ip),
-      blockDurationMin: BLOCK_DURATION_MS / 60000,
-      attemptCount: attempt.count,
-    });
-    return {
-      allowed: false,
-      reason: `Trop de tentatives de connexion. Bloqué pour ${BLOCK_DURATION_MS / 60000} minutes.`,
-    };
-  }
-
-  connectionAttempts.set(ip, attempt);
-  return { allowed: true };
-}
-
-// Nettoyage périodique des tentatives anciennes
-setInterval(
-  () => {
-    const now = new Date();
-    const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
-
-    for (const [ip, attempt] of connectionAttempts.entries()) {
-      if (
-        attempt.firstAttempt < oneHourAgo &&
-        (!attempt.blockedUntil || attempt.blockedUntil < now)
-      ) {
-        connectionAttempts.delete(ip);
-      }
-    }
-  },
-  60 * 60 * 1000,
-); // Toutes les heures
 
 class WebSocketService {
   private notificationsWss: WebSocketServer | null = null;
@@ -239,6 +134,20 @@ class WebSocketService {
     string,
     Map<string, Set<AuthenticatedWebSocket>>
   > = new Map(); // userId -> conversationId -> clients
+
+  // R-5: Cache de participation aux conversations (encapsulé dans la classe)
+  private readonly conversationParticipationCache = new Map<
+    string,
+    ConversationParticipationCache
+  >();
+
+  // R-5: Map de rate limiting des connexions (encapsulée dans la classe)
+  private readonly connectionAttempts = new Map<string, ConnectionAttempt>();
+
+  // R-5: Référence au timer de nettoyage périodique pour pouvoir le stopper proprement
+  private connectionAttemptsCleanupInterval: ReturnType<
+    typeof setInterval
+  > | null = null;
 
   /**
    * FIX-1: Helper sécurisé pour envoyer des messages aux clients WS
@@ -253,6 +162,144 @@ class WebSocketService {
         error: err instanceof Error ? err.message : String(err),
       });
     }
+  }
+
+  /**
+   * R-5: Vérifie si un utilisateur est participant d'une conversation (avec cache)
+   */
+  private async checkConversationParticipation(
+    userId: string,
+    conversationId: string,
+  ): Promise<boolean> {
+    const cacheKey = `${userId}:${conversationId}`;
+    const now = Date.now();
+
+    // Vérifier le cache
+    const cached = this.conversationParticipationCache.get(cacheKey);
+    if (cached && now - cached.timestamp < PARTICIPATION_CACHE_TTL) {
+      return cached.isParticipant;
+    }
+
+    // Cache miss - requête DB
+    const conversation = await ConversationModel.findOne({
+      _id: conversationId,
+      "participants.userId": userId,
+    }).lean();
+
+    const isParticipant = !!conversation;
+
+    // Mettre en cache le résultat
+    this.conversationParticipationCache.set(cacheKey, {
+      isParticipant,
+      timestamp: now,
+    });
+
+    // Nettoyer le cache si trop d'entrées
+    if (this.conversationParticipationCache.size > MAX_CACHE_ENTRIES) {
+      const target = Math.floor(MAX_CACHE_ENTRIES * 0.8);
+      // Phase 1 : supprimer les entrées expirées en priorité
+      for (const [
+        key,
+        value,
+      ] of this.conversationParticipationCache.entries()) {
+        if (this.conversationParticipationCache.size <= target) break;
+        if (now - value.timestamp > PARTICIPATION_CACHE_TTL) {
+          this.conversationParticipationCache.delete(key);
+        }
+      }
+      // Phase 2 : si encore trop plein, supprimer les plus anciennes (LRU — Map préserve l'ordre d'insertion)
+      for (const [key] of this.conversationParticipationCache.entries()) {
+        if (this.conversationParticipationCache.size <= target) break;
+        this.conversationParticipationCache.delete(key);
+      }
+    }
+
+    return isParticipant;
+  }
+
+  /**
+   * R-5: Invalider le cache de participation pour une conversation
+   * (à appeler quand les membres changent)
+   */
+  invalidateConversationCache(conversationId: string): void {
+    for (const key of this.conversationParticipationCache.keys()) {
+      if (key.endsWith(`:${conversationId}`)) {
+        this.conversationParticipationCache.delete(key);
+      }
+    }
+  }
+
+  /**
+   * R-5: Vérifie si une IP peut se connecter (rate limiting WebSocket natif).
+   *
+   * NOTE FIX-3 : Le middleware Express `wsConnectionLimiter` (express-rate-limit)
+   * a été supprimé car il était inefficace pour les WebSockets.
+   * Les upgrades WS sont traités via `server.on("upgrade")` AVANT le pipeline
+   * Express, donc un `app.use("/ws", wsConnectionLimiter)` n'interceptait jamais
+   * les connexions WS réelles. Le rate limiting WS est géré ici directement,
+   * au niveau du handler `server.on("upgrade")`.
+   */
+  private canConnect(ip: string): { allowed: boolean; reason?: string } {
+    const now = new Date();
+
+    // CRIT-08: Protection mémoire — limiter le nombre d'IPs trackées
+    if (
+      this.connectionAttempts.size >= MAX_TRACKED_IPS &&
+      !this.connectionAttempts.has(ip)
+    ) {
+      // Purger les entrées non bloquées les plus anciennes
+      for (const [trackedIp, attempt] of this.connectionAttempts.entries()) {
+        if (!attempt.blockedUntil || attempt.blockedUntil < now) {
+          this.connectionAttempts.delete(trackedIp);
+        }
+        if (this.connectionAttempts.size < MAX_TRACKED_IPS * 0.8) break;
+      }
+    }
+
+    const attempt = this.connectionAttempts.get(ip);
+
+    if (!attempt) {
+      this.connectionAttempts.set(ip, { count: 1, firstAttempt: now });
+      return { allowed: true };
+    }
+
+    // Si bloqué
+    if (attempt.blockedUntil && attempt.blockedUntil > now) {
+      const remainingMinutes = Math.ceil(
+        (attempt.blockedUntil.getTime() - now.getTime()) / 60000,
+      );
+      return {
+        allowed: false,
+        reason: `Trop de tentatives de connexion. Réessayez dans ${remainingMinutes} minute(s).`,
+      };
+    }
+
+    // Réinitialiser si plus d'une minute s'est écoulée
+    const timeSinceFirst = now.getTime() - attempt.firstAttempt.getTime();
+    if (timeSinceFirst > 60000) {
+      this.connectionAttempts.set(ip, { count: 1, firstAttempt: now });
+      return { allowed: true };
+    }
+
+    // Incrémenter le compteur
+    attempt.count++;
+
+    if (attempt.count > MAX_CONNECTIONS_PER_MINUTE) {
+      attempt.blockedUntil = new Date(now.getTime() + BLOCK_DURATION_MS);
+      this.connectionAttempts.set(ip, attempt);
+      wsLogger.warn("WS RATE LIMIT - IP bloquée", {
+        ip: anonymizeIp(ip),
+        blockDurationMin: BLOCK_DURATION_MS / 60000,
+        attemptCount: attempt.count,
+      });
+      return {
+        allowed: false,
+        reason: `Trop de tentatives de connexion. Bloqué pour ${BLOCK_DURATION_MS / 60000} minutes.`,
+      };
+    }
+
+    this.connectionAttempts.set(ip, attempt);
+    return { allowed: true };
   }
 
   /**
@@ -336,7 +383,7 @@ class WebSocketService {
         client.isAlive = false;
         client.ping();
       });
-    }, 30000);
+    }, WS_HEARTBEAT_INTERVAL_MS);
 
     // Heartbeat pour les messages
     const messageInterval = setInterval(() => {
@@ -351,7 +398,7 @@ class WebSocketService {
         client.isAlive = false;
         client.ping();
       });
-    }, 30000);
+    }, WS_HEARTBEAT_INTERVAL_MS);
 
     this.notificationsWss.on("close", () => {
       clearInterval(notificationInterval);
@@ -360,6 +407,24 @@ class WebSocketService {
     this.messagesWss.on("close", () => {
       clearInterval(messageInterval);
     });
+
+    // R-5: Nettoyage périodique des tentatives de connexion anciennes
+    this.connectionAttemptsCleanupInterval = setInterval(
+      () => {
+        const now = new Date();
+        const oneHourAgo = new Date(now.getTime() - 60 * 60 * 1000);
+
+        for (const [ip, attempt] of this.connectionAttempts.entries()) {
+          if (
+            attempt.firstAttempt < oneHourAgo &&
+            (!attempt.blockedUntil || attempt.blockedUntil < now)
+          ) {
+            this.connectionAttempts.delete(ip);
+          }
+        }
+      },
+      60 * 60 * 1000,
+    ); // Toutes les heures
   }
 
   /**
@@ -374,7 +439,7 @@ class WebSocketService {
 
     // Vérifier le rate limiting par IP
     const ip = request.socket.remoteAddress || "unknown";
-    const rateLimitCheck = canConnect(ip);
+    const rateLimitCheck = this.canConnect(ip);
 
     if (!rateLimitCheck.allowed) {
       wsLogger.warn("Notifications - Connexion refusée (rate limit)", {
@@ -467,21 +532,25 @@ class WebSocketService {
         }
 
         // AUTH-004 CORRIGÉ: Vérifier que le token est à usage unique
-        if (decoded.jti) {
-          const isTokenValid = await redisSessionService.consumeWsToken(
-            decoded.jti,
-          );
-          if (!isTokenValid) {
-            wsLogger.error("Notifications - Token déjà utilisé", {
-              jti: decoded.jti.substring(0, 8) + "...",
-            });
-            client.close(4003, "Token already used");
-            return;
-          }
-          wsLogger.info("Notifications - Token à usage unique validé", {
+        // R-1: Rejeter explicitement les tokens sans JTI
+        if (!decoded.jti) {
+          wsLogger.error("Notifications - Token invalide: JTI manquant");
+          client.close(4002, "Invalid token: missing JTI");
+          return;
+        }
+        const isTokenValid = await redisSessionService.consumeWsToken(
+          decoded.jti,
+        );
+        if (!isTokenValid) {
+          wsLogger.error("Notifications - Token déjà utilisé", {
             jti: decoded.jti.substring(0, 8) + "...",
           });
+          client.close(4003, "Token already used");
+          return;
         }
+        wsLogger.info("Notifications - Token à usage unique validé", {
+          jti: decoded.jti.substring(0, 8) + "...",
+        });
 
         client.userId = decoded.id;
 
@@ -522,6 +591,18 @@ class WebSocketService {
             });
           }
         });
+
+        // R-8: Canal notifications en lecture seule — retourner une erreur explicite
+        client.on("message", () => {
+          this.safeSend(
+            client,
+            JSON.stringify({
+              type: "error",
+              code: "CHANNEL_READONLY",
+              message: "Le canal notifications est en lecture seule",
+            }),
+          );
+        });
       } catch (error) {
         wsLogger.error("Notifications - Token invalide", { error });
         client.close(4002, "Invalid token");
@@ -543,7 +624,7 @@ class WebSocketService {
 
     // Vérifier le rate limiting par IP
     const ip = request.socket.remoteAddress || "unknown";
-    const rateLimitCheck = canConnect(ip);
+    const rateLimitCheck = this.canConnect(ip);
 
     if (!rateLimitCheck.allowed) {
       wsLogger.warn("Messages - Connexion refusée (rate limit)", {
@@ -644,21 +725,25 @@ class WebSocketService {
         }
 
         // AUTH-004 CORRIGÉ: Vérifier que le token est à usage unique
-        if (decoded.jti) {
-          const isTokenValid = await redisSessionService.consumeWsToken(
-            decoded.jti,
-          );
-          if (!isTokenValid) {
-            wsLogger.error("Messages - Token déjà utilisé", {
-              jti: decoded.jti.substring(0, 8) + "...",
-            });
-            client.close(4003, "Token already used");
-            return;
-          }
-          wsLogger.info("Messages - Token à usage unique validé", {
+        // R-1: Rejeter explicitement les tokens sans JTI
+        if (!decoded.jti) {
+          wsLogger.error("Messages - Token invalide: JTI manquant");
+          client.close(4002, "Invalid token: missing JTI");
+          return;
+        }
+        const isTokenValid = await redisSessionService.consumeWsToken(
+          decoded.jti,
+        );
+        if (!isTokenValid) {
+          wsLogger.error("Messages - Token déjà utilisé", {
             jti: decoded.jti.substring(0, 8) + "...",
           });
+          client.close(4003, "Token already used");
+          return;
         }
+        wsLogger.info("Messages - Token à usage unique validé", {
+          jti: decoded.jti.substring(0, 8) + "...",
+        });
 
         client.userId = decoded.id;
         client.conversationId = conversationId;
@@ -805,21 +890,29 @@ class WebSocketService {
               return;
             }
 
-            // WS-006: Validation des champs selon le type
-            if (
-              data.type === "message" &&
-              (!data.content ||
-                typeof data.content !== "string" ||
-                data.content.length > 10000)
-            ) {
-              client.send(
-                JSON.stringify({
-                  type: "error",
-                  code: "INVALID_CONTENT",
-                  message: "Contenu du message invalide ou trop long",
-                }),
-              );
-              return;
+            // ZOD: Validation du schéma par type de message
+            const schema = WsMessageSchemas[data.type];
+            if (schema) {
+              const result = schema.safeParse(data);
+              if (!result.success) {
+                const firstError = result.error.issues[0];
+                wsLogger.warn("Messages - Validation zod échouée", {
+                  userId: client.userId,
+                  messageType: data.type,
+                  error: firstError?.message,
+                });
+                client.send(
+                  JSON.stringify({
+                    type: "error",
+                    code: "VALIDATION_ERROR",
+                    message: firstError?.message || "Données invalides",
+                    field: firstError?.path?.join("."),
+                  }),
+                );
+                return;
+              }
+              // Remplacer data par les données validées et typées
+              data = result.data;
             }
 
             // WS-001 CORRIGÉ + HIGH-6: Vérification de participation à CHAQUE message (avec cache)
@@ -830,7 +923,7 @@ class WebSocketService {
               return;
             }
 
-            const isParticipant = await checkConversationParticipation(
+            const isParticipant = await this.checkConversationParticipation(
               client.userId,
               conversationId,
             );
@@ -1123,8 +1216,8 @@ class WebSocketService {
         );
       } else {
         // Récupérer tous les participants de la conversation
-        const Conversation = (await import("../models/conversations")).default;
-        const conversation = await Conversation.findById(conversationId).lean();
+        const conversation =
+          await ConversationModel.findById(conversationId).lean();
         if (!conversation) return;
         participantIds = conversation.participants
           .map((p: any) => p.userId.toString())
@@ -1139,9 +1232,7 @@ class WebSocketService {
         senderName = "Un utilisateur";
         if (message.senderId) {
           try {
-            const { decrypt } = await import("../utils/masterEncryptionUtils");
-            const User = (await import("../models/users")).default;
-            const sender = await User.findById(message.senderId)
+            const sender = await UserModel.findById(message.senderId)
               .select("name surname pseudo showPseudo")
               .lean();
 
@@ -1561,10 +1652,10 @@ class WebSocketService {
     });
 
     const message = JSON.stringify({
+      ...data,
       type: "group_update",
       conversationId,
       updateType,
-      ...data,
     });
 
     for (const odId of participantIds) {
@@ -1716,3 +1807,9 @@ class WebSocketService {
 
 // Export d'une instance singleton
 export const webSocketService = new WebSocketService();
+
+// R-5: Export standalone pour rétrocompatibilité avec les imports directs
+// (ex: import { invalidateConversationCache } from "./webSocketService")
+export function invalidateConversationCache(conversationId: string): void {
+  webSocketService.invalidateConversationCache(conversationId);
+}
