@@ -1049,6 +1049,12 @@ app.use("/api", generalLimiter);
     serverLogger.info(
       "Service de retry des notifications démarré (vérifie les notifications en attente au startup)",
     );
+
+    // Démarrer le cron job de nettoyage des mutes expirés
+    const { startCleanExpiredMutesJob } =
+      await import("./jobs/cleanExpiredMutes");
+    startCleanExpiredMutesJob();
+    serverLogger.info("Cron job de nettoyage des mutes expirés démarré");
   } catch (err) {
     serverLogger.critical("Impossible de se connecter à la base de données", {
       error: getErrorMessage(err),

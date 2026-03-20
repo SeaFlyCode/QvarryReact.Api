@@ -72,7 +72,10 @@
     "ws:state:clear": "ts-node scripts/recover-websocket-states.ts clear",
     "ws:state:export": "ts-node scripts/recover-websocket-states.ts export",
     "ws:state:count": "ts-node scripts/recover-websocket-states.ts count",
-    "ws:state:help": "ts-node scripts/recover-websocket-states.ts help"
+    "ws:state:help": "ts-node scripts/recover-websocket-states.ts help",
+    "test:push": "ts-node scripts/test-push-notification.ts",
+    "test:push:check": "ts-node scripts/test-push-notification.ts check",
+    "test:push:list": "ts-node scripts/test-push-notification.ts list"
   },
   "keywords": [],
   "author": "",

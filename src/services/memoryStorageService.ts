@@ -237,6 +237,12 @@ export class MemoryStorageService {
         creatorId: conversation.creatorId ?? null,
         participants: conversation.participants,
         lastMessage: conversation.lastMessage ?? null,
+        deletedBy: conversation.deletedBy ?? [],
+        mutedBy: conversation.mutedBy ?? [],
+        archivedBy: conversation.archivedBy ?? [],
+        pinnedBy: conversation.pinnedBy ?? [],
+        markedUnreadBy: conversation.markedUnreadBy ?? [],
+        blockedBy: conversation.blockedBy ?? [],
         createdAt: conversation.createdAt,
         updatedAt: conversation.updatedAt,
       } as IConversation;

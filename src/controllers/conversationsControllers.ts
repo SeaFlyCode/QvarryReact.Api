@@ -16,6 +16,11 @@ import User from "../models/users";
 import dataArchiveService from "../services/dataArchiveService";
 import { logger } from "../services/loggerService";
 import ContactModel from "../models/contacts";
+import {
+  calculateUserPreferences,
+  calculateNextPinOrder,
+  sanitizeBlockReason,
+} from "../utils/conversationHelpers";
 
 const convoLogger = logger.child({ service: "conversations" });
 
@@ -141,6 +146,11 @@ export async function createPrivateConversation(req: Request, res: Response) {
           participants: conversation.participants,
           lastMessage: conversation.lastMessage ?? null,
           deletedBy: conversation.deletedBy ?? [],
+          mutedBy: conversation.mutedBy ?? [],
+          archivedBy: conversation.archivedBy ?? [],
+          pinnedBy: conversation.pinnedBy ?? [],
+          markedUnreadBy: conversation.markedUnreadBy ?? [],
+          blockedBy: conversation.blockedBy ?? [],
           createdAt: conversation.createdAt,
           updatedAt: conversation.updatedAt,
         };
@@ -198,6 +208,12 @@ export async function createPrivateConversation(req: Request, res: Response) {
       creatorId: conversation.creatorId ?? null,
       participants: conversation.participants,
       lastMessage: conversation.lastMessage ?? null,
+      deletedBy: conversation.deletedBy ?? [],
+      mutedBy: conversation.mutedBy ?? [],
+      archivedBy: conversation.archivedBy ?? [],
+      pinnedBy: conversation.pinnedBy ?? [],
+      markedUnreadBy: conversation.markedUnreadBy ?? [],
+      blockedBy: conversation.blockedBy ?? [],
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
     };
@@ -320,6 +336,12 @@ export async function createGroupConversation(req: Request, res: Response) {
       creatorId: conversation.creatorId,
       participants: conversation.participants,
       lastMessage: conversation.lastMessage,
+      deletedBy: conversation.deletedBy ?? [],
+      mutedBy: conversation.mutedBy ?? [],
+      archivedBy: conversation.archivedBy ?? [],
+      pinnedBy: conversation.pinnedBy ?? [],
+      markedUnreadBy: conversation.markedUnreadBy ?? [],
+      blockedBy: conversation.blockedBy ?? [],
       createdAt: conversation.createdAt,
       updatedAt: conversation.updatedAt,
     } as IConversation;
@@ -382,6 +404,7 @@ export async function listConversations(req: Request, res: Response) {
       100,
     );
     const skip = (page - 1) * limit;
+    const includeArchived = req.query.includeArchived === "true";
     const userObjectId = new Types.ObjectId(userId);
 
     let conversations = memoryStorage.getAllConversations(userId);
@@ -389,19 +412,23 @@ export async function listConversations(req: Request, res: Response) {
 
     if (!conversations || conversations.length === 0) {
       // Filtrer les conversations où l'utilisateur n'a pas fait de soft delete
+      const query: any = {
+        "participants.userId": userObjectId,
+        deletedBy: { $ne: userObjectId }, // Exclure les conversations supprimées par l'utilisateur
+      };
+
+      // Par défaut, exclure les conversations archivées
+      if (!includeArchived) {
+        query["archivedBy.userId"] = { $ne: userObjectId };
+      }
+
       const [dbConversations, totalCount] = await Promise.all([
-        Conversation.find({
-          "participants.userId": userObjectId,
-          deletedBy: { $ne: userObjectId }, // Exclure les conversations supprimées par l'utilisateur
-        })
+        Conversation.find(query)
           .sort({ updatedAt: -1 })
           .skip(skip)
           .limit(limit)
           .lean(),
-        Conversation.countDocuments({
-          "participants.userId": userObjectId,
-          deletedBy: { $ne: userObjectId },
-        }),
+        Conversation.countDocuments(query),
       ]);
 
       total = totalCount;
@@ -415,6 +442,11 @@ export async function listConversations(req: Request, res: Response) {
           participants: conv.participants,
           lastMessage: conv.lastMessage ?? null,
           deletedBy: conv.deletedBy ?? [],
+          mutedBy: conv.mutedBy ?? [],
+          archivedBy: conv.archivedBy ?? [],
+          pinnedBy: conv.pinnedBy ?? [],
+          markedUnreadBy: conv.markedUnreadBy ?? [],
+          blockedBy: conv.blockedBy ?? [],
           createdAt: conv.createdAt,
           updatedAt: conv.updatedAt,
         };
@@ -433,16 +465,33 @@ export async function listConversations(req: Request, res: Response) {
             participants: conv.participants,
             lastMessage: conv.lastMessage ?? null,
             deletedBy: conv.deletedBy ?? [],
+            mutedBy: conv.mutedBy ?? [],
+            archivedBy: conv.archivedBy ?? [],
+            pinnedBy: conv.pinnedBy ?? [],
+            markedUnreadBy: conv.markedUnreadBy ?? [],
+            blockedBy: conv.blockedBy ?? [],
             createdAt: conv.createdAt,
             updatedAt: conv.updatedAt,
           }) as import("../models/conversations").IConversation,
       );
     } else {
       // Filtrer les conversations en mémoire également
-      conversations = conversations.filter(
-        (conv: any) =>
-          !conv.deletedBy?.some((id: any) => id.toString() === userId),
-      );
+      conversations = conversations.filter((conv: any) => {
+        const isDeleted = conv.deletedBy?.some(
+          (id: any) => id.toString() === userId,
+        );
+        if (isDeleted) return false;
+
+        // Filtrer les archivées sauf si includeArchived=true
+        if (!includeArchived) {
+          const isArchived = conv.archivedBy?.some(
+            (a: any) => a.userId.toString() === userId,
+          );
+          if (isArchived) return false;
+        }
+
+        return true;
+      });
 
       // Paginer les conversations en mémoire
       total = conversations.length;
@@ -519,6 +568,12 @@ export async function listConversations(req: Request, res: Response) {
             }
           }
 
+          // Calculer les préférences utilisateur
+          const userPreferences = calculateUserPreferences(
+            conv,
+            userId as string,
+          );
+
           return {
             _id: conv._id,
             name: decryptedName,
@@ -527,12 +582,25 @@ export async function listConversations(req: Request, res: Response) {
             creatorId: conv.creatorId,
             lastMessage: lastMessageContent, // ✅ Toujours à jour depuis la BDD (agrégation unique)
             unreadCount,
+            userPreferences, // ✅ Nouvelles préférences utilisateur
             createdAt: conv.createdAt,
             updatedAt: conv.updatedAt,
           };
         },
       ),
     );
+
+    // Tri : épinglées en premier (par order ASC), puis par updatedAt DESC
+    result.sort((a, b) => {
+      if (a.userPreferences.isPinned && !b.userPreferences.isPinned) return -1;
+      if (!a.userPreferences.isPinned && b.userPreferences.isPinned) return 1;
+      if (a.userPreferences.isPinned && b.userPreferences.isPinned) {
+        return (
+          (a.userPreferences.pinOrder ?? 0) - (b.userPreferences.pinOrder ?? 0)
+        );
+      }
+      return new Date(b.updatedAt).getTime() - new Date(a.updatedAt).getTime();
+    });
 
     res.json({
       data: result,
@@ -1433,5 +1501,896 @@ export async function adminDeleteConversationPermanent(
     res.status(500).json({
       error: "Erreur lors de la suppression définitive",
     });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// NOUVELLES FONCTIONNALITÉS DE GESTION DES CONVERSATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+// PATCH /conversations/:id/mute - Mettre en sourdine une conversation
+export async function muteConversation(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    const { mutedUntil, notifyOnMention } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    // Validation de mutedUntil
+    let parsedMutedUntil: Date | null = null;
+    if (mutedUntil !== undefined && mutedUntil !== null) {
+      parsedMutedUntil = new Date(mutedUntil);
+
+      // Vérifier que c'est une date valide
+      if (isNaN(parsedMutedUntil.getTime())) {
+        return res.status(400).json({ error: "Date mutedUntil invalide" });
+      }
+
+      // Vérifier que c'est dans le futur
+      if (parsedMutedUntil <= new Date()) {
+        return res
+          .status(400)
+          .json({ error: "La date mutedUntil doit être dans le futur" });
+      }
+
+      // Vérifier la limite de 1 an
+      const oneYearFromNow = new Date();
+      oneYearFromNow.setFullYear(oneYearFromNow.getFullYear() + 1);
+      if (parsedMutedUntil > oneYearFromNow) {
+        return res
+          .status(400)
+          .json({ error: "La date mutedUntil ne peut pas dépasser 1 an" });
+      }
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Vérifier si déjà muted
+    const existingMuteIndex = conversation.mutedBy.findIndex(
+      (m: any) => m.userId.toString() === userId,
+    );
+
+    if (existingMuteIndex !== -1) {
+      // Update existing mute
+      conversation.mutedBy[existingMuteIndex].mutedAt = new Date();
+      conversation.mutedBy[existingMuteIndex].mutedUntil = parsedMutedUntil;
+      conversation.mutedBy[existingMuteIndex].notifyOnMention =
+        notifyOnMention ?? true;
+    } else {
+      // Add new mute
+      conversation.mutedBy.push({
+        userId: userObjectId,
+        mutedAt: new Date(),
+        mutedUntil: parsedMutedUntil,
+        notifyOnMention: notifyOnMention ?? true,
+      } as any);
+    }
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation mise en sourdine", {
+      conversationId: id,
+      userId,
+      mutedUntil: parsedMutedUntil,
+    });
+
+    const message = parsedMutedUntil
+      ? `Conversation mise en sourdine jusqu'au ${parsedMutedUntil.toLocaleString("fr-FR")}`
+      : "Conversation mise en sourdine indéfiniment";
+
+    res.json({
+      message,
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+      mutedUntil: parsedMutedUntil,
+    });
+  } catch (err) {
+    convoLogger.error("Erreur mute conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors de la mise en sourdine" });
+  }
+}
+
+// PATCH /conversations/:id/unmute - Réactiver le son d'une conversation
+export async function unmuteConversation(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Retirer de mutedBy
+    const initialLength = conversation.mutedBy.length;
+    conversation.mutedBy = conversation.mutedBy.filter(
+      (m: any) => m.userId.toString() !== userId,
+    );
+
+    if (conversation.mutedBy.length === initialLength) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation n'est pas en sourdine" });
+    }
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation réactivée", { conversationId: id, userId });
+
+    res.json({
+      message: "Conversation réactivée",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+    });
+  } catch (err) {
+    convoLogger.error("Erreur unmute conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors de la réactivation" });
+  }
+}
+
+// PATCH /conversations/:id/archive - Archiver une conversation
+export async function archiveConversation(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Vérifier si déjà archivée
+    const alreadyArchived = conversation.archivedBy.some(
+      (a: any) => a.userId.toString() === userId,
+    );
+    if (alreadyArchived) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation est déjà archivée" });
+    }
+
+    // Ajouter à archivedBy
+    conversation.archivedBy.push({
+      userId: userObjectId,
+      archivedAt: new Date(),
+    } as any);
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation archivée", { conversationId: id, userId });
+
+    res.json({
+      message: "Conversation archivée",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+    });
+  } catch (err) {
+    convoLogger.error("Erreur archive conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors de l'archivage" });
+  }
+}
+
+// PATCH /conversations/:id/unarchive - Désarchiver une conversation
+export async function unarchiveConversation(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Retirer de archivedBy
+    const initialLength = conversation.archivedBy.length;
+    conversation.archivedBy = conversation.archivedBy.filter(
+      (a: any) => a.userId.toString() !== userId,
+    );
+
+    if (conversation.archivedBy.length === initialLength) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation n'est pas archivée" });
+    }
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation désarchivée", {
+      conversationId: id,
+      userId,
+    });
+
+    res.json({
+      message: "Conversation désarchivée",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+    });
+  } catch (err) {
+    convoLogger.error("Erreur unarchive conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors de la désarchivage" });
+  }
+}
+
+// GET /conversations/archived - Lister les conversations archivées
+export async function listArchivedConversations(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const limit = Math.min(
+      Math.max(1, parseInt(req.query.limit as string) || 20),
+      100,
+    );
+    const skip = Math.max(0, parseInt(req.query.skip as string) || 0);
+
+    const userObjectId = new Types.ObjectId(userId);
+
+    // Trouver les conversations archivées par l'utilisateur
+    const [conversations, total] = await Promise.all([
+      Conversation.find({
+        "participants.userId": userObjectId,
+        "archivedBy.userId": userObjectId,
+      })
+        .sort({ updatedAt: -1 })
+        .skip(skip)
+        .limit(limit)
+        .lean(),
+      Conversation.countDocuments({
+        "participants.userId": userObjectId,
+        "archivedBy.userId": userObjectId,
+      }),
+    ]);
+
+    // Formater les conversations avec userPreferences
+    const result = await Promise.all(
+      conversations.map(async (conv: any) => {
+        let decryptedName = null;
+        if (conv.name) {
+          try {
+            decryptedName = await decryptCommunication(conv.name);
+          } catch (_e) {
+            decryptedName = null;
+          }
+        }
+
+        const userPreferences = calculateUserPreferences(
+          conv,
+          userId as string,
+        );
+
+        return {
+          _id: conv._id,
+          name: decryptedName,
+          isGroup: conv.isGroup,
+          participants: conv.participants,
+          creatorId: conv.creatorId,
+          userPreferences,
+          createdAt: conv.createdAt,
+          updatedAt: conv.updatedAt,
+        };
+      }),
+    );
+
+    res.json({
+      conversations: result,
+      total,
+      limit,
+      skip,
+    });
+  } catch (err) {
+    convoLogger.error("Erreur récupération conversations archivées", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({
+      error: "Erreur lors de la récupération des conversations archivées",
+    });
+  }
+}
+
+// PATCH /conversations/:id/pin - Épingler une conversation
+export async function pinConversation(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    let { order } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    // Validation de order si fourni
+    if (order !== undefined && order !== null) {
+      order = parseInt(order);
+      if (isNaN(order) || order < 0) {
+        return res
+          .status(400)
+          .json({ error: "L'ordre doit être un nombre positif" });
+      }
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Vérifier si déjà épinglée
+    const alreadyPinned = conversation.pinnedBy.some(
+      (p: any) => p.userId.toString() === userId,
+    );
+    if (alreadyPinned) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation est déjà épinglée" });
+    }
+
+    // Vérifier la limite de 5 conversations épinglées
+    const allConversations = await Conversation.find({
+      "participants.userId": userObjectId,
+      "pinnedBy.userId": userObjectId,
+    }).lean();
+
+    if (allConversations.length >= 5) {
+      return res
+        .status(400)
+        .json({ error: "Vous ne pouvez épingler que 5 conversations maximum" });
+    }
+
+    // Calculer l'ordre si non fourni
+    if (order === undefined || order === null) {
+      order = calculateNextPinOrder(allConversations, userId);
+    }
+
+    // Ajouter à pinnedBy
+    conversation.pinnedBy.push({
+      userId: userObjectId,
+      pinnedAt: new Date(),
+      order,
+    } as any);
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation épinglée", {
+      conversationId: id,
+      userId,
+      order,
+    });
+
+    res.json({
+      message: "Conversation épinglée",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+      pinOrder: order,
+    });
+  } catch (err) {
+    convoLogger.error("Erreur pin conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors de l'épinglage" });
+  }
+}
+
+// PATCH /conversations/:id/unpin - Désépingler une conversation
+export async function unpinConversation(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Retirer de pinnedBy
+    const initialLength = conversation.pinnedBy.length;
+    conversation.pinnedBy = conversation.pinnedBy.filter(
+      (p: any) => p.userId.toString() !== userId,
+    );
+
+    if (conversation.pinnedBy.length === initialLength) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation n'est pas épinglée" });
+    }
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation désépinglée", {
+      conversationId: id,
+      userId,
+    });
+
+    res.json({
+      message: "Conversation désépinglée",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+    });
+  } catch (err) {
+    convoLogger.error("Erreur unpin conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors de la désépinglage" });
+  }
+}
+
+// PATCH /conversations/:id/mark-unread - Marquer comme non lu
+export async function markConversationAsUnread(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Vérifier si déjà marquée comme non lue
+    const alreadyMarked = conversation.markedUnreadBy.some(
+      (id: any) => id.toString() === userId,
+    );
+    if (alreadyMarked) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation est déjà marquée comme non lue" });
+    }
+
+    // Ajouter à markedUnreadBy
+    conversation.markedUnreadBy.push(userObjectId);
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation marquée comme non lue", {
+      conversationId: id,
+      userId,
+    });
+
+    res.json({
+      message: "Conversation marquée comme non lue",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+    });
+  } catch (err) {
+    convoLogger.error("Erreur mark conversation as unread", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors du marquage" });
+  }
+}
+
+// PATCH /conversations/:id/mark-read-flag - Retirer le marquage non lu (différent de markConversationAsRead qui marque les messages)
+export async function unmarkConversationAsUnread(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Retirer de markedUnreadBy
+    const initialLength = conversation.markedUnreadBy.length;
+    conversation.markedUnreadBy = conversation.markedUnreadBy.filter(
+      (id: any) => id.toString() !== userId,
+    );
+
+    if (conversation.markedUnreadBy.length === initialLength) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation n'est pas marquée comme non lue" });
+    }
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation marquée comme lue", {
+      conversationId: id,
+      userId,
+    });
+
+    res.json({
+      message: "Conversation marquée comme lue",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+    });
+  } catch (err) {
+    convoLogger.error("Erreur unmark conversation as unread", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors du retrait du marquage" });
+  }
+}
+
+// PATCH /conversations/:id/block - Bloquer une conversation
+export async function blockConversation(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    const { reason } = req.body;
+
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    const sanitizedReason = sanitizeBlockReason(reason);
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Vérifier si déjà bloquée
+    const alreadyBlocked = conversation.blockedBy.some(
+      (b: any) => b.userId.toString() === userId,
+    );
+    if (alreadyBlocked) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation est déjà bloquée" });
+    }
+
+    // Ajouter à blockedBy
+    conversation.blockedBy.push({
+      userId: userObjectId,
+      blockedAt: new Date(),
+      reason: sanitizedReason,
+    } as any);
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation bloquée", {
+      conversationId: id,
+      userId,
+      reason: sanitizedReason,
+    });
+
+    res.json({
+      message: "Conversation bloquée",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+    });
+  } catch (err) {
+    convoLogger.error("Erreur block conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors du blocage" });
+  }
+}
+
+// PATCH /conversations/:id/unblock - Débloquer une conversation
+export async function unblockConversation(req: Request, res: Response) {
+  try {
+    let userId: string | undefined;
+    if (req.user && typeof req.user === "object" && "id" in req.user) {
+      userId = (req.user as any).id;
+    }
+    if (!userId) {
+      return res.status(401).json({ error: "Utilisateur non authentifié" });
+    }
+
+    const { id } = req.params;
+    if (!id) {
+      return res.status(400).json({ error: "ID de conversation requis" });
+    }
+
+    const userObjectId = new Types.ObjectId(userId);
+    const conversationId = new Types.ObjectId(id);
+
+    const conversation = await Conversation.findById(conversationId);
+    if (!conversation) {
+      return res.status(404).json({ error: "Conversation non trouvée" });
+    }
+
+    // Vérifier que l'utilisateur est participant actif
+    const participant = conversation.participants.find(
+      (p: any) => p.userId.toString() === userId && !p.leftAt,
+    );
+    if (!participant) {
+      return res
+        .status(403)
+        .json({ error: "Vous n'êtes pas participant de cette conversation" });
+    }
+
+    // Retirer de blockedBy
+    const initialLength = conversation.blockedBy.length;
+    conversation.blockedBy = conversation.blockedBy.filter(
+      (b: any) => b.userId.toString() !== userId,
+    );
+
+    if (conversation.blockedBy.length === initialLength) {
+      return res
+        .status(400)
+        .json({ error: "Cette conversation n'est pas bloquée" });
+    }
+
+    conversation.updatedAt = new Date();
+    await conversation.save();
+
+    const userPreferences = calculateUserPreferences(conversation, userId);
+
+    convoLogger.info("Conversation débloquée", { conversationId: id, userId });
+
+    res.json({
+      message: "Conversation débloquée",
+      conversation: {
+        _id: conversation._id,
+        userPreferences,
+      },
+    });
+  } catch (err) {
+    convoLogger.error("Erreur unblock conversation", {
+      error: err instanceof Error ? err.message : String(err),
+      stack: err instanceof Error ? err.stack : undefined,
+    });
+    res.status(500).json({ error: "Erreur lors du déblocage" });
   }
 }

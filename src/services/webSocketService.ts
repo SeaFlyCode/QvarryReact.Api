@@ -1531,6 +1531,42 @@ class WebSocketService {
               return;
             }
 
+            // ═══════════════════════════════════════════════════════════════════════════
+            // VÉRIFICATION BLOCAGE : Empêcher l'envoi/réception si conversation bloquée
+            // ═══════════════════════════════════════════════════════════════════════════
+            if (data.type === "message") {
+              try {
+                const conversation =
+                  await ConversationModel.findById(conversationId).lean();
+
+                if (conversation) {
+                  const isBlocked = conversation.blockedBy?.some(
+                    (b: any) => b.userId.toString() === client.userId,
+                  );
+
+                  if (isBlocked) {
+                    wsLogger.warn("Messages - Conversation bloquée", {
+                      userId: client.userId,
+                      conversationId,
+                    });
+                    client.send(
+                      JSON.stringify({
+                        type: "error",
+                        code: "CONVERSATION_BLOCKED",
+                        message: "Cette conversation est bloquée",
+                      }),
+                    );
+                    return;
+                  }
+                }
+              } catch (err) {
+                wsLogger.error("Messages - Erreur vérification blocage", {
+                  error: err instanceof Error ? err.message : String(err),
+                });
+                // En cas d'erreur, on continue pour ne pas bloquer la messagerie
+              }
+            }
+
             wsLogger.info("Messages - Message reçu", {
               userId: client.userId,
               conversationId,

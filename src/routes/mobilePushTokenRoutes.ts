@@ -9,7 +9,7 @@ import express from "express";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import {
   verifyMobilePlatform,
-  mobileRateLimitMiddleware,
+  mobileSyncRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
 import {
   handleRegisterPushToken,
@@ -19,13 +19,17 @@ import {
 const router = express.Router();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MIDDLEWARE COMMUN : Vérification plateforme + Auth + Rate Limit
+// MIDDLEWARE COMMUN : Vérification plateforme + Auth + Rate Limit (Permissif)
 // ═══════════════════════════════════════════════════════════════════════════
+// Rate limit permissif (60 req/15min en prod, 600 en dev) car :
+// - Routes authentifiées (moins de risque d'abus)
+// - Tokens push peuvent être réenregistrés fréquemment (reconnexions, updates)
+// - Moins critique que les routes d'authentification
 
 const mobilePushTokenMiddleware = [
   verifyMobilePlatform,
   authMiddleware,
-  mobileRateLimitMiddleware,
+  mobileSyncRateLimitMiddleware,
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

@@ -3,6 +3,12 @@ import { authMiddleware } from "../middlewares/authMiddleware";
 import { adminMiddleware } from "../middlewares/adminMiddleware";
 import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 import {
+  validateMuteBody,
+  validatePinBody,
+  validateBlockBody,
+  validatePaginationQuery,
+} from "../middlewares/conversationValidationMiddleware";
+import {
   listConversations,
   createPrivateConversation,
   createGroupConversation,
@@ -16,6 +22,18 @@ import {
   markConversationAsRead,
   deleteConversation,
   adminDeleteConversationPermanent,
+  // Nouvelles fonctionnalités
+  muteConversation,
+  unmuteConversation,
+  archiveConversation,
+  unarchiveConversation,
+  listArchivedConversations,
+  pinConversation,
+  unpinConversation,
+  markConversationAsUnread,
+  unmarkConversationAsUnread,
+  blockConversation,
+  unblockConversation,
 } from "../controllers/conversationsControllers";
 
 const router = express.Router();
@@ -26,8 +44,46 @@ router.use(authMiddleware);
 // Lister toutes les conversations de l'utilisateur
 router.get("/", listConversations);
 
+// Lister les conversations archivées
+router.get("/archived", validatePaginationQuery, listArchivedConversations);
+
 // Marquer tous les messages d'une conversation comme lus
 router.patch("/:id/read", validateObjectId("id"), markConversationAsRead);
+
+// Nouvelles options de gestion des conversations
+router.patch(
+  "/:id/mute",
+  validateObjectId("id"),
+  validateMuteBody,
+  muteConversation,
+);
+router.patch("/:id/unmute", validateObjectId("id"), unmuteConversation);
+router.patch("/:id/archive", validateObjectId("id"), archiveConversation);
+router.patch("/:id/unarchive", validateObjectId("id"), unarchiveConversation);
+router.patch(
+  "/:id/pin",
+  validateObjectId("id"),
+  validatePinBody,
+  pinConversation,
+);
+router.patch("/:id/unpin", validateObjectId("id"), unpinConversation);
+router.patch(
+  "/:id/mark-unread",
+  validateObjectId("id"),
+  markConversationAsUnread,
+);
+router.patch(
+  "/:id/mark-read-flag",
+  validateObjectId("id"),
+  unmarkConversationAsUnread,
+);
+router.patch(
+  "/:id/block",
+  validateObjectId("id"),
+  validateBlockBody,
+  blockConversation,
+);
+router.patch("/:id/unblock", validateObjectId("id"), unblockConversation);
 
 // Supprimer/Masquer une conversation (soft delete pour les conversations privées)
 router.delete("/:id", validateObjectId("id"), deleteConversation);

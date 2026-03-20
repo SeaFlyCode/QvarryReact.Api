@@ -694,8 +694,68 @@ export async function createNotification(
     shareId?: mongoose.Types.ObjectId;
     senderId?: mongoose.Types.ObjectId;
     sosSessionId?: mongoose.Types.ObjectId;
+    mentionedUserIds?: mongoose.Types.ObjectId[]; // Liste des utilisateurs mentionnés
   },
-): Promise<INotification> {
+): Promise<INotification | null> {
+  // ═══════════════════════════════════════════════════════════════════════════
+  // VÉRIFICATION MUTE : Skip notification si conversation mutée (sauf mention)
+  // ═══════════════════════════════════════════════════════════════════════════
+  if (data?.conversationId && type === "message") {
+    try {
+      const ConversationModel = (await import("../models/conversations"))
+        .default;
+      const conversation = await ConversationModel.findById(
+        data.conversationId,
+      ).lean();
+
+      if (conversation) {
+        const now = new Date();
+        const mutedInfo = conversation.mutedBy?.find(
+          (m: any) => m.userId.toString() === userId.toString(),
+        );
+
+        // Vérifier si conversation mutée ET pas expirée
+        const isMuted =
+          mutedInfo && (!mutedInfo.mutedUntil || mutedInfo.mutedUntil > now);
+
+        if (isMuted) {
+          // Vérifier si l'utilisateur est mentionné
+          const isMentioned = data.mentionedUserIds?.some(
+            (id) => id.toString() === userId.toString(),
+          );
+
+          // Si muted ET (pas de mention OU pas de notification sur mention)
+          if (!isMentioned || !mutedInfo.notifyOnMention) {
+            notifLogger.debug("Notification skippée (conversation mutée)", {
+              userId: userId.toString(),
+              conversationId: data.conversationId.toString(),
+              isMentioned,
+              notifyOnMention: mutedInfo.notifyOnMention,
+            });
+            return null; // Skip notification
+          }
+        }
+
+        // Auto-unmute si expiré
+        if (mutedInfo && mutedInfo.mutedUntil && mutedInfo.mutedUntil <= now) {
+          await ConversationModel.updateOne(
+            { _id: data.conversationId },
+            { $pull: { mutedBy: { userId: userId } } },
+          );
+          notifLogger.info("Conversation auto-unmuted (mute expiré)", {
+            userId: userId.toString(),
+            conversationId: data.conversationId.toString(),
+          });
+        }
+      }
+    } catch (err) {
+      notifLogger.error("Erreur vérification mute conversation", {
+        error: err instanceof Error ? err.message : String(err),
+      });
+      // En cas d'erreur, on continue et on envoie la notification quand même
+    }
+  }
+
   const notification = new NotificationModel({
     userId,
     type,
