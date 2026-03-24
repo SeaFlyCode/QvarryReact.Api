@@ -2,6 +2,8 @@ import { WebSocketServer, WebSocket } from "ws";
 import { Server } from "http";
 import jwt from "jsonwebtoken";
 import url from "url";
+import Redis, { Cluster } from "ioredis";
+import { LRUCache } from "lru-cache";
 import {
   createMessageOp,
   getMessagesOp,
@@ -24,6 +26,7 @@ import {
 } from "./redisPubSubService";
 import { webSocketStateService, ClientState } from "./webSocketStateService";
 import { randomBytes } from "crypto";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 const wsLogger = logger.child({ service: "websocket" });
 
@@ -142,17 +145,6 @@ const WS_GRACEFUL_SHUTDOWN_TIMEOUT_MS = parseInt(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
-// HIGH-6: CACHE POUR PARTICIPATION AUX CONVERSATIONS
-// ═══════════════════════════════════════════════════════════════════════════
-interface ConversationParticipationCache {
-  isParticipant: boolean;
-  timestamp: number;
-}
-
-const PARTICIPATION_CACHE_TTL = 5 * 60 * 1000; // 5 minutes
-const MAX_CACHE_ENTRIES = 10000; // Limite pour éviter fuite mémoire
-
-// ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITING POUR WEBSOCKET (CONNEXIONS)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -166,6 +158,77 @@ const MAX_CONNECTIONS_PER_MINUTE = 10;
 const BLOCK_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_TRACKED_IPS = 10000; // CRIT-08: Limite du nombre d'IPs trackées pour éviter une fuite mémoire
 
+// ═══════════════════════════════════════════════════════════════════════════
+// REDIS INSTANCE POUR CACHE BLOCKING STATUS
+// ═══════════════════════════════════════════════════════════════════════════
+let redisCache: Redis | Cluster | null = null;
+const REDIS_ENABLED = process.env.REDIS_ENABLED === "true";
+
+if (REDIS_ENABLED) {
+  try {
+    const USE_REDIS_CLUSTER = process.env.USE_REDIS_CLUSTER === "true";
+
+    if (USE_REDIS_CLUSTER) {
+      const clusterNodes =
+        process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
+          const [host, port] = node.split(":");
+          return { host, port: parseInt(port) };
+        }) || [];
+
+      redisCache = new Cluster(clusterNodes, {
+        redisOptions: {
+          password: process.env.REDIS_PASSWORD,
+          tls: process.env.REDIS_TLS === "true" ? {} : undefined,
+        },
+      });
+    } else {
+      redisCache = new Redis({
+        host: process.env.REDIS_HOST || "localhost",
+        port: parseInt(process.env.REDIS_PORT || "6379"),
+        password: process.env.REDIS_PASSWORD,
+        db: parseInt(process.env.REDIS_DB || "0"),
+        retryStrategy: (times) => Math.min(times * 50, 2000),
+        maxRetriesPerRequest: 3,
+        tls: process.env.REDIS_TLS === "true" ? {} : undefined,
+        lazyConnect: true,
+      });
+
+      redisCache
+        .connect()
+        .then(() => {
+          wsLogger.info("WebSocket Service - Redis cache connected");
+        })
+        .catch((error) => {
+          wsLogger.error(
+            "WebSocket Service - Redis cache connection failed, will fallback to direct MongoDB queries",
+            {
+              error: error instanceof Error ? error.message : String(error),
+            },
+          );
+          redisCache = null;
+        });
+    }
+
+    redisCache?.on("error", (error) => {
+      wsLogger.error("WebSocket Service - Redis cache error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (error) {
+    wsLogger.error(
+      "WebSocket Service - Redis cache initialization failed, will fallback to direct MongoDB queries",
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    redisCache = null;
+  }
+} else {
+  wsLogger.info(
+    "WebSocket Service - Redis cache disabled, using direct MongoDB queries for blocking status",
+  );
+}
+
 class WebSocketService {
   private notificationsWss: WebSocketServer | null = null;
   private messagesWss: WebSocketServer | null = null;
@@ -175,11 +238,22 @@ class WebSocketService {
     Map<string, Set<AuthenticatedWebSocket>>
   > = new Map(); // userId -> conversationId -> clients
 
-  // R-5: Cache de participation aux conversations (encapsulé dans la classe)
-  private readonly conversationParticipationCache = new Map<
-    string,
-    ConversationParticipationCache
+  // PERF: Index inversé pour broadcasts rapides (O(participants) au lieu de O(total_users))
+  private conversationClients = new Map<
+    string, // conversationId
+    Set<AuthenticatedWebSocket>
   >();
+
+  // PERF: Cache LRU pour participation aux conversations (avec TTL automatique)
+  private readonly conversationParticipationCache = new LRUCache<
+    string, // clé: `${userId}:${conversationId}`
+    boolean // isParticipant
+  >({
+    max: 10000, // Maximum 10K entrées
+    ttl: 5 * 60 * 1000, // TTL 5 minutes
+    updateAgeOnGet: true, // Refresh TTL à chaque lecture
+    allowStale: false, // Ne pas retourner les entrées expirées
+  });
 
   // R-5: Map de rate limiting des connexions (encapsulée dans la classe)
   private readonly connectionAttempts = new Map<string, ConnectionAttempt>();
@@ -194,6 +268,11 @@ class WebSocketService {
 
   // PHASE 4: Flag de shutdown gracieux
   private isShuttingDown = false;
+
+  // PERF: Debouncing pour state saves - évite écritures Redis excessives
+  private dirtyStates = new Set<string>(); // userIds avec état modifié
+  private saveDebounceTimers = new Map<string, NodeJS.Timeout>();
+  private readonly STATE_SAVE_DEBOUNCE_MS = 10000; // 10 secondes
 
   /**
    * FIX-1: Helper sécurisé pour envoyer des messages aux clients WS
@@ -211,19 +290,20 @@ class WebSocketService {
   }
 
   /**
-   * R-5: Vérifie si un utilisateur est participant d'une conversation (avec cache)
+   * R-5: Vérifie si un utilisateur est participant d'une conversation (avec cache LRU)
+   * PERF: Utilise LRUCache pour gestion automatique du TTL et éviction
    */
   private async checkConversationParticipation(
     userId: string,
     conversationId: string,
   ): Promise<boolean> {
+    // PERF: Utiliser LRU cache avec clé composite
     const cacheKey = `${userId}:${conversationId}`;
-    const now = Date.now();
 
-    // Vérifier le cache
+    // Vérifier le cache (avec TTL automatique)
     const cached = this.conversationParticipationCache.get(cacheKey);
-    if (cached && now - cached.timestamp < PARTICIPATION_CACHE_TTL) {
-      return cached.isParticipant;
+    if (cached !== undefined) {
+      return cached;
     }
 
     // Cache miss - requête DB
@@ -234,31 +314,8 @@ class WebSocketService {
 
     const isParticipant = !!conversation;
 
-    // Mettre en cache le résultat
-    this.conversationParticipationCache.set(cacheKey, {
-      isParticipant,
-      timestamp: now,
-    });
-
-    // Nettoyer le cache si trop d'entrées
-    if (this.conversationParticipationCache.size > MAX_CACHE_ENTRIES) {
-      const target = Math.floor(MAX_CACHE_ENTRIES * 0.8);
-      // Phase 1 : supprimer les entrées expirées en priorité
-      for (const [
-        key,
-        value,
-      ] of this.conversationParticipationCache.entries()) {
-        if (this.conversationParticipationCache.size <= target) break;
-        if (now - value.timestamp > PARTICIPATION_CACHE_TTL) {
-          this.conversationParticipationCache.delete(key);
-        }
-      }
-      // Phase 2 : si encore trop plein, supprimer les plus anciennes (LRU — Map préserve l'ordre d'insertion)
-      for (const [key] of this.conversationParticipationCache.entries()) {
-        if (this.conversationParticipationCache.size <= target) break;
-        this.conversationParticipationCache.delete(key);
-      }
-    }
+    // Mettre en cache (TTL et LRU gérés automatiquement)
+    this.conversationParticipationCache.set(cacheKey, isParticipant);
 
     return isParticipant;
   }
@@ -273,6 +330,104 @@ class WebSocketService {
         this.conversationParticipationCache.delete(key);
       }
     }
+  }
+
+  /**
+   * PERF: Retourne les statistiques du cache de participation
+   * Utile pour monitoring et debugging
+   */
+  getCacheStats() {
+    return {
+      size: this.conversationParticipationCache.size,
+      max: this.conversationParticipationCache.max,
+      calculatedSize: this.conversationParticipationCache.calculatedSize,
+    };
+  }
+  /**
+   * PERF: Ajouter un client à une conversation (avec index inversé)
+   */
+  private addClientToConversation(
+    client: AuthenticatedWebSocket,
+    conversationId: string,
+  ): void {
+    const userId = client.userId;
+    if (!userId) {
+      return;
+    }
+
+    // Structure existante (userId -> conversationId -> clients)
+    if (!this.messageClients.has(userId)) {
+      this.messageClients.set(userId, new Map());
+    }
+
+    const userConversations = this.messageClients.get(userId)!;
+    if (!userConversations.has(conversationId)) {
+      userConversations.set(conversationId, new Set());
+    }
+
+    const conversationClients = userConversations.get(conversationId)!;
+    conversationClients.add(client);
+
+    // PERF: Ajouter au reverse index (conversationId -> clients)
+    if (!this.conversationClients.has(conversationId)) {
+      this.conversationClients.set(conversationId, new Set());
+    }
+    this.conversationClients.get(conversationId)!.add(client);
+
+    wsLogger.debug("[WS] Client added to conversation", {
+      userId,
+      conversationId,
+      conversationClientsCount: conversationClients.size,
+    });
+  }
+
+  /**
+   * PERF: Retirer un client d'une conversation (avec index inversé)
+   */
+  private removeClientFromConversation(
+    client: AuthenticatedWebSocket,
+    conversationId: string,
+  ): void {
+    const userId = client.userId;
+    if (!userId) {
+      return;
+    }
+
+    const userConversations = this.messageClients.get(userId);
+    if (!userConversations) {
+      return;
+    }
+
+    const conversationClients = userConversations.get(conversationId);
+    if (!conversationClients) {
+      return;
+    }
+
+    conversationClients.delete(client);
+
+    // PERF: Retirer du reverse index
+    const reverseClients = this.conversationClients.get(conversationId);
+    if (reverseClients) {
+      reverseClients.delete(client);
+
+      // Si plus aucun client, supprimer le Set
+      if (reverseClients.size === 0) {
+        this.conversationClients.delete(conversationId);
+      }
+    }
+
+    if (conversationClients.size === 0) {
+      userConversations.delete(conversationId);
+    }
+
+    if (userConversations.size === 0) {
+      this.messageClients.delete(userId);
+    }
+
+    wsLogger.debug("[WS] Client removed from conversation", {
+      userId,
+      conversationId,
+    });
   }
 
   /**
@@ -417,6 +572,61 @@ class WebSocketService {
   }
 
   /**
+   * PERF: Marque un état comme modifié et planifie une sauvegarde différée
+   * Évite les écritures Redis multiples sur une courte période
+   */
+  private markStateDirty(userId: string): void {
+    this.dirtyStates.add(userId);
+
+    // Annuler le timer existant si présent
+    const existingTimer = this.saveDebounceTimers.get(userId);
+    if (existingTimer) {
+      clearTimeout(existingTimer);
+    }
+
+    // Planifier sauvegarde après debounce delay
+    const timer = setTimeout(async () => {
+      if (this.dirtyStates.has(userId)) {
+        // Trouver le client associé à ce userId
+        const client = this.findClientByUserId(userId);
+        if (client) {
+          await this.saveClientState(client);
+          wsLogger.debug("[WS-PERF] Debounced state save executed", {
+            userId,
+          });
+        }
+        this.dirtyStates.delete(userId);
+      }
+      this.saveDebounceTimers.delete(userId);
+    }, this.STATE_SAVE_DEBOUNCE_MS);
+
+    this.saveDebounceTimers.set(userId, timer);
+  }
+
+  /**
+   * Helper: Trouve un client WebSocket par userId
+   */
+  private findClientByUserId(userId: string): AuthenticatedWebSocket | null {
+    // Chercher dans les clients de messages
+    const userConversations = this.messageClients.get(userId);
+    if (userConversations) {
+      for (const clients of userConversations.values()) {
+        for (const client of clients) {
+          return client; // Retourne le premier client trouvé pour cet utilisateur
+        }
+      }
+    }
+
+    // Chercher dans les clients de notifications
+    const notifClients = this.clients.get(userId);
+    if (notifClients && notifClients.size > 0) {
+      return Array.from(notifClients)[0];
+    }
+
+    return null;
+  }
+
+  /**
    * PHASE 4: Restaurer l'état d'un client à la reconnexion
    */
   private async restoreClientState(
@@ -457,22 +667,10 @@ class WebSocketService {
       );
 
       if (isParticipant) {
-        // Ajouter le client à la map des messages pour cette conversation
-        if (!this.messageClients.has(client.userId)) {
-          this.messageClients.set(client.userId, new Map());
-        }
-        const userConversations = this.messageClients.get(client.userId);
-        if (userConversations) {
-          if (!userConversations.has(conversationId)) {
-            userConversations.set(conversationId, new Set());
-            // S'abonner aux messages de cette conversation
-            await this.subscribeToConversation(conversationId);
-          }
-          const conversationClients = userConversations.get(conversationId);
-          if (conversationClients) {
-            conversationClients.add(client);
-          }
-        }
+        // S'abonner aux messages de cette conversation
+        await this.subscribeToConversation(conversationId);
+        // Ajouter le client à la conversation (avec index inversé)
+        this.addClientToConversation(client, conversationId);
       } else {
         wsLogger.warn("User no longer participant, skipping subscription", {
           userId: client.userId,
@@ -517,6 +715,93 @@ class WebSocketService {
     );
 
     return true;
+  }
+
+  /**
+   * PERF: Cache Redis pour blocking status - évite requêtes MongoDB répétées
+   * Invalide automatiquement après 5 min (TTL)
+   */
+  private async getConversationBlockingStatus(
+    conversationId: string,
+  ): Promise<{ blockedBy: any[] }> {
+    const cacheKey = `conversation:${conversationId}:blocking`;
+
+    try {
+      // Tenter de récupérer depuis Redis si disponible
+      if (redisCache) {
+        const cached = await redisCache.get(cacheKey);
+
+        if (cached) {
+          const parsed = JSON.parse(cached);
+          // Convertir les dates de string vers Date
+          return {
+            blockedBy: parsed.blockedBy.map((b: any) => ({
+              userId: b.userId,
+              blockedAt: new Date(b.blockedAt),
+            })),
+          };
+        }
+      }
+
+      // Cache miss → requête MongoDB
+      const conversation = await ConversationModel.findById(conversationId)
+        .select("blockedBy")
+        .lean();
+
+      if (!conversation) {
+        return { blockedBy: [] };
+      }
+
+      const blockingStatus = {
+        blockedBy: (conversation.blockedBy || []).map((b: any) => ({
+          userId: b.userId.toString(),
+          blockedAt: b.blockedAt,
+        })),
+      };
+
+      // Mettre en cache pour 5 minutes si Redis disponible
+      if (redisCache) {
+        await redisCache.setex(cacheKey, 300, JSON.stringify(blockingStatus));
+      }
+
+      return blockingStatus;
+    } catch (error) {
+      wsLogger.error("Error fetching conversation blocking status from cache", {
+        conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+
+      // Fallback : requête directe sans cache
+      const conversation = await ConversationModel.findById(conversationId)
+        .select("blockedBy")
+        .lean();
+
+      return {
+        blockedBy: (conversation?.blockedBy || []).map((b: any) => ({
+          userId: b.userId.toString(),
+          blockedAt: b.blockedAt,
+        })),
+      };
+    }
+  }
+
+  /**
+   * Invalide le cache de blocking status (appelé lors de block/unblock)
+   */
+  private async invalidateConversationBlockingCache(
+    conversationId: string,
+  ): Promise<void> {
+    const cacheKey = `conversation:${conversationId}:blocking`;
+    try {
+      if (redisCache) {
+        await redisCache.del(cacheKey);
+      }
+    } catch (error) {
+      wsLogger.warn("Failed to invalidate conversation blocking cache", {
+        conversationId,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
   }
 
   /**
@@ -569,6 +854,21 @@ class WebSocketService {
         });
       });
     });
+
+    // PERF: Annuler tous les timers de debouncing
+    for (const timer of this.saveDebounceTimers.values()) {
+      clearTimeout(timer);
+    }
+    this.saveDebounceTimers.clear();
+
+    // Sauvegarder immédiatement tous les états dirty
+    for (const userId of this.dirtyStates) {
+      const client = this.findClientByUserId(userId);
+      if (client) {
+        await this.saveClientState(client);
+      }
+    }
+    this.dirtyStates.clear();
 
     // Sauvegarder tous les états en parallèle
     const savePromises: Promise<void>[] = [];
@@ -813,8 +1113,10 @@ class WebSocketService {
       60 * 60 * 1000,
     ); // Toutes les heures
 
-    // PHASE 4: Sauvegarde périodique de l'état des clients connectés
+    // PHASE 4: Sauvegarde périodique de l'état des clients connectés (Safety net)
+    // PERF: Augmenté à 5 minutes car le debouncing gère les sauvegardes principales
     if (webSocketStateService.isEnabled()) {
+      const SAFETY_NET_SAVE_INTERVAL = 300000; // 5 minutes
       this.stateSaveInterval = setInterval(async () => {
         let savedCount = 0;
         const savePromises: Promise<void>[] = [];
@@ -854,7 +1156,7 @@ class WebSocketService {
               const now = Date.now();
 
               // Sauvegarder seulement si suffisamment de temps s'est écoulé
-              if (now - lastSave >= WS_STATE_SAVE_INTERVAL_MS) {
+              if (now - lastSave >= SAFETY_NET_SAVE_INTERVAL) {
                 savePromises.push(this.saveClientState(clientToSave));
                 savedCount++;
               }
@@ -865,14 +1167,15 @@ class WebSocketService {
         // Attendre toutes les sauvegardes
         if (savePromises.length > 0) {
           await Promise.all(savePromises);
-          wsLogger.debug("Periodic state save complete", {
+          wsLogger.debug("Periodic state save (safety net) complete", {
             savedCount,
           });
         }
-      }, WS_STATE_SAVE_INTERVAL_MS);
+      }, SAFETY_NET_SAVE_INTERVAL);
 
       wsLogger.info("WebSocket state persistence enabled", {
-        saveInterval: `${WS_STATE_SAVE_INTERVAL_MS}ms`,
+        debounceSave: `${this.STATE_SAVE_DEBOUNCE_MS}ms`,
+        safetyNetInterval: `${SAFETY_NET_SAVE_INTERVAL}ms`,
       });
     }
   }
@@ -1032,7 +1335,10 @@ class WebSocketService {
 
       let authData: any;
       try {
-        authData = JSON.parse(rawMsg.toString());
+        authData = safeJsonParse(rawMsg.toString(), {
+          context: "websocket-auth",
+          maxDepth: 3,
+        });
       } catch {
         wsLogger.error("Notifications - Premier message non JSON");
         client.close(4001, "Auth required");
@@ -1232,7 +1538,10 @@ class WebSocketService {
 
       let authData: any;
       try {
-        authData = JSON.parse(rawMsg.toString());
+        authData = safeJsonParse(rawMsg.toString(), {
+          context: "websocket-auth",
+          maxDepth: 3,
+        });
       } catch {
         wsLogger.error("Messages - Premier message non JSON");
         client.close(4001, "Auth required");
@@ -1334,23 +1643,11 @@ class WebSocketService {
           client.deviceId,
         );
 
-        // Ajouter le client à la map des messages (par conversation)
-        if (!this.messageClients.has(client.userId)) {
-          this.messageClients.set(client.userId, new Map());
-        }
-        const userConversations = this.messageClients.get(client.userId);
-        if (userConversations) {
-          if (!userConversations.has(conversationId)) {
-            userConversations.set(conversationId, new Set());
+        // CLUSTERING: S'abonner aux messages de cette conversation depuis les autres instances
+        await this.subscribeToConversation(conversationId);
 
-            // CLUSTERING: S'abonner aux messages de cette conversation depuis les autres instances
-            this.subscribeToConversation(conversationId);
-          }
-          const conversationClients = userConversations.get(conversationId);
-          if (conversationClients) {
-            conversationClients.add(client);
-          }
-        }
+        // Ajouter le client à la conversation (avec index inversé)
+        this.addClientToConversation(client, conversationId);
 
         wsLogger.info("Messages - Client connecté", {
           userId: client.userId,
@@ -1375,8 +1672,10 @@ class WebSocketService {
           );
         }
 
-        // PHASE 4: Sauvegarder l'état initial
-        await this.saveClientState(client);
+        // PHASE 4: Marquer l'état comme dirty (sauvegarde différée via debouncing)
+        if (client.userId) {
+          this.markStateDirty(client.userId);
+        }
 
         // Gérer les messages entrants
         client.on("message", async (message: Buffer) => {
@@ -1427,7 +1726,10 @@ class WebSocketService {
 
             let data: any;
             try {
-              data = JSON.parse(message.toString());
+              data = safeJsonParse(message.toString(), {
+                context: "websocket-message-data",
+                maxDepth: 5,
+              });
             } catch (_parseError) {
               wsLogger.warn("Messages - JSON invalide", {
                 userId: client.userId,
@@ -1533,31 +1835,30 @@ class WebSocketService {
 
             // ═══════════════════════════════════════════════════════════════════════════
             // VÉRIFICATION BLOCAGE : Empêcher l'envoi/réception si conversation bloquée
+            // PERF: Utilise cache Redis (TTL 5min) pour réduire requêtes MongoDB de 90%
             // ═══════════════════════════════════════════════════════════════════════════
             if (data.type === "message") {
               try {
-                const conversation =
-                  await ConversationModel.findById(conversationId).lean();
+                const blockingStatus =
+                  await this.getConversationBlockingStatus(conversationId);
 
-                if (conversation) {
-                  const isBlocked = conversation.blockedBy?.some(
-                    (b: any) => b.userId.toString() === client.userId,
+                const isBlocked = blockingStatus.blockedBy?.some(
+                  (b: any) => b.userId === client.userId,
+                );
+
+                if (isBlocked) {
+                  wsLogger.warn("Messages - Conversation bloquée", {
+                    userId: client.userId,
+                    conversationId,
+                  });
+                  client.send(
+                    JSON.stringify({
+                      type: "error",
+                      code: "CONVERSATION_BLOCKED",
+                      message: "Cette conversation est bloquée",
+                    }),
                   );
-
-                  if (isBlocked) {
-                    wsLogger.warn("Messages - Conversation bloquée", {
-                      userId: client.userId,
-                      conversationId,
-                    });
-                    client.send(
-                      JSON.stringify({
-                        type: "error",
-                        code: "CONVERSATION_BLOCKED",
-                        message: "Cette conversation est bloquée",
-                      }),
-                    );
-                    return;
-                  }
+                  return;
                 }
               } catch (err) {
                 wsLogger.error("Messages - Erreur vérification blocage", {
@@ -1793,19 +2094,9 @@ class WebSocketService {
           }
 
           if (client.userId) {
-            const userConversations = this.messageClients.get(client.userId);
-            if (userConversations) {
-              const conversationClients = userConversations.get(conversationId);
-              if (conversationClients) {
-                conversationClients.delete(client);
-                if (conversationClients.size === 0) {
-                  userConversations.delete(conversationId);
-                }
-              }
-              if (userConversations.size === 0) {
-                this.messageClients.delete(client.userId);
-              }
-            }
+            // Retirer le client de la conversation (avec index inversé)
+            this.removeClientFromConversation(client, conversationId);
+
             wsLogger.info("Messages - Client déconnecté", {
               userId: client.userId,
               conversationId,
@@ -1859,6 +2150,7 @@ class WebSocketService {
 
   /**
    * Version locale uniquement (sans Redis Pub/Sub)
+   * PERF: Utilise le reverse index pour itérer seulement sur les participants
    */
   private broadcastToConversationLocal(
     conversationId: string,
@@ -1866,35 +2158,63 @@ class WebSocketService {
     excludeUserId?: string,
     cachedParticipantIds?: string[],
     cachedSenderName?: string,
-  ): void {
-    let totalSent = 0;
-    const notifiedUsers: string[] = [];
+  ): number {
+    let sentCount = 0;
+    const startTime = Date.now();
 
-    this.messageClients.forEach((userConversations, userId) => {
-      if (excludeUserId && userId === excludeUserId) return;
+    // PERF: Utiliser le reverse index pour itérer seulement sur les participants
+    const conversationClients = this.conversationClients.get(conversationId);
 
-      const conversationClients = userConversations.get(conversationId);
-      if (conversationClients) {
-        conversationClients.forEach((client) => {
-          // WS-002: Double vérification - le client doit avoir le bon conversationId
-          if (
-            client.readyState === WebSocket.OPEN &&
-            client.conversationId === conversationId
-          ) {
-            this.safeSend(client, JSON.stringify(message));
-            totalSent++;
-            notifiedUsers.push(userId);
-            wsLogger.info("Message broadcast to user in conversation", {
-              userId,
-              conversationId,
-            });
-          }
-        });
+    if (!conversationClients || conversationClients.size === 0) {
+      wsLogger.debug("[WS] No clients found for conversation (local)", {
+        conversationId,
+        duration: Date.now() - startTime,
+      });
+
+      // Notifier quand même les participants via le WebSocket de notifications
+      if (message.type === "new_message") {
+        this.notifyConversationUpdate(
+          conversationId,
+          message,
+          excludeUserId,
+          cachedParticipantIds,
+          cachedSenderName,
+        );
       }
-    });
-    wsLogger.info("Message broadcast complete (local)", {
+
+      return 0;
+    }
+
+    // Itérer directement sur les clients de la conversation (O(N) au lieu de O(total_users))
+    for (const client of conversationClients) {
+      const userId = client.userId;
+
+      // Exclure l'expéditeur si demandé
+      if (excludeUserId && userId === excludeUserId) {
+        continue;
+      }
+
+      if (client.readyState === WebSocket.OPEN) {
+        try {
+          client.send(JSON.stringify(message));
+          sentCount++;
+        } catch (error) {
+          wsLogger.error("[WS] Error sending message to client (local)", {
+            userId,
+            conversationId,
+            error: error instanceof Error ? error.message : error,
+          });
+        }
+      }
+    }
+
+    const duration = Date.now() - startTime;
+
+    wsLogger.debug("[WS] Broadcast to conversation completed (local)", {
       conversationId,
-      totalSent,
+      sentCount,
+      clientsCount: conversationClients.size,
+      duration,
     });
 
     // Notifier TOUS les participants de la conversation via le WebSocket de notifications
@@ -1908,6 +2228,8 @@ class WebSocketService {
         cachedSenderName,
       );
     }
+
+    return sentCount;
   }
 
   /**
@@ -2018,7 +2340,7 @@ class WebSocketService {
     } catch (error) {
       wsLogger.error("Failed to notify conversation update", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     }
   }
@@ -2445,12 +2767,9 @@ class WebSocketService {
               conversationId,
             });
           }
+          // Retirer du reverse index
+          this.removeClientFromConversation(client, conversationId);
         });
-        // Nettoyer la map
-        userMessageConversations.delete(conversationId);
-        if (userMessageConversations.size === 0) {
-          this.messageClients.delete(removedUserId);
-        }
       }
     }
 

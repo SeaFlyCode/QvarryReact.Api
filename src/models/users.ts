@@ -42,10 +42,23 @@ export interface IUserBase {
   // 2FA/TOTP - Authentification à deux facteurs
   two_factor_enabled: boolean; // Si true, 2FA est activé
   two_factor_secret?: string; // Secret TOTP chiffré (AES-256-GCM)
+  two_factor_algorithm?: "sha1" | "sha256" | "sha512"; // Algorithme TOTP (SHA512 recommandé)
   two_factor_confirmed_at?: Date; // Date de confirmation de la 2FA
   two_factor_recovery_codes?: string[]; // Codes de récupération hashés
   // Préférences de notifications
   login_notifications_enabled?: boolean; // Si true, envoie un email à chaque connexion (défaut: true)
+  // Gestion du stockage de photos
+  storage_quota: number; // Quota de stockage en octets (défaut: 2 Go)
+  storage_used: number; // Espace de stockage utilisé en octets
+  // MED-001: Device Binding pour tokens mobiles
+  authorized_devices?: Array<{
+    device_id: string;
+    device_name?: string;
+    device_os?: string;
+    first_seen: Date;
+    last_seen: Date;
+    trusted: boolean;
+  }>;
 }
 
 // Interface for User Document (includes mongoose Document properties)
@@ -92,10 +105,41 @@ const UserSchema: Schema<IUser> = new Schema({
   // 2FA/TOTP - Authentification à deux facteurs
   two_factor_enabled: { type: Boolean, default: false },
   two_factor_secret: { type: String },
+  two_factor_algorithm: {
+    type: String,
+    enum: ["sha1", "sha256", "sha512"],
+    default: "sha1", // Rétrocompatibilité avec anciens utilisateurs
+    required: false,
+  },
   two_factor_confirmed_at: { type: Date },
   two_factor_recovery_codes: { type: [String], default: [] },
   // Préférences de notifications
   login_notifications_enabled: { type: Boolean, default: true },
+  // Gestion du stockage de photos
+  storage_quota: {
+    type: Number,
+    default: 2 * 1024 * 1024 * 1024, // 2 Go par défaut
+    required: true,
+  },
+  storage_used: {
+    type: Number,
+    default: 0,
+    required: true,
+  },
+  // MED-001: Device Binding pour tokens mobiles
+  authorized_devices: {
+    type: [
+      {
+        device_id: { type: String, required: true, index: true },
+        device_name: { type: String, required: false },
+        device_os: { type: String, required: false },
+        first_seen: { type: Date, default: Date.now },
+        last_seen: { type: Date, default: Date.now },
+        trusted: { type: Boolean, default: false },
+      },
+    ],
+    default: [],
+  },
 });
 
 UserSchema.index({ emailHash: 1 });
@@ -103,6 +147,10 @@ UserSchema.index({ is_admin_validated: 1, creation_date: -1 });
 UserSchema.index({ is_blocked: 1 });
 UserSchema.index({ contact_code: 1 }, { unique: true, sparse: true });
 UserSchema.index({ creation_date: -1 });
+UserSchema.index({ storage_used: 1 }); // Index pour tri par espace utilisé
+UserSchema.index({ last_connection: -1 }); // Pour stats admin
+UserSchema.index({ is_verified: 1 }); // Filtres de recherche
+UserSchema.index({ is_verified: 1, is_admin_validated: 1 }); // Compound pour registration flow
 
 export const UserModel: Model<IUser> =
   mongoose.models.User || mongoose.model<IUser>("User", UserSchema);

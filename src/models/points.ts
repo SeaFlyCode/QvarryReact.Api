@@ -15,6 +15,14 @@ export interface IPoint extends Document {
   accessType?: string; // Ajout du champ pour le type d'accès
   deletedAt?: Date | null; // Soft-delete : date de suppression
   version?: number;
+  photo?: {
+    url: string;
+    size: number;
+    mimeType: string;
+    uploadedAt: Date;
+    originalName: string;
+    checksum: string;
+  };
 }
 
 const pointSchema = new Schema(
@@ -65,6 +73,18 @@ const pointSchema = new Schema(
       type: Number,
       default: 1,
     },
+    photo: {
+      type: {
+        url: { type: String, required: true },
+        size: { type: Number, required: true },
+        mimeType: { type: String, required: true },
+        uploadedAt: { type: Date, default: Date.now },
+        originalName: { type: String, required: true },
+        checksum: { type: String, required: true },
+      },
+      required: false,
+      default: undefined,
+    },
   },
   { timestamps: true },
 );
@@ -74,5 +94,7 @@ pointSchema.index({ location: "2dsphere" });
 
 // Index pour accélérer les requêtes de soft-delete
 pointSchema.index({ deletedAt: 1 });
+pointSchema.index({ userId: 1, deletedAt: 1 }); // Compound pour user queries excluding deleted
+pointSchema.index({ userId: 1, ficheId: 1 }); // Pour fiche-point relationships
 
 export default mongoose.model<IPoint>("Point", pointSchema);

@@ -61,6 +61,7 @@ const MessageSchema = new Schema<IMessage>({
 MessageSchema.index({ conversationId: 1, createdAt: -1 });
 MessageSchema.index({ conversationId: 1, readBy: 1 });
 MessageSchema.index({ senderId: 1 });
+MessageSchema.index({ conversationId: 1, readBy: 1, createdAt: -1 }); // Pour paginated unread messages
 
 const MessageModel =
   mongoose.models.Message || mongoose.model<IMessage>("Message", MessageSchema);

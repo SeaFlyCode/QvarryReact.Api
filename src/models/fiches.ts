@@ -144,6 +144,8 @@ const ficheSchema = new Schema<IFiche>(
 // Index pour accélérer les requêtes de soft-delete
 ficheSchema.index({ deletedAt: 1 });
 ficheSchema.index({ center_cavite: "2dsphere" });
+ficheSchema.index({ userId: 1, deletedAt: 1 }); // Compound pour user queries
+ficheSchema.index({ userId: 1, date_modification: -1 }); // Pour sorted lists
 
 const FicheModel = mongoose.model<IFiche>("Fiche", ficheSchema);
 

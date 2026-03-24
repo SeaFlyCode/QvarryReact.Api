@@ -267,7 +267,7 @@ class SosService {
       status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
       "participants.userId": { $in: participantObjectIds },
       "participants.status": { $ne: "LEFT" },
-    });
+    }).lean();
 
     if (existingSessions.length > 0) {
       throw new Error("SESSION_ALREADY_ACTIVE");
@@ -279,7 +279,9 @@ class SosService {
         _id: {
           $in: participantIds.map((id) => new mongoose.Types.ObjectId(id)),
         },
-      }).select("_id");
+      })
+        .select("_id")
+        .lean();
 
       if (participantUsers.length !== participantIds.length) {
         throw new Error("INVALID_PARTICIPANT_IDS");
@@ -3420,7 +3422,7 @@ class SosService {
       status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
       "participants.userId": { $in: participantObjectIds },
       "participants.status": { $ne: "LEFT" },
-    });
+    }).lean();
 
     if (existingSessions.length > 0) {
       throw new Error("SESSION_ALREADY_ACTIVE");
@@ -3432,7 +3434,9 @@ class SosService {
         _id: {
           $in: participantIds.map((id) => new mongoose.Types.ObjectId(id)),
         },
-      }).select("_id");
+      })
+        .select("_id")
+        .lean();
 
       if (participantUsers.length !== participantIds.length) {
         throw new Error("INVALID_PARTICIPANT_IDS");

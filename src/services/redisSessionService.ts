@@ -1,5 +1,6 @@
 import { getErrorMessage } from "../utils/errorUtils";
 import { logger } from "./loggerService";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 // Create child logger for redis-session service
 const redisLogger = logger.child({ service: "redis-session" });
@@ -304,7 +305,10 @@ export class RedisSessionService {
         const data = await redis.get(key);
         if (!data) return null;
 
-        const session = JSON.parse(data);
+        const session = safeJsonParse(data, {
+          context: "redis-session",
+          maxDepth: 5,
+        });
         // Reconvertir les dates
         session.createdAt = new Date(session.createdAt);
         session.lastActivity = new Date(session.lastActivity);
@@ -385,7 +389,10 @@ export class RedisSessionService {
           // Prolonger le TTL et mettre à jour lastActivity
           const data = await redis.get(key);
           if (data) {
-            const session = JSON.parse(data);
+            const session = safeJsonParse(data, {
+              context: "redis-session",
+              maxDepth: 5,
+            });
             session.lastActivity = new Date();
             await redis.setex(key, this.SESSION_TTL, JSON.stringify(session));
           }
@@ -507,7 +514,10 @@ export class RedisSessionService {
         const data = await redis.get(key);
         if (!data) return null;
 
-        const details = JSON.parse(data);
+        const details = safeJsonParse(data, {
+          context: "redis-session-details",
+          maxDepth: 5,
+        });
         details.expiresAt = new Date(details.expiresAt);
         details.blacklistedAt = new Date(details.blacklistedAt);
         return details;
@@ -620,7 +630,10 @@ export class RedisSessionService {
         const data = await redis.get(key);
         if (!data) return null;
 
-        const parsed = JSON.parse(data);
+        const parsed = safeJsonParse(data, {
+          context: "redis-parsed-data",
+          maxDepth: 5,
+        });
         return {
           attempts: parsed.attempts,
           lastAttempt: new Date(parsed.lastAttempt),

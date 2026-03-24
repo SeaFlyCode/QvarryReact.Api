@@ -177,7 +177,7 @@ export const addContact = async (
         ).catch((err) =>
           contactLogger.error("Erreur envoi email contact accepté", {
             error: err.message,
-            stack: err.stack,
+            // HIGH-001: stack trace supprimé pour sécurité,
           }),
         );
       }
@@ -215,7 +215,7 @@ export const addContact = async (
         ).catch((err) =>
           contactLogger.error("Erreur envoi email demande contact", {
             error: err.message,
-            stack: err.stack,
+            // HIGH-001: stack trace supprimé pour sécurité,
           }),
         );
       }
@@ -264,6 +264,10 @@ export const listContacts = async (
     }
     const { status } = req.query;
 
+    // Pagination parameters
+    const limit = Math.min(parseInt(req.query.limit as string) || 100, 500);
+    const skip = Math.max(0, parseInt(req.query.skip as string) || 0);
+
     // Récupérer depuis la DB
     // Correction : inclure les contacts où l'utilisateur est soit userId, soit contactId
     const query: any = {
@@ -279,10 +283,16 @@ export const listContacts = async (
     const contacts = await Contact.find(query)
       .populate("contactId", "name surname contact_code pseudo showPseudo")
       .populate("userId", "name surname contact_code pseudo showPseudo")
-      .sort({ createdAt: -1 });
+      .sort({ createdAt: -1 })
+      .skip(skip)
+      .limit(limit)
+      .lean();
 
     // Formatter la réponse avec contactInfo enrichi et déchiffrement
     const { decrypt } = await import("../utils/masterEncryptionUtils");
+
+    // Count total for pagination
+    const total = await Contact.countDocuments(query);
 
     res.status(200).json({
       contacts: contacts.map((c) => {
@@ -370,11 +380,17 @@ export const listContacts = async (
           contactInfo,
         };
       }),
+      pagination: {
+        total,
+        limit,
+        skip,
+        hasMore: skip + contacts.length < total,
+      },
     });
   } catch (error: unknown) {
     contactLogger.error("Erreur lors de la récupération des contacts", {
       error: getErrorMessage(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des contacts",
@@ -648,7 +664,7 @@ export const acceptContact = async (
       ).catch((err) =>
         contactLogger.error("Erreur envoi email contact accepté", {
           error: err.message,
-          stack: err.stack,
+          // HIGH-001: stack trace supprimé pour sécurité,
         }),
       );
     }
