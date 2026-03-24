@@ -1,6 +1,7 @@
 import Redis, { Cluster } from "ioredis";
 import { logger } from "./loggerService";
 import { getErrorMessage } from "../utils/errorUtils";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WEBSOCKET STATE SERVICE - PERSISTANCE ET RÉCUPÉRATION D'ÉTAT
@@ -30,58 +31,38 @@ const WS_MESSAGE_DELIVERY_TTL = parseInt(
   10,
 ); // 24 heures
 
-// Redis client (réutiliser la connexion existante si possible)
+// Redis client (sera initialisé avec le pool)
 let redis: Redis | Cluster | null = null;
 
-if (REDIS_ENABLED && WS_STATE_ENABLED) {
+/**
+ * PERF: Initialise Redis avec le pool partagé
+ * Doit être appelé après l'initialisation du pool dans server.ts
+ */
+export async function initializeRedisWithPool(): Promise<void> {
+  if (!REDIS_ENABLED || !WS_STATE_ENABLED) {
+    stateLogger.info(
+      "WebSocket State persistence disabled - reconnections will not restore previous state",
+      {
+        REDIS_ENABLED,
+        WS_STATE_ENABLED,
+      },
+    );
+    return;
+  }
+
   try {
-    const USE_REDIS_CLUSTER = process.env.USE_REDIS_CLUSTER === "true";
+    // PERF: Utiliser le pool Redis partagé
+    const RedisConnectionPool = (await import("../config/redisPool")).default;
+    redis = RedisConnectionPool.createClient();
 
-    if (USE_REDIS_CLUSTER) {
-      const clusterNodes =
-        process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
-          const [host, port] = node.split(":");
-          return { host, port: parseInt(port) };
-        }) || [];
-
-      redis = new Cluster(clusterNodes, {
-        redisOptions: {
-          password: process.env.REDIS_PASSWORD,
-          tls: process.env.REDIS_TLS === "true" ? {} : undefined,
-        },
-      });
-    } else {
-      redis = new Redis({
-        host: process.env.REDIS_HOST || "localhost",
-        port: parseInt(process.env.REDIS_PORT || "6379"),
-        password: process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.REDIS_DB || "0"),
-        retryStrategy: (times) => Math.min(times * 50, 2000),
-        maxRetriesPerRequest: 3,
-        tls: process.env.REDIS_TLS === "true" ? {} : undefined,
-        lazyConnect: true,
-      });
-
-      redis
-        .connect()
-        .then(() => {
-          stateLogger.info("WebSocket State - Redis connected");
-        })
-        .catch((error) => {
-          stateLogger.error(
-            "WebSocket State - Redis connection failed, state persistence disabled",
-            {
-              error: getErrorMessage(error),
-            },
-          );
-          redis = null;
-        });
-    }
-
-    redis?.on("error", (error) => {
+    redis.on("error", (error) => {
       stateLogger.error("WebSocket State - Redis error", {
         error: getErrorMessage(error),
       });
+    });
+
+    stateLogger.info("WebSocket State - Redis initialized with shared pool", {
+      status: redis.status,
     });
   } catch (error) {
     stateLogger.error(
@@ -92,14 +73,6 @@ if (REDIS_ENABLED && WS_STATE_ENABLED) {
     );
     redis = null;
   }
-} else {
-  stateLogger.warn(
-    "WebSocket State persistence disabled - reconnections will not restore previous state",
-    {
-      REDIS_ENABLED,
-      WS_STATE_ENABLED,
-    },
-  );
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -224,7 +197,10 @@ class WebSocketStateService {
           return null;
         }
 
-        const state = JSON.parse(data);
+        const state = safeJsonParse(data, {
+          context: "websocket-state",
+          maxDepth: 5,
+        });
         // Reconvertir les dates
         state.lastActivityAt = new Date(state.lastActivityAt);
         state.pendingMessages = state.pendingMessages.map((msg: any) => ({
@@ -512,7 +488,10 @@ class WebSocketStateService {
             const data = await redis.get(key);
             if (!data) continue;
 
-            const state = JSON.parse(data);
+            const state = safeJsonParse(data, {
+              context: "websocket-state",
+              maxDepth: 5,
+            });
             const lastActivity = new Date(state.lastActivityAt);
 
             if (lastActivity < cutoffTime) {
@@ -628,16 +607,25 @@ class WebSocketStateService {
 
 export const webSocketStateService = new WebSocketStateService();
 
-// Log de l'état au démarrage
-stateLogger.info("WebSocket State Service initialized", {
+// Log de l'état au démarrage (Redis sera initialisé plus tard via initializeRedisWithPool)
+stateLogger.info("WebSocket State Service created", {
   enabled: REDIS_ENABLED && WS_STATE_ENABLED,
   stateTTL: `${WS_STATE_TTL_HOURS}h`,
   saveInterval: `${WS_STATE_SAVE_INTERVAL}ms`,
+  note: "Redis will be initialized via initializeRedisWithPool()",
 });
 
-// Nettoyage périodique des états obsolètes (1x par jour)
-const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24 heures
-if (redis) {
+/**
+ * Démarre le nettoyage périodique des états obsolètes
+ * Appelé après l'initialisation de Redis
+ */
+export function startStateCleanup(): void {
+  if (!redis) {
+    stateLogger.warn("Cannot start state cleanup - Redis not initialized");
+    return;
+  }
+
+  const CLEANUP_INTERVAL = 24 * 60 * 60 * 1000; // 24 heures
   setInterval(async () => {
     const cleaned =
       await webSocketStateService.cleanupStaleStates(WS_STATE_TTL_HOURS);
@@ -645,6 +633,10 @@ if (redis) {
       stateLogger.info("Automatic state cleanup executed", { cleaned });
     }
   }, CLEANUP_INTERVAL);
+
+  stateLogger.info("State cleanup scheduled", {
+    interval: `${CLEANUP_INTERVAL}ms`,
+  });
 }
 
 // Nettoyage à la fermeture

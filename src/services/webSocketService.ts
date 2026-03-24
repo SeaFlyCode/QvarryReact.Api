@@ -145,6 +145,15 @@ const WS_GRACEFUL_SHUTDOWN_TIMEOUT_MS = parseInt(
 );
 
 // ═══════════════════════════════════════════════════════════════════════════
+// PERF: HEARTBEAT ADAPTATIF SELON L'ACTIVITÉ
+// ═══════════════════════════════════════════════════════════════════════════
+// Connexions actives (< 2 min) : 30s
+// Connexions idle (> 2 min) : 90s
+const HEARTBEAT_ACTIVE_MS = 30000; // 30s pour connexions actives
+const HEARTBEAT_IDLE_MS = 90000; // 90s pour connexions inactives
+const IDLE_THRESHOLD_MS = 120000; // 2 minutes sans activité = idle
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITING POUR WEBSOCKET (CONNEXIONS)
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -165,64 +174,49 @@ let redisCache: Redis | Cluster | null = null;
 const REDIS_ENABLED = process.env.REDIS_ENABLED === "true";
 
 if (REDIS_ENABLED) {
-  try {
-    const USE_REDIS_CLUSTER = process.env.USE_REDIS_CLUSTER === "true";
+  (async () => {
+    try {
+      const USE_REDIS_CLUSTER = process.env.USE_REDIS_CLUSTER === "true";
 
-    if (USE_REDIS_CLUSTER) {
-      const clusterNodes =
-        process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
-          const [host, port] = node.split(":");
-          return { host, port: parseInt(port) };
-        }) || [];
+      if (USE_REDIS_CLUSTER) {
+        const clusterNodes =
+          process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
+            const [host, port] = node.split(":");
+            return { host, port: parseInt(port) };
+          }) || [];
 
-      redisCache = new Cluster(clusterNodes, {
-        redisOptions: {
-          password: process.env.REDIS_PASSWORD,
-          tls: process.env.REDIS_TLS === "true" ? {} : undefined,
-        },
-      });
-    } else {
-      redisCache = new Redis({
-        host: process.env.REDIS_HOST || "localhost",
-        port: parseInt(process.env.REDIS_PORT || "6379"),
-        password: process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.REDIS_DB || "0"),
-        retryStrategy: (times) => Math.min(times * 50, 2000),
-        maxRetriesPerRequest: 3,
-        tls: process.env.REDIS_TLS === "true" ? {} : undefined,
-        lazyConnect: true,
-      });
-
-      redisCache
-        .connect()
-        .then(() => {
-          wsLogger.info("WebSocket Service - Redis cache connected");
-        })
-        .catch((error) => {
-          wsLogger.error(
-            "WebSocket Service - Redis cache connection failed, will fallback to direct MongoDB queries",
-            {
-              error: error instanceof Error ? error.message : String(error),
-            },
-          );
-          redisCache = null;
+        redisCache = new Cluster(clusterNodes, {
+          redisOptions: {
+            password: process.env.REDIS_PASSWORD,
+            tls: process.env.REDIS_TLS === "true" ? {} : undefined,
+          },
         });
-    }
+      } else {
+        // PERF: Utiliser le pool Redis partagé pour le cache
+        const RedisConnectionPool = (await import("../config/redisPool"))
+          .default;
+        redisCache = RedisConnectionPool.createClient(); // Clone du publisher
 
-    redisCache?.on("error", (error) => {
-      wsLogger.error("WebSocket Service - Redis cache error", {
-        error: error instanceof Error ? error.message : String(error),
+        wsLogger.info("[WS] Using shared Redis pool for cache", {
+          status: redisCache.status,
+        });
+      }
+
+      redisCache?.on("error", (error) => {
+        wsLogger.error("WebSocket Service - Redis cache error", {
+          error: error instanceof Error ? error.message : String(error),
+        });
       });
-    });
-  } catch (error) {
-    wsLogger.error(
-      "WebSocket Service - Redis cache initialization failed, will fallback to direct MongoDB queries",
-      {
-        error: error instanceof Error ? error.message : String(error),
-      },
-    );
-    redisCache = null;
-  }
+    } catch (error) {
+      wsLogger.error(
+        "WebSocket Service - Redis cache initialization failed, will fallback to direct MongoDB queries",
+        {
+          error: error instanceof Error ? error.message : String(error),
+        },
+      );
+      redisCache = null;
+    }
+  })();
 } else {
   wsLogger.info(
     "WebSocket Service - Redis cache disabled, using direct MongoDB queries for blocking status",
@@ -273,6 +267,10 @@ class WebSocketService {
   private dirtyStates = new Set<string>(); // userIds avec état modifié
   private saveDebounceTimers = new Map<string, NodeJS.Timeout>();
   private readonly STATE_SAVE_DEBOUNCE_MS = 10000; // 10 secondes
+
+  // PERF: Heartbeat adaptatif - tracking de l'activité des clients
+  private clientLastActivity = new Map<AuthenticatedWebSocket, number>();
+  private heartbeatIntervals: ReturnType<typeof setInterval>[] = [];
 
   /**
    * FIX-1: Helper sécurisé pour envoyer des messages aux clients WS
@@ -343,6 +341,38 @@ class WebSocketService {
       calculatedSize: this.conversationParticipationCache.calculatedSize,
     };
   }
+
+  /**
+   * PERF: Retourne les stats d'activité des clients pour monitoring du heartbeat adaptatif
+   */
+  getClientActivityStats() {
+    const now = Date.now();
+    let activeCount = 0;
+    let idleCount = 0;
+
+    for (const [client, lastActivity] of this.clientLastActivity.entries()) {
+      const timeSinceActivity = now - lastActivity;
+      if (timeSinceActivity > IDLE_THRESHOLD_MS) {
+        idleCount++;
+      } else {
+        activeCount++;
+      }
+    }
+
+    return {
+      total: this.clientLastActivity.size,
+      active: activeCount,
+      idle: idleCount,
+      activeHeartbeatMs: HEARTBEAT_ACTIVE_MS,
+      idleHeartbeatMs: HEARTBEAT_IDLE_MS,
+      idleThresholdMs: IDLE_THRESHOLD_MS,
+      estimatedCpuReduction:
+        idleCount > 0
+          ? Math.round((idleCount / (activeCount + idleCount)) * 66)
+          : 0,
+    };
+  }
+
   /**
    * PERF: Ajouter un client à une conversation (avec index inversé)
    */
@@ -970,7 +1000,107 @@ class WebSocketService {
       this.connectionAttemptsCleanupInterval = null;
     }
 
+    // PERF: Arrêter les heartbeat intervals
+    for (const interval of this.heartbeatIntervals) {
+      clearInterval(interval);
+    }
+    this.heartbeatIntervals = [];
+
     wsLogger.info("WebSocket graceful shutdown complete");
+  }
+
+  /**
+   * PERF: Heartbeat adaptatif - fréquence selon l'activité
+   * Active (< 2min) : 30s
+   * Idle (> 2min) : 90s (skip si pas encore temps)
+   * Réduit la charge CPU/réseau de ~66% pour les connexions idle
+   */
+  private startAdaptiveHeartbeat(): void {
+    // Heartbeat notifications (lecture seule - peut être moins fréquent)
+    const notificationInterval = setInterval(() => {
+      const now = Date.now();
+
+      this.notificationsWss?.clients.forEach((ws: WebSocket) => {
+        const client = ws as AuthenticatedWebSocket;
+
+        // Vérifier si le client est vivant
+        if (client.isAlive === false) {
+          wsLogger.info("Notifications - Client non réactif, fermeture", {
+            userId: client.userId,
+          });
+          return client.terminate();
+        }
+
+        // Déterminer si le client est actif ou idle
+        const lastActivity = this.clientLastActivity.get(client) || now;
+        const timeSinceActivity = now - lastActivity;
+        const isIdle = timeSinceActivity > IDLE_THRESHOLD_MS;
+
+        // Skip heartbeat si idle et dernière vérification récente
+        if (
+          isIdle &&
+          timeSinceActivity % HEARTBEAT_IDLE_MS > HEARTBEAT_ACTIVE_MS
+        ) {
+          return;
+        }
+
+        try {
+          client.isAlive = false;
+          client.ping();
+        } catch (error) {
+          wsLogger.error("[WS] Heartbeat notification ping failed", {
+            userId: client.userId,
+            error: error instanceof Error ? error.message : error,
+          });
+        }
+      });
+    }, HEARTBEAT_ACTIVE_MS); // Check toutes les 30s, mais skip si idle
+
+    // Heartbeat messages (actif - fréquence normale)
+    const messageInterval = setInterval(() => {
+      this.messagesWss?.clients.forEach((ws: WebSocket) => {
+        const client = ws as AuthenticatedWebSocket;
+
+        // Vérifier si le client est vivant
+        if (client.isAlive === false) {
+          wsLogger.info("Messages - Client non réactif, fermeture", {
+            userId: client.userId,
+            conversationId: client.conversationId,
+          });
+          return client.terminate();
+        }
+
+        // Messages clients sont généralement plus actifs, garder 30s
+        try {
+          client.isAlive = false;
+          client.ping();
+        } catch (error) {
+          wsLogger.error("[WS] Heartbeat message ping failed", {
+            userId: client.userId,
+            conversationId: client.conversationId,
+            error: error instanceof Error ? error.message : error,
+          });
+        }
+      });
+    }, HEARTBEAT_ACTIVE_MS);
+
+    // Store intervals pour cleanup
+    this.heartbeatIntervals.push(notificationInterval, messageInterval);
+
+    // Cleanup intervals lors de la fermeture des WebSocket servers
+    this.notificationsWss?.on("close", () => {
+      clearInterval(notificationInterval);
+    });
+
+    this.messagesWss?.on("close", () => {
+      clearInterval(messageInterval);
+    });
+
+    wsLogger.info("[WS] Adaptive heartbeat started", {
+      activeInterval: HEARTBEAT_ACTIVE_MS,
+      idleInterval: HEARTBEAT_IDLE_MS,
+      idleThreshold: IDLE_THRESHOLD_MS,
+    });
   }
 
   /**
@@ -1057,43 +1187,8 @@ class WebSocketService {
     );
     this.messagesWss.on("connection", this.handleMessageConnection.bind(this));
 
-    // Heartbeat pour les notifications
-    const notificationInterval = setInterval(() => {
-      this.notificationsWss?.clients.forEach((ws: WebSocket) => {
-        const client = ws as AuthenticatedWebSocket;
-        if (client.isAlive === false) {
-          wsLogger.info("Notifications - Client non réactif, fermeture", {
-            userId: client.userId,
-          });
-          return client.terminate();
-        }
-        client.isAlive = false;
-        client.ping();
-      });
-    }, WS_HEARTBEAT_INTERVAL_MS);
-
-    // Heartbeat pour les messages
-    const messageInterval = setInterval(() => {
-      this.messagesWss?.clients.forEach((ws: WebSocket) => {
-        const client = ws as AuthenticatedWebSocket;
-        if (client.isAlive === false) {
-          wsLogger.info("Messages - Client non réactif, fermeture", {
-            userId: client.userId,
-          });
-          return client.terminate();
-        }
-        client.isAlive = false;
-        client.ping();
-      });
-    }, WS_HEARTBEAT_INTERVAL_MS);
-
-    this.notificationsWss.on("close", () => {
-      clearInterval(notificationInterval);
-    });
-
-    this.messagesWss.on("close", () => {
-      clearInterval(messageInterval);
-    });
+    // PERF: Heartbeat adaptatif - démarre les intervals
+    this.startAdaptiveHeartbeat();
 
     // R-5: Nettoyage périodique des tentatives de connexion anciennes
     this.connectionAttemptsCleanupInterval = setInterval(
@@ -1416,6 +1511,9 @@ class WebSocketService {
         // PHASE 4: Extraire ou générer le deviceId
         client.deviceId = this.getOrGenerateDeviceId(request);
 
+        // PERF: Initialiser l'activité pour heartbeat adaptatif
+        this.clientLastActivity.set(client, Date.now());
+
         // Ajouter le client à la map
         if (!this.clients.has(client.userId)) {
           this.clients.set(client.userId, new Set());
@@ -1442,6 +1540,9 @@ class WebSocketService {
 
         // Gérer la fermeture
         client.on("close", () => {
+          // PERF: Cleanup activity tracking
+          this.clientLastActivity.delete(client);
+
           if (client.userId) {
             const userClients = this.clients.get(client.userId);
             if (userClients) {
@@ -1649,6 +1750,9 @@ class WebSocketService {
         // Ajouter le client à la conversation (avec index inversé)
         this.addClientToConversation(client, conversationId);
 
+        // PERF: Initialiser l'activité pour heartbeat adaptatif
+        this.clientLastActivity.set(client, Date.now());
+
         wsLogger.info("Messages - Client connecté", {
           userId: client.userId,
           conversationId,
@@ -1679,6 +1783,9 @@ class WebSocketService {
 
         // Gérer les messages entrants
         client.on("message", async (message: Buffer) => {
+          // PERF: Tracker l'activité pour heartbeat adaptatif
+          this.clientLastActivity.set(client, Date.now());
+
           try {
             // WS-003: Rate limiting par message
             const now = Date.now();
@@ -2084,6 +2191,9 @@ class WebSocketService {
 
         // Gérer la fermeture
         client.on("close", async () => {
+          // PERF: Cleanup activity tracking
+          this.clientLastActivity.delete(client);
+
           // PHASE 4: Sauvegarder l'état avant déconnexion
           if (client.userId && client.deviceId) {
             await this.saveClientState(client);

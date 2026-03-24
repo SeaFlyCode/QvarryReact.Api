@@ -47,7 +47,6 @@ import conversationsRoutes from "./routes/conversationsRoutes";
 import {
   globalRateLimiter,
   healthLimiter,
-  authLimiter,
   registerLimiter,
   verifyEmailLimiter,
   resendEmailLimiter,
@@ -59,11 +58,13 @@ import {
   refreshTokenLimiter,
   adminLimiter,
   mobileAuthLimiter,
-  securityLimiter,
   authCheckLimiter,
   maintenanceLimiter,
-  usersLimiter,
   notificationsLimiter,
+  // Configuration différenciée par niveau de sécurité
+  strictAuthLimiter,
+  moderateApiLimiter,
+  permissiveMobileLimiter,
 } from "./config/rateLimitConfig";
 import morgan from "morgan";
 import cors from "cors";
@@ -89,6 +90,12 @@ import webhookRoutes from "./routes/webhookRoutes";
 import publicRoutes from "./routes/publicRoutes";
 import { maintenanceMiddleware } from "./middlewares/maintenanceMiddleware";
 import cookieParser from "cookie-parser";
+// MED-004: Import CSRF middleware
+import {
+  getCsrfToken,
+  csrfProtection,
+  csrfErrorHandler,
+} from "./middlewares/csrfMiddleware";
 import {
   startDataShareCleanupJob,
   startPushTokenCleanupJob,
@@ -230,10 +237,24 @@ const morganFormat =
     ? ':masked-ip - :remote-user [:date[clf]] ":method :sanitized-url HTTP/:http-version" :status :res[content-length]'
     : "dev";
 
+// Déterminer le niveau de log actuel
+const LOG_LEVEL =
+  process.env.LOG_LEVEL || (NODE_ENV === "development" ? "debug" : "info");
+
 app.use(
   morgan(morganFormat, {
     // Ne pas logger les health checks en production
-    skip: (req) => NODE_ENV === "production" && req.url === "/health",
+    skip: (req) => {
+      // Toujours skip les health checks en production
+      if (NODE_ENV === "production" && req.url === "/health") {
+        return true;
+      }
+      // Skip tous les logs HTTP si LOG_LEVEL est error ou critical
+      if (LOG_LEVEL === "error" || LOG_LEVEL === "critical") {
+        return true;
+      }
+      return false;
+    },
     stream: httpLogStream,
   }),
 );
@@ -353,6 +374,7 @@ app.use("/api", ipBlockCheckMiddleware);
 
 app.use(
   helmet({
+    crossOriginResourcePolicy: { policy: "cross-origin" },
     // Content Security Policy - Protection XSS et injection de contenu
     contentSecurityPolicy: {
       directives: {
@@ -475,10 +497,15 @@ app.use(cookieParser());
 // ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITERS - Application des limiteurs (importés depuis rateLimitConfig.ts)
 // ═══════════════════════════════════════════════════════════════════════════
+// Configuration différenciée par niveau de sécurité :
+// 🔴 STRICT (10 req/15min) - Routes d'authentification sensibles
+// 🟡 MODERATE (100 req/15min) - Routes API standard
+// 🟢 PERMISSIVE (150 req/15min) - Routes mobiles fonctionnelles
+// ═══════════════════════════════════════════════════════════════════════════
 
-// Routes d'authentification (très strictes - RISQUE ÉLEVÉ)
-app.use("/api/auth/login", authLimiter);
-app.use("/api/auth/register", authLimiter);
+// 🔴 STRICT - Routes d'authentification (très strictes - RISQUE ÉLEVÉ)
+app.use("/api/auth/login", strictAuthLimiter);
+app.use("/api/auth/register", strictAuthLimiter);
 
 // Routes de réinitialisation de mot de passe (RISQUE ÉLEVÉ)
 app.use("/api/auth/forgot-password", passwordResetLimiter);
@@ -500,9 +527,9 @@ app.post("/api/users", registerLimiter);
 app.use("/api/users/verify-email", verifyEmailLimiter); // Protection brute force
 app.use("/api/users/resend-verification", resendEmailLimiter); // Anti-spam emails
 
-// SEC-044: Rate limiter pour toutes les autres routes /api/users
+// 🟡 MODERATE - SEC-044: Rate limiter pour toutes les autres routes /api/users
 // Protection contre l'énumération des utilisateurs et l'accès abusif aux profils
-app.use("/api/users", usersLimiter);
+app.use("/api/users", moderateApiLimiter);
 
 // Routes de données à fort débit (lecture)
 app.use("/api/points", highTrafficLimiter);
@@ -515,18 +542,20 @@ app.use("/api/messages", socialLimiter);
 app.use("/api/share", socialLimiter);
 app.use("/api/conversations", socialLimiter);
 
-// Routes mobiles (RISQUE ÉLEVÉ - pas de Turnstile)
+// 🟢 PERMISSIVE - Routes mobiles (fonctionnalités fréquentes)
+// Protection mobile pour auth (RISQUE ÉLEVÉ - pas de Turnstile)
 app.use("/api/mobile/auth", mobileAuthLimiter);
 app.use("/api/mobile/2fa", twoFactorLimiter); // 2FA mobile = même protection que web
-app.use("/api/mobile/sync", highTrafficLimiter); // Sync peut être fréquent
+// Routes fonctionnelles mobiles (sync et push tokens)
+app.use("/api/mobile/sync", permissiveMobileLimiter); // Sync peut être fréquent
 app.use("/api/mobile/sos", mobileAuthLimiter); // SOS mode - protection mobile
-app.use("/api/mobile/push-tokens", mobileAuthLimiter); // Push tokens - protection mobile
+app.use("/api/mobile/push-tokens", permissiveMobileLimiter); // 🔧 FIX: Push tokens - limite permissive
 
 // Routes admin (RISQUE MOYEN - déjà protégées par authMiddleware + adminMiddleware)
 app.use("/api/admin", adminLimiter);
 
-// Routes de sécurité (sessions, events - RISQUE MOYEN)
-app.use("/api/security", securityLimiter);
+// 🟡 MODERATE - Routes de sécurité (sessions, events - RISQUE MOYEN)
+app.use("/api/security", moderateApiLimiter);
 
 // Routes de maintenance
 app.use("/api/maintenance", maintenanceLimiter);
@@ -540,6 +569,65 @@ app.use("/api", generalLimiter);
 // Connexion à la base de données obligatoire avant de démarrer le serveur
 (async () => {
   try {
+    // ═══════════════════════════════════════════════════════════════════════════
+    // MED-005: INITIALISER LE SECRETS MANAGER EN PREMIER
+    // ═══════════════════════════════════════════════════════════════════════════
+    serverLogger.info("[MED-005] Initialisation du Secrets Manager...");
+    const { secretsManager } = await import("./services/secretsManagerService");
+    await secretsManager.initialize();
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // REDIS POOL: Initialiser en premier pour tous les services
+    // ═══════════════════════════════════════════════════════════════════════════
+    serverLogger.info("[REDIS-POOL] Initialisation du pool Redis partagé...");
+    const RedisConnectionPool = await import("./config/redisPool");
+    await RedisConnectionPool.default.initialize();
+
+    const poolStats = RedisConnectionPool.default.getStats();
+    serverLogger.info("[REDIS-POOL] Pool Redis initialisé", poolStats);
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // WEBSOCKET STATE: Initialiser avec le pool Redis
+    // ═══════════════════════════════════════════════════════════════════════════
+    serverLogger.info(
+      "[WS-STATE] Initialisation WebSocket State avec le pool...",
+    );
+    const { initializeRedisWithPool, startStateCleanup } =
+      await import("./services/webSocketStateService");
+    await initializeRedisWithPool();
+    startStateCleanup();
+    serverLogger.info("[WS-STATE] WebSocket State initialisé avec le pool");
+
+    // Audit des secrets (DEV uniquement)
+    if (NODE_ENV !== "production") {
+      const audit = secretsManager.auditSecrets();
+      serverLogger.info("[MED-005] Audit des secrets:", {
+        strong: audit.strong.length,
+        weak: audit.weak.length,
+      });
+
+      if (audit.weak.length > 0) {
+        serverLogger.warn("[MED-005] ⚠️  Secrets faibles détectés:", {
+          weakSecrets: audit.weak,
+        });
+        // Afficher le rapport complet en développement
+        serverLogger.debug("[MED-005] Rapport d'audit des secrets:", {
+          report: audit.report,
+        });
+      } else {
+        serverLogger.info(
+          "[MED-005] ✅ Tous les secrets respectent les critères de sécurité",
+        );
+      }
+
+      // Statistiques du Secrets Manager
+      const stats = secretsManager.getStats();
+      serverLogger.info("[MED-005] Secrets Manager prêt", stats);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // Connexion à MongoDB (après Secrets Manager)
+    // ═══════════════════════════════════════════════════════════════════════════
     await connectToDatabase();
 
     // ═══════════════════════════════════════════════════════════════════════════
@@ -681,6 +769,10 @@ app.use("/api", generalLimiter);
     app.use("/api/v1/auth", authRoutes);
     app.use("/api/v1/2fa", twoFactorRoutes);
 
+    // MED-004: Endpoint public pour obtenir le CSRF token (AVANT protection CSRF)
+    app.get("/api/csrf-token", getCsrfToken);
+    app.get("/api/v1/csrf-token", getCsrfToken);
+
     // LOW-002 + LOW-003: Headers de sécurité et vérification de version pour routes mobiles
     const { mobileSecurityHeaders, checkAppVersion } =
       await import("./middlewares/mobileSecurityMiddleware");
@@ -709,6 +801,20 @@ app.use("/api", generalLimiter);
     // Middleware de maintenance (après les routes exemptées)
     app.use("/api", maintenanceMiddleware);
 
+    // MED-004: Protection CSRF sur les routes sensibles (POST/PUT/DELETE uniquement)
+    // S'applique après authentification mais avant les handlers
+    app.use("/api/v1/users", csrfProtection);
+    app.use("/api/v1/admin", csrfProtection);
+    app.use("/api/v1/security", csrfProtection);
+    app.use("/api/v1/fiches", csrfProtection);
+    app.use("/api/v1/lists", csrfProtection);
+    app.use("/api/v1/points", csrfProtection);
+    app.use("/api/v1/conversations", csrfProtection);
+    app.use("/api/v1/messages", csrfProtection);
+    app.use("/api/v1/contacts", csrfProtection);
+    app.use("/api/v1/data-share", csrfProtection);
+    app.use("/api/v1/notifications", csrfProtection);
+
     app.use("/api/v1/fiches", fichesRoutes);
     app.use("/api/v1/users", userRoutes);
     app.use("/api/v1/points", pointsRoutes);
@@ -725,6 +831,9 @@ app.use("/api", generalLimiter);
     // ═══════════════════════════════════════════════════════════════════════════
     // Doit être placé APRÈS toutes les routes
     // ═══════════════════════════════════════════════════════════════════════════
+
+    // MED-004: CSRF error handler (AVANT le error handler général)
+    app.use(csrfErrorHandler);
 
     // Classe d'erreur personnalisée
     class AppError extends Error {
@@ -764,13 +873,13 @@ app.use("/api", generalLimiter);
         res: express.Response,
         _next: express.NextFunction,
       ) => {
-        // Logger l'erreur complète côté serveur
+        // Logger l'erreur complète côté serveur (HIGH-001: pas de stack trace)
         const errorLog = {
           timestamp: new Date().toISOString(),
           path: req.path,
           method: req.method,
           error: err.message,
-          stack: NODE_ENV === "development" ? err.stack : undefined,
+          errorName: err.name,
           userId: (req as any).user?.id || "anonymous",
         };
 
@@ -805,13 +914,11 @@ app.use("/api", generalLimiter);
             ? "Une erreur interne est survenue"
             : err.message;
 
-        // Réponse au client (sans détails sensibles)
+        // Réponse au client (sans détails sensibles, HIGH-001: pas de stack)
         res.status(statusCode).json({
           error: errorMessage,
           code: code,
           timestamp: new Date().toISOString(),
-          // Stack trace uniquement en développement
-          ...(NODE_ENV === "development" && { stack: err.stack }),
         });
       },
     );
@@ -820,12 +927,12 @@ app.use("/api", generalLimiter);
     // GESTION DES ERREURS NON CAPTURÉES
     // ═══════════════════════════════════════════════════════════════════════════
 
-    // Promesses non gérées
+    // Promesses non gérées (HIGH-001: pas de stack trace)
     process.on("unhandledRejection", (reason: any, _promise: Promise<any>) => {
       serverLogger.critical("[UNHANDLED REJECTION]", {
         timestamp: new Date().toISOString(),
         reason: reason?.message || reason,
-        stack: reason?.stack,
+        errorName: reason?.name,
       });
 
       import("./services/auditService").then(({ auditService }) => {
@@ -834,18 +941,17 @@ app.use("/api", generalLimiter);
           level: "critical",
           details: {
             error: reason?.message || String(reason),
-            stack: reason?.stack,
           },
         });
       });
     });
 
-    // Exceptions non capturées
+    // Exceptions non capturées (HIGH-001: pas de stack trace)
     process.on("uncaughtException", (error: Error) => {
       serverLogger.critical("[UNCAUGHT EXCEPTION]", {
         timestamp: new Date().toISOString(),
         error: getErrorMessage(error),
-        stack: error.stack,
+        errorName: error.name,
       });
 
       import("./services/auditService")
@@ -855,7 +961,6 @@ app.use("/api", generalLimiter);
             level: "critical",
             details: {
               error: getErrorMessage(error),
-              stack: error.stack,
             },
           });
         })
@@ -999,12 +1104,17 @@ app.use("/api", generalLimiter);
         // Note: WebSocket sera fermé automatiquement avec le serveur HTTP
         serverLogger.info("WebSocket fermé");
 
-        // Fermer MongoDB
-        import("mongoose").then((mongoose) => {
-          mongoose.default.connection.close(false).then(() => {
-            serverLogger.info("MongoDB déconnecté");
-            process.exit(0);
-          });
+        // Fermer MongoDB et Redis pool
+        Promise.all([
+          import("mongoose").then((mongoose) =>
+            mongoose.default.connection.close(false),
+          ),
+          import("./config/redisPool").then((RedisConnectionPool) =>
+            RedisConnectionPool.default.close(),
+          ),
+        ]).then(() => {
+          serverLogger.info("MongoDB et Redis pool fermés");
+          process.exit(0);
         });
       });
 

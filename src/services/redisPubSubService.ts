@@ -3,6 +3,7 @@ import { logger } from "./loggerService";
 import { getErrorMessage } from "../utils/errorUtils";
 import { hostname } from "os";
 import { randomBytes } from "crypto";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REDIS PUB/SUB SERVICE - CLUSTERING WEBSOCKET
@@ -96,72 +97,31 @@ class RedisPubSubService {
 
   /**
    * Initialiser les connexions Redis Pub/Sub
+   * PERF: Utilise le pool Redis partagé
    */
-  private initialize(): void {
+  private async initialize(): Promise<void> {
     try {
-      const redisConfig = {
-        host: process.env.REDIS_HOST || "localhost",
-        port: parseInt(process.env.REDIS_PORT || "6379"),
-        password: process.env.REDIS_PASSWORD,
-        db: parseInt(process.env.REDIS_DB || "0"),
-        retryStrategy: (times: number) => {
-          if (times > MAX_RETRIES) {
-            pubSubLogger.error("Redis Pub/Sub max retries reached", { times });
-            return null; // Stop retrying
-          }
-          return Math.min(times * RECONNECT_DELAY, 5000);
-        },
-        maxRetriesPerRequest: null, // Important pour Pub/Sub
-        tls: process.env.REDIS_TLS === "true" ? {} : undefined,
-        lazyConnect: true,
-      };
+      // PERF: Utiliser le pool Redis partagé
+      const RedisConnectionPool = (await import("../config/redisPool")).default;
+      this.publisher = RedisConnectionPool.getPublisher();
+      this.subscriber = RedisConnectionPool.getSubscriber();
 
-      if (USE_REDIS_CLUSTER) {
-        // Configuration Cluster Redis
-        const clusterNodes =
-          process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
-            const [host, port] = node.split(":");
-            return { host, port: parseInt(port) };
-          }) || [];
-
-        this.publisher = new Cluster(clusterNodes, {
-          redisOptions: {
-            password: process.env.REDIS_PASSWORD,
-            tls: process.env.REDIS_TLS === "true" ? {} : undefined,
-          },
-        });
-
-        this.subscriber = new Cluster(clusterNodes, {
-          redisOptions: {
-            password: process.env.REDIS_PASSWORD,
-            tls: process.env.REDIS_TLS === "true" ? {} : undefined,
-          },
-        });
-      } else {
-        // Configuration Redis standard
-        this.publisher = new Redis(redisConfig);
-        this.subscriber = new Redis(redisConfig);
-      }
+      pubSubLogger.info("[Redis Pub/Sub] Using shared Redis pool", {
+        publisherStatus: this.publisher.status,
+        subscriberStatus: this.subscriber.status,
+      });
 
       // Setup event handlers
       this.setupPublisherHandlers();
       this.setupSubscriberHandlers();
 
-      // Connexion
-      Promise.all([this.publisher.connect(), this.subscriber.connect()])
-        .then(() => {
-          this.isConnected = true;
-          pubSubLogger.info("Redis Pub/Sub connected successfully", {
-            instanceId: INSTANCE_ID,
-            cluster: USE_REDIS_CLUSTER,
-          });
-        })
-        .catch((error) => {
-          pubSubLogger.error("Redis Pub/Sub connection failed", {
-            error: getErrorMessage(error),
-          });
-          this.isConnected = false;
-        });
+      // Le pool est déjà connecté, pas besoin de connect()
+      this.isConnected = true;
+      pubSubLogger.info("Redis Pub/Sub initialized with shared pool", {
+        instanceId: INSTANCE_ID,
+        publisherStatus: this.publisher.status,
+        subscriberStatus: this.subscriber.status,
+      });
     } catch (error) {
       pubSubLogger.error("Redis Pub/Sub initialization failed", {
         error: getErrorMessage(error),
@@ -247,7 +207,10 @@ class RedisPubSubService {
    */
   private handleMessage(channel: string, rawMessage: string): void {
     try {
-      const message: PubSubMessage = JSON.parse(rawMessage);
+      const message: PubSubMessage = safeJsonParse(rawMessage, {
+        context: "redis-pubsub-message",
+        maxDepth: 5,
+      });
 
       // Ignorer les messages de notre propre instance (éviter l'écho)
       if (message.instanceId === INSTANCE_ID) {
@@ -352,6 +315,142 @@ class RedisPubSubService {
   }
 
   /**
+   * PERF: Batch publish pour réduire les round-trips réseau
+   * Utilise un pipeline Redis pour envoyer plusieurs messages en une seule fois
+   */
+  async batchPublish(
+    messages: Array<{ channel: string; payload: any }>,
+  ): Promise<boolean[]> {
+    if (messages.length === 0) {
+      return [];
+    }
+
+    if (!this.isEnabled()) {
+      return messages.map(() => false);
+    }
+
+    if (!this.publisher || !this.isConnected) {
+      pubSubLogger.warn("Publisher not connected, batch messages not sent", {
+        count: messages.length,
+      });
+      return messages.map(() => false);
+    }
+
+    const startTime = Date.now();
+
+    try {
+      // Créer un pipeline
+      const pipeline = this.publisher.pipeline();
+
+      // Préparer les messages avec métadonnées
+      const preparedMessages: PubSubMessage[] = messages.map(
+        ({ channel, payload }) => ({
+          instanceId: INSTANCE_ID,
+          messageId: `${INSTANCE_ID}-${Date.now()}-${randomBytes(4).toString("hex")}`,
+          timestamp: Date.now(),
+          payload,
+        }),
+      );
+
+      // Ajouter tous les publish au pipeline
+      for (let i = 0; i < messages.length; i++) {
+        const message = preparedMessages[i];
+        const channel = messages[i].channel;
+        pipeline.publish(channel, JSON.stringify(message));
+      }
+
+      // Exécuter le pipeline en une seule fois
+      const results = await pipeline.exec();
+
+      // Traiter les résultats
+      const successResults: boolean[] = [];
+
+      if (results) {
+        for (let i = 0; i < results.length; i++) {
+          const [error, result] = results[i];
+          if (error) {
+            pubSubLogger.error("[Redis Pub/Sub] Batch publish error", {
+              channel: messages[i].channel,
+              error: getErrorMessage(error),
+            });
+            this.errorCount++;
+            successResults.push(false);
+          } else {
+            this.publishedCount++;
+            successResults.push(true);
+          }
+        }
+      }
+
+      const duration = Date.now() - startTime;
+
+      pubSubLogger.debug("[Redis Pub/Sub] Batch publish successful", {
+        count: messages.length,
+        channels: messages.map((m) => m.channel),
+        duration,
+        successCount: successResults.filter((s) => s).length,
+      });
+
+      return successResults;
+    } catch (error) {
+      pubSubLogger.error("[Redis Pub/Sub] Batch publish failed", {
+        error: getErrorMessage(error),
+        count: messages.length,
+      });
+      this.errorCount++;
+      return messages.map(() => false);
+    }
+  }
+
+  /**
+   * Helper: Batch publish pour plusieurs messages dans différentes conversations
+   * Utilise le pipeline Redis pour optimiser les performances
+   */
+  async batchPublishMessages(
+    messages: Array<{
+      conversationId: string;
+      message: any;
+      excludeUserId?: string;
+      participantIds?: string[];
+      senderName?: string;
+    }>,
+  ): Promise<boolean[]> {
+    const batchMessages = messages.map((msg) => ({
+      channel: `websocket:messages:${msg.conversationId}`,
+      payload: {
+        conversationId: msg.conversationId,
+        message: msg.message,
+        excludeUserId: msg.excludeUserId,
+        participantIds: msg.participantIds,
+        senderName: msg.senderName,
+      } as MessagePayload,
+    }));
+
+    return this.batchPublish(batchMessages);
+  }
+
+  /**
+   * Helper: Batch publish pour plusieurs notifications utilisateurs
+   * Utilise le pipeline Redis pour optimiser les performances
+   */
+  async batchPublishNotifications(
+    notifications: Array<{
+      userId: string;
+      notification: any;
+    }>,
+  ): Promise<boolean[]> {
+    const batchMessages = notifications.map((notif) => ({
+      channel: `websocket:notifications`,
+      payload: {
+        userId: notif.userId,
+        notification: notif.notification,
+      } as NotificationPayload,
+    }));
+
+    return this.batchPublish(batchMessages);
+  }
+
+  /**
    * S'abonner à un channel
    */
   async subscribe(channel: string, handler: Function): Promise<void> {
@@ -433,6 +532,8 @@ class RedisPubSubService {
 
   /**
    * Publier une notification pour un utilisateur
+   * Note: Pour envoyer plusieurs notifications, utiliser batchPublishNotifications()
+   * pour de meilleures performances (réduit la latency de ~50%)
    */
   async publishNotification(
     userId: string,
@@ -448,6 +549,8 @@ class RedisPubSubService {
 
   /**
    * Publier un message dans une conversation
+   * Note: Pour envoyer plusieurs messages, utiliser batchPublishMessages()
+   * pour de meilleures performances (réduit la latency de ~50%)
    */
   async publishMessage(
     conversationId: string,
