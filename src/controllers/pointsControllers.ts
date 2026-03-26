@@ -5,6 +5,7 @@ import { memoryStorage } from "../services/memoryStorageService";
 import { syncService } from "../services/syncService";
 import FicheModel from "../models/fiches";
 import { logger } from "../services/loggerService";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 const pointsLogger = logger.child({ service: "points" });
 
@@ -78,7 +79,10 @@ export async function handleCreatePoint(req: Request, res: Response) {
         }
 
         try {
-          const parsed = JSON.parse(input);
+          const parsed = safeJsonParse(input, {
+            context: "parse-field-value",
+            maxDepth: 5,
+          });
 
           // Validation de structure : doit être un tableau ou une chaîne simple
           if (
@@ -275,6 +279,14 @@ export async function handleCreatePoint(req: Request, res: Response) {
       });
     }
 
+    pointsLogger.info("Point créé avec succès", {
+      userId,
+      pointId: newPointId.toString(),
+      action: "create_point",
+      hasFiche: !!parsedFiche,
+      hasLists: !!parsedListIds,
+    });
+
     res.status(201).json({
       success: true,
       message: "Point créé avec succès",
@@ -340,7 +352,20 @@ export async function handleGetAllPointsByUserId(req: Request, res: Response) {
     }
 
     // Appliquer la pagination
-    const points = allPoints.slice(offset, offset + limit);
+    const paginatedPoints = allPoints.slice(offset, offset + limit);
+
+    // Ajouter le flag hasImage à chaque point
+    const points = paginatedPoints.map((point) => ({
+      ...point,
+      hasImage: !!point.photo,
+    }));
+
+    pointsLogger.debug("Points récupérés avec succès", {
+      userId,
+      count: points.length,
+      total,
+      action: "read_points",
+    });
 
     res.status(200).json({
       data: points,
@@ -354,7 +379,7 @@ export async function handleGetAllPointsByUserId(req: Request, res: Response) {
   } catch (error: unknown) {
     pointsLogger.error("Erreur récupération points", {
       error: getErrorMessage(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({
       message: "Erreur lors de la récupération des points",
@@ -392,7 +417,20 @@ export async function handleSearchPoints(req: Request, res: Response) {
     if (listId) filters.listId = listId as string;
 
     // Effectuer la recherche
-    const points = memoryStorage.searchPoints(userId, filters);
+    const results = memoryStorage.searchPoints(userId, filters);
+
+    // Ajouter le flag hasImage à chaque point
+    const points = results.map((point) => ({
+      ...point,
+      hasImage: !!point.photo,
+    }));
+
+    pointsLogger.info("Recherche de points effectuée", {
+      userId,
+      filters,
+      resultCount: points.length,
+      action: "search_points",
+    });
 
     res.status(200).json({
       success: true,
@@ -430,7 +468,13 @@ export async function handleGetPointById(req: Request, res: Response) {
       return res.status(404).json({ message: "Point non trouvé" });
     }
 
-    res.status(200).json(point);
+    // Ajouter le flag hasImage au point
+    const pointWithFlag = {
+      ...point,
+      hasImage: !!point.photo,
+    };
+
+    res.status(200).json(pointWithFlag);
   } catch (_error: unknown) {
     return res.status(400).json({ message: "Une erreur interne est survenue" });
   }
@@ -488,6 +532,13 @@ export async function handleDeletePoint(req: Request, res: Response) {
         syncFailed: true,
       });
     }
+
+    pointsLogger.info("Point supprimé avec succès", {
+      userId,
+      pointId,
+      action: "delete_point",
+      hasFiche: !!(point as any).ficheId,
+    });
 
     res.status(200).json({
       success: true,
@@ -627,6 +678,23 @@ export async function handleUpdatePoint(req: Request, res: Response) {
       });
     }
 
+    pointsLogger.info("Point mis à jour avec succès", {
+      userId,
+      pointId: id,
+      action: "update_point",
+      fieldsUpdated: Object.keys(req.body).filter((k) =>
+        [
+          "name",
+          "description",
+          "longitude",
+          "latitude",
+          "listIds",
+          "ficheId",
+          "accessType",
+        ].includes(k),
+      ),
+    });
+
     res.status(200).json({
       success: true,
       message: "Point mis à jour avec succès",
@@ -679,6 +747,13 @@ export async function handleLinkPointToFiche(req: Request, res: Response) {
         syncFailed: true,
       });
     }
+
+    pointsLogger.info("Point lié à la fiche avec succès", {
+      userId,
+      pointId,
+      ficheId,
+      action: "link_point_fiche",
+    });
 
     res.status(200).json({
       success: true,
@@ -733,6 +808,13 @@ export async function handleUnlinkPointFromFiche(req: Request, res: Response) {
         syncFailed: true,
       });
     }
+
+    pointsLogger.info("Point délié de la fiche avec succès", {
+      userId,
+      pointId,
+      ficheId,
+      action: "unlink_point_fiche",
+    });
 
     res.status(200).json({
       success: true,

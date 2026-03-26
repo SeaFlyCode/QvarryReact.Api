@@ -325,7 +325,7 @@ async function runDiagnostic(): Promise<void> {
     console.error("❌ ERREUR FATALE:", error);
     diagLogger.error("Diagnostic failed", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité
     });
   } finally {
     await mongoose.disconnect();

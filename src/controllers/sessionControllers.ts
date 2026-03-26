@@ -84,7 +84,7 @@ export async function revokeAllOtherSessions(req: Request, res: Response) {
   } catch (error) {
     sessionLogger.error("Revoke all other sessions error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la révocation des sessions",

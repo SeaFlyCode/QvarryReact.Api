@@ -20,6 +20,7 @@ const notifLogger = logger.child({ service: "notification" });
 // FIREBASE ADMIN SDK - Import conditionnel
 // ═══════════════════════════════════════════════════════════════════════════
 import type * as FirebaseAdmin from "firebase-admin";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 let firebaseAdmin: typeof FirebaseAdmin | null = null;
 try {
@@ -51,7 +52,8 @@ class NotificationService {
   private static readonly RETRY_INTERVAL_MS = 30000; // 30 secondes
 
   /**
-   * Initialise Firebase Admin SDK pour les notifications push
+   * HIGH-001 FIX: Initialise Firebase Admin SDK pour les notifications push
+   * Charge le compte de service depuis un fichier externe au lieu de .env
    */
   static initializePushNotifications(): void {
     if (!firebaseAdmin) {
@@ -69,38 +71,57 @@ class NotificationService {
         return;
       }
 
-      // Option 1 : JSON string depuis variable d'environnement
-      const serviceAccountJson = process.env.FIREBASE_SERVICE_ACCOUNT;
-      if (serviceAccountJson) {
-        const serviceAccount = JSON.parse(serviceAccountJson);
-        firebaseAdmin.initializeApp({
-          credential: firebaseAdmin.credential.cert(serviceAccount),
-        });
-        this.fcmInitialized = true;
-        notifLogger.info(
-          "Firebase Admin SDK initialisé via FIREBASE_SERVICE_ACCOUNT",
+      // HIGH-001 FIX: Charger depuis fichier externe
+      const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+
+      // Vérifier que le chemin est configuré
+      if (!serviceAccountPath) {
+        notifLogger.error(
+          "[FIREBASE] FIREBASE_SERVICE_ACCOUNT_PATH not configured",
+        );
+        notifLogger.warn(
+          "[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.",
         );
         return;
       }
 
-      // Option 2 : Fichier via GOOGLE_APPLICATION_CREDENTIALS
-      const credentialsPath = process.env.GOOGLE_APPLICATION_CREDENTIALS;
-      if (credentialsPath) {
-        firebaseAdmin.initializeApp({
-          credential: firebaseAdmin.credential.applicationDefault(),
+      // Résoudre le chemin (relatif ou absolu)
+      const path = require("path");
+      const fs = require("fs");
+      const resolvedPath = path.isAbsolute(serviceAccountPath)
+        ? serviceAccountPath
+        : path.join(__dirname, "..", "..", serviceAccountPath);
+
+      // Vérifier que le fichier existe
+      if (!fs.existsSync(resolvedPath)) {
+        notifLogger.error("[FIREBASE] Service account file not found", {
+          path: resolvedPath,
         });
-        this.fcmInitialized = true;
-        notifLogger.info(
-          "Firebase Admin SDK initialisé via GOOGLE_APPLICATION_CREDENTIALS",
+        notifLogger.warn(
+          "[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.",
         );
         return;
       }
 
-      notifLogger.warn(
-        "[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.",
-      );
+      // Charger et parser le JSON
+      const serviceAccountContent = fs.readFileSync(resolvedPath, "utf8");
+      const serviceAccount = JSON.parse(serviceAccountContent);
+
+      // Initialiser Firebase Admin SDK
+      firebaseAdmin.initializeApp({
+        credential: firebaseAdmin.credential.cert(serviceAccount),
+      });
+
+      this.fcmInitialized = true;
+
+      // Logger (sans exposer la clé privée)
+      notifLogger.info("[FIREBASE] Admin SDK initialized from file", {
+        projectId: serviceAccount.project_id,
+        clientEmail: serviceAccount.client_email,
+        path: resolvedPath,
+      });
     } catch (error) {
-      notifLogger.error("Erreur lors de l'initialisation de Firebase Admin", {
+      notifLogger.error("[FIREBASE] Failed to initialize", {
         error: error instanceof Error ? error.message : String(error),
       });
       notifLogger.warn(

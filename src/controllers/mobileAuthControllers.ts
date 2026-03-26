@@ -172,10 +172,72 @@ export async function handleMobileLogin(req: Request, res: Response) {
 
     // 7. GÉNÉRATION DES TOKENS
     const userId = (user._id as mongoose.Types.ObjectId).toString();
+
+    // MED-001: Extraire device_id du header ou du mobileContext
+    const deviceId =
+      (req.headers["x-device-id"] as string) || mobileContext?.deviceId;
+
+    // MED-001: Validation stricte du device_id pour tokens mobiles
+    if (!deviceId) {
+      mobileAuthLogger.warn("Tentative login mobile sans device_id", {
+        email: maskEmail(email),
+      });
+      return res.status(400).json({
+        error: "Device ID requis pour l'authentification mobile.",
+        code: "DEVICE_ID_MISSING",
+      });
+    }
+
+    // MED-001: Enregistrer le device dans authorized_devices
+    const existingDevice = user.authorized_devices?.find(
+      (d) => d.device_id === deviceId,
+    );
+
+    if (existingDevice) {
+      // Mettre à jour last_seen
+      await UserModel.findByIdAndUpdate(
+        user._id,
+        {
+          $set: {
+            "authorized_devices.$[elem].last_seen": new Date(),
+          },
+        },
+        {
+          arrayFilters: [{ "elem.device_id": deviceId }],
+        },
+      );
+      mobileAuthLogger.debug("Device existant mis à jour", { deviceId });
+    } else {
+      // Ajouter nouveau device
+      const deviceName = req.headers["x-device-name"] as string;
+      const deviceOs = req.headers["x-device-os"] as string;
+
+      await UserModel.findByIdAndUpdate(user._id, {
+        $push: {
+          authorized_devices: {
+            device_id: deviceId,
+            device_name: deviceName || "Appareil mobile inconnu",
+            device_os: deviceOs || "Unknown OS",
+            first_seen: new Date(),
+            last_seen: new Date(),
+            trusted: false, // Non trusted par défaut
+          },
+        },
+      });
+      mobileAuthLogger.info("Nouveau device autorisé", {
+        deviceId,
+        deviceName,
+        deviceOs,
+      });
+    }
+
+    // Générer token avec device_id inclus
     const { token, tokenId } = generateSecureToken(
       userId,
       user.is_admin || false,
       "mobile",
+      undefined,
+      deviceId, // MED-001: Device binding
     );
 
     const ipAddress = req.ip || req.connection.remoteAddress;
@@ -377,6 +439,8 @@ export async function handleMobileRegister(req: Request, res: Response) {
       gdpr_consent_version: "1.0",
       two_factor_enabled: false,
       login_notifications_enabled: true,
+      storage_quota: 2147483648, // 2 GB par défaut
+      storage_used: 0,
     };
 
     const createdUser = await createUser(newUser);
@@ -393,7 +457,7 @@ export async function handleMobileRegister(req: Request, res: Response) {
     ).catch((err) =>
       mobileAuthLogger.error("Erreur envoi email bienvenue", {
         error: err.message,
-        stack: err.stack,
+        // HIGH-001: stack trace supprimé pour sécurité,
       }),
     );
 

@@ -1,5 +1,7 @@
 import { logger } from "./loggerService";
 import { webSocketStateService } from "./webSocketStateService";
+import { NotificationService } from "./notificationService";
+import { userStatusService } from "./userStatusService";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // WEBSOCKET RECONNECTION SERVICE - MONITORING DES CONNEXIONS PERDUES
@@ -172,12 +174,23 @@ class WebSocketReconnectionService {
         pendingCount: connection.pendingMessages,
       });
 
-      // TODO: Intégrer avec le service de notifications push
-      // await notificationService.sendPushNotification(connection.userId, {
-      //   title: "Messages en attente",
-      //   body: `Vous avez ${connection.pendingMessages} message(s) en attente`,
-      //   data: { type: "reconnection_needed", deviceId: connection.deviceId }
-      // });
+      try {
+        await NotificationService.sendPushNotification(
+          connection.userId,
+          "Messages en attente",
+          `Vous avez ${connection.pendingMessages} message(s) en attente`,
+          { type: "reconnection_needed", deviceId: connection.deviceId },
+        );
+        reconnectionLogger.info("Push notification sent for stale connection", {
+          userId: connection.userId,
+          pendingMessages: connection.pendingMessages,
+        });
+      } catch (error) {
+        reconnectionLogger.error("Failed to send push notification", {
+          userId: connection.userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
 
       this.reconnectionsSuggested++;
     }
@@ -189,8 +202,18 @@ class WebSocketReconnectionService {
         minutesAgo: connection.minutesSinceActivity,
       });
 
-      // TODO: Mettre à jour le statut utilisateur (si nécessaire)
-      // await userStatusService.markAsAway(connection.userId);
+      try {
+        await userStatusService.markAsAway(connection.userId);
+        reconnectionLogger.debug("User marked as away", {
+          userId: connection.userId,
+          minutesAgo: connection.minutesSinceActivity,
+        });
+      } catch (error) {
+        reconnectionLogger.error("Failed to mark user as away", {
+          userId: connection.userId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
     }
 
     // Option 3: Si inactif > 7 jours, nettoyer l'état

@@ -256,7 +256,7 @@ export async function createPrivateConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur création conversation privée", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la création de la conversation privée",
@@ -380,7 +380,7 @@ export async function createGroupConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur création groupe", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de la création du groupe" });
   }
@@ -614,7 +614,7 @@ export async function listConversations(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur récupération conversations", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des conversations",
@@ -669,7 +669,7 @@ export async function getConversationDetails(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur récupération détails conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des détails",
@@ -763,7 +763,7 @@ export async function addGroupMembers(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur ajout membres groupe", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de l'ajout de membres" });
   }
@@ -863,7 +863,7 @@ export async function removeGroupMember(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur suppression membre groupe", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la suppression du membre",
@@ -925,7 +925,7 @@ export async function leaveGroup(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur quit groupe", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du quit" });
   }
@@ -1117,7 +1117,7 @@ export async function updateGroupName(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur changement nom groupe", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du changement de nom" });
   }
@@ -1173,7 +1173,7 @@ export async function updateGroupMemberRole(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur changement rôle membre", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du changement de rôle" });
   }
@@ -1618,7 +1618,7 @@ export async function muteConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur mute conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de la mise en sourdine" });
   }
@@ -1687,7 +1687,7 @@ export async function unmuteConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur unmute conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de la réactivation" });
   }
@@ -1760,7 +1760,7 @@ export async function archiveConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur archive conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de l'archivage" });
   }
@@ -1832,7 +1832,7 @@ export async function unarchiveConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur unarchive conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de la désarchivage" });
   }
@@ -1912,7 +1912,7 @@ export async function listArchivedConversations(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur récupération conversations archivées", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des conversations archivées",
@@ -2022,7 +2022,7 @@ export async function pinConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur pin conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de l'épinglage" });
   }
@@ -2094,7 +2094,7 @@ export async function unpinConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur unpin conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de la désépinglage" });
   }
@@ -2166,7 +2166,7 @@ export async function markConversationAsUnread(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur mark conversation as unread", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du marquage" });
   }
@@ -2238,7 +2238,7 @@ export async function unmarkConversationAsUnread(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur unmark conversation as unread", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du retrait du marquage" });
   }
@@ -2320,7 +2320,7 @@ export async function blockConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur block conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du blocage" });
   }
@@ -2389,7 +2389,7 @@ export async function unblockConversation(req: Request, res: Response) {
   } catch (err) {
     convoLogger.error("Erreur unblock conversation", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du déblocage" });
   }

@@ -1,7 +1,10 @@
 /**
  * Utilitaire de sanitization pour les données non typées (Schema.Types.Mixed)
  * MED-04 FIX: Protection contre l'injection NoSQL via opérateurs MongoDB
+ * MED-007 FIX: Protection contre Prototype Pollution
  */
+
+import { safeJsonParse } from "./secureJsonParser";
 
 /**
  * Sanitise un objet en supprimant les clés commençant par $ (opérateurs MongoDB)
@@ -15,10 +18,28 @@ export function sanitizeMixed(data: any, maxSize: number = 10000): any {
     throw new Error(`Data too large: ${json.length} > ${maxSize}`);
   }
 
-  return JSON.parse(json, (key, value) => {
-    if (typeof key === "string" && key.startsWith("$")) {
-      return undefined; // Supprime les opérateurs MongoDB
-    }
-    return value;
+  // Parse avec protection Prototype Pollution
+  const parsed = safeJsonParse(json, {
+    context: "sanitize-mixed",
+    maxDepth: 10,
   });
+
+  // Appliquer le reviver manuellement pour supprimer les opérateurs MongoDB
+  function removeMongoOperators(obj: any): any {
+    if (obj === null || typeof obj !== "object") return obj;
+
+    if (Array.isArray(obj)) {
+      return obj.map(removeMongoOperators);
+    }
+
+    const result: any = {};
+    for (const key in obj) {
+      if (obj.hasOwnProperty(key) && !key.startsWith("$")) {
+        result[key] = removeMongoOperators(obj[key]);
+      }
+    }
+    return result;
+  }
+
+  return removeMongoOperators(parsed);
 }

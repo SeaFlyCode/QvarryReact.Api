@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import crypto from "crypto";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
 import { logger } from "./loggerService";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 const auditLogger = logger.child({ service: "audit" });
 
@@ -59,7 +60,7 @@ class AuditService {
     } catch (error) {
       auditLogger.error("Erreur de hachage IP", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       return undefined;
     }
@@ -75,7 +76,7 @@ class AuditService {
     } catch (error) {
       auditLogger.error("Erreur de chiffrement", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       return undefined;
     }
@@ -151,7 +152,7 @@ class AuditService {
                 alertError instanceof Error
                   ? alertError.message
                   : String(alertError),
-              stack: alertError instanceof Error ? alertError.stack : undefined,
+              // HIGH-001: stack trace supprimé pour sécurité,
             },
           );
         }
@@ -159,7 +160,7 @@ class AuditService {
     } catch (error) {
       auditLogger.error("Erreur lors de l'enregistrement du log", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     }
   }
@@ -176,7 +177,12 @@ class AuditService {
         ? (() => {
             try {
               const decrypted = this.decryptIfPresent(log.details);
-              return decrypted ? JSON.parse(decrypted) : log.details;
+              return decrypted
+                ? safeJsonParse(decrypted, {
+                    context: "audit-log-details",
+                    maxDepth: 5,
+                  })
+                : log.details;
             } catch {
               // Si ce n'est pas du JSON chiffré, retourner tel quel
               return log.details;

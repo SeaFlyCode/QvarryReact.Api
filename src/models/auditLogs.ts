@@ -1,5 +1,6 @@
 // server/src/models/auditLogs.ts
 import mongoose, { Schema, Document } from "mongoose";
+import { sanitizeMixed } from "../utils/sanitizeUtils";
 
 export interface IAuditLog extends Document {
   userId?: mongoose.Types.ObjectId;
@@ -34,13 +35,7 @@ const auditLogSchema = new Schema<IAuditLog>({
     set: (v: any) => {
       if (!v) return v;
       try {
-        const json = JSON.stringify(v);
-        if (json.length > 10000)
-          return { error: "Data too large", truncated: true };
-        return JSON.parse(json, (key, value) => {
-          if (typeof key === "string" && key.startsWith("$")) return undefined;
-          return value;
-        });
+        return sanitizeMixed(v, 10000);
       } catch {
         return v;
       }

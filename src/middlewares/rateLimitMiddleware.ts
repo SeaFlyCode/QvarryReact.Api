@@ -89,5 +89,13 @@ const rateLimitStore = new Map<
  * Utilisé après un login réussi pour réinitialiser le compteur
  */
 export const resetRateLimit = (identifier: string): void => {
+  const hadEntry = rateLimitStore.has(identifier);
   rateLimitStore.delete(identifier);
+
+  if (hadEntry) {
+    secLogger.debug("Rate limit réinitialisé", {
+      identifier: anonymizeIp(identifier),
+      reason: "login_success",
+    });
+  }
 };

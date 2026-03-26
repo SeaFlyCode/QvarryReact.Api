@@ -40,6 +40,13 @@ export async function handleCreateList(req: Request, res: Response) {
         .status(500)
         .json({ error: "Échec de la synchronisation avec la base de données" });
     }
+
+    listsLogger.info("Liste créée avec succès", {
+      userId,
+      listId: listMemory._id.toString(),
+      action: "create_list",
+    });
+
     res.status(201).json({ message: "Liste créée avec succès" });
   } catch (error: unknown) {
     listsLogger.error("Erreur création liste", {
@@ -82,6 +89,13 @@ export async function handleGetAllLists(req: Request, res: Response) {
 
     // Appliquer la pagination
     const lists = allLists.slice(offset, offset + limit);
+
+    listsLogger.debug("Listes récupérées avec succès", {
+      userId,
+      count: lists.length,
+      total,
+      action: "read_lists",
+    });
 
     res.status(200).json({
       data: lists,
@@ -158,6 +172,12 @@ export async function handleDeleteList(req: Request, res: Response) {
         .json({ error: "Échec de la synchronisation avec la base de données" });
     }
 
+    listsLogger.info("Liste supprimée avec succès", {
+      userId,
+      listId,
+      action: "delete_list",
+    });
+
     res.status(200).json({ message: "Liste supprimée avec succès" });
   } catch (error: unknown) {
     listsLogger.error("Erreur suppression liste", {
@@ -202,6 +222,15 @@ export async function handleUpdateList(req: Request, res: Response) {
         .status(500)
         .json({ error: "Échec de la synchronisation avec la base de données" });
     }
+
+    listsLogger.info("Liste mise à jour avec succès", {
+      userId,
+      listId,
+      action: "update_list",
+      fieldsUpdated: Object.keys(req.body).filter((k) =>
+        ["name", "description", "points", "color", "icon"].includes(k),
+      ),
+    });
 
     res
       .status(200)
@@ -327,6 +356,13 @@ export async function handleAddPointToList(req: Request, res: Response) {
     // ⚡ OPTIMISATION: Pas de synchronisation immédiate
     // Les données seront synchronisées lors du logout ou périodiquement
 
+    listsLogger.info("Point ajouté à la liste avec succès", {
+      userId,
+      listId,
+      pointId,
+      action: "add_point_to_list",
+    });
+
     res.status(200).json({
       success: true,
       message: "Point ajouté à la liste avec succès",
@@ -381,6 +417,13 @@ export async function handleRemovePointFromList(req: Request, res: Response) {
 
     // ⚡ OPTIMISATION: Pas de synchronisation immédiate
     // Les données seront synchronisées lors du logout ou périodiquement
+
+    listsLogger.info("Point retiré de la liste avec succès", {
+      userId,
+      listId,
+      pointId,
+      action: "remove_point_from_list",
+    });
 
     res.status(200).json({
       success: true,
@@ -582,6 +625,13 @@ export async function handleUpdateListPointsOrder(req: Request, res: Response) {
         syncFailed: true,
       });
     }
+
+    listsLogger.info("Ordre des points mis à jour avec succès", {
+      userId,
+      listId,
+      pointsCount: pointIds.length,
+      action: "update_list_points_order",
+    });
 
     res.status(200).json({
       success: true,

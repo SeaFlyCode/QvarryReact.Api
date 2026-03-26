@@ -76,7 +76,7 @@ export function startCleanExpiredMutesJob(): void {
     } catch (error) {
       jobLogger.error("Erreur lors du nettoyage des mutes expirés", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     }
   });

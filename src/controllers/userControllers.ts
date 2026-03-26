@@ -194,12 +194,21 @@ export async function handleCreateUser(req: Request, res: Response) {
       two_factor_enabled: false,
       // Préférences de notifications (activées par défaut)
       login_notifications_enabled: true,
+      // Stockage photos (quota par défaut: 2 Go)
+      storage_quota: 2147483648, // 2 GB
+      storage_used: 0,
     };
 
     // Utilise la fonction du service pour créer l'utilisateur
     // Note: Les 3 clés de chiffrement (AES-256, RSA-Public, RSA-Private)
     // sont automatiquement générées dans le service createUser()
     const createdUser = await createUser(newUser);
+
+    userLogger.info("Utilisateur créé avec succès", {
+      userId: createdUser._id.toString(),
+      action: "create_user",
+      emailVerificationRequired: true,
+    });
 
     // Envoi de l'email de bienvenue avec le lien de vérification
     const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
@@ -352,6 +361,13 @@ export async function handleDeleteUser(req: Request, res: Response) {
     }
 
     await deleteUserById(userId);
+
+    userLogger.info("Utilisateur supprimé avec succès", {
+      userId,
+      action: "delete_user",
+      deletedBy: requestingUser.id,
+    });
+
     res.status(200).json({ message: "Utilisateur supprimé avec succès." });
   } catch (error: unknown) {
     userLogger.error("Erreur suppression utilisateur", {
@@ -531,6 +547,15 @@ export async function handleUpdateUser(req: Request, res: Response) {
       },
     });
 
+    userLogger.info("Profil utilisateur mis à jour avec succès", {
+      userId,
+      action: "update_user",
+      fieldsUpdated: Object.keys(updatedUser).filter(
+        (k) => k !== "password" && k !== "password_history",
+      ),
+      passwordChanged: !!password,
+    });
+
     res.status(200).json({ message: "Profil mis à jour avec succès." });
   } catch (error: unknown) {
     userLogger.error("Erreur mise a jour utilisateur", {
@@ -619,6 +644,12 @@ export async function handleVerifyEmailByCode(req: Request, res: Response) {
     }
 
     userLogger.info("Email verifie", { adminsNotified: admins.length });
+
+    userLogger.info("Email vérifié avec succès", {
+      userId: targetUser._id.toString(),
+      action: "verify_email",
+      adminsNotified: admins.length,
+    });
 
     res.status(200).json({
       message:

@@ -60,44 +60,168 @@ winston.addColors(customLevels.colors);
 // ════════════════════════════════════════════════════════
 
 /**
- * Liste des clés sensibles à filtrer
+ * Liste des clés sensibles à masquer complètement
+ * Ces champs seront remplacés par [REDACTED]
  */
 const SENSITIVE_KEYS = [
+  // Mots de passe et authentification
   "password",
+  "passwd",
+  "pwd",
+  "oldpassword",
+  "newpassword",
+  "confirmpassword",
+
+  // Tokens et clés d'API
   "token",
-  "secret",
-  "authorization",
-  "cookie",
-  "jwt",
+  "accesstoken",
+  "access_token",
+  "refreshtoken",
+  "refresh_token",
   "apikey",
   "api_key",
-  "access_token",
-  "refresh_token",
-  "bearer",
-  "credentials",
-  "auth",
-  "sessionid",
-  "session_id",
-  "privatekey",
-  "private_key",
+  "apisecret",
+  "api_secret",
   "secretkey",
   "secret_key",
+  "privatekey",
+  "private_key",
+  "encryptionkey",
+  "encryption_key",
+  "jwt",
+  "bearer",
+
+  // Authentification et sessions
+  "authorization",
+  "auth",
+  "credentials",
+  "secret",
+  "sessionid",
+  "session_id",
+
+  // Headers sensibles
+  "cookie",
+  "set-cookie",
+  "setcookie",
+
+  // Données personnelles sensibles
+  "ssn",
+  "socialsecuritynumber",
+  "social_security_number",
+  "creditcard",
+  "credit_card",
+  "cardnumber",
+  "card_number",
+  "cvv",
+  "cvc",
+  "pin",
+  "pincode",
+  "pin_code",
 ];
 
 /**
+ * Liste des clés à masquer partiellement
+ * Ces champs seront masqués mais garderont une partie visible
+ */
+const PARTIAL_MASK_KEYS = [
+  "email",
+  "mail",
+  "e-mail",
+  "username",
+  "user_name",
+  "ip",
+  "ipaddress",
+  "ip_address",
+  "deviceid",
+  "device_id",
+];
+
+/**
+ * Masque partiellement une valeur selon son type
+ * @param key - Nom de la clé
+ * @param value - Valeur à masquer
+ * @returns Valeur partiellement masquée
+ */
+function partialMask(key: string, value: any): string {
+  if (typeof value !== "string") return "[MASKED]";
+
+  const keyLower = key.toLowerCase();
+
+  // Email: matheo@example.com → m***@example.com
+  if (keyLower.includes("email") || keyLower.includes("mail")) {
+    if (!value.includes("@")) return "***";
+    const [local, domain] = value.split("@");
+    const masked =
+      local.length <= 2 ? local[0] + "***" : local.substring(0, 2) + "***";
+    return `${masked}@${domain}`;
+  }
+
+  // IP: 192.168.1.42 → 192.168.1.*
+  if (keyLower.includes("ip")) {
+    if (value.includes(":")) {
+      // IPv6: 2001:0db8:85a3::8a2e → 2001:0db8:***
+      return value.split(":").slice(0, 2).join(":") + ":***";
+    }
+    // IPv4
+    const parts = value.split(".");
+    if (parts.length === 4) {
+      return `${parts[0]}.${parts[1]}.${parts[2]}.*`;
+    }
+  }
+
+  // Device ID: ABC123XYZ → ABC123...
+  if (keyLower.includes("device")) {
+    if (value.length <= 8) return value;
+    return value.substring(0, 6) + "...";
+  }
+
+  // Username (si seul, sans password): user123 → use***
+  if (keyLower.includes("username") || keyLower.includes("user_name")) {
+    if (value.length <= 3) return "***";
+    return value.substring(0, 3) + "***";
+  }
+
+  // Par défaut: masquer la majorité
+  if (value.length <= 4) return "***";
+  return value.substring(0, 2) + "***";
+}
+
+/**
  * Sanitize les données sensibles dans les objets/tableaux
+ *
+ * Fonctionnalités:
+ * - Masquage complet des données critiques (passwords, tokens, secrets)
+ * - Masquage partiel des données personnelles (emails, IPs)
+ * - Support récursif pour objets imbriqués et tableaux
+ * - Gestion des types complexes (Date, Error, etc.)
+ *
  * @param data - Données à sanitizer
+ * @param depth - Profondeur actuelle (pour éviter les boucles infinies)
  * @returns Données sanitizées
  */
-export function sanitizeLogData(data: any): any {
-  if (!data) return data;
+export function sanitizeLogData(data: any, depth: number = 0): any {
+  // Protection contre les boucles infinies
+  if (depth > 10) return "[MAX_DEPTH]";
+
+  // Cas null ou undefined
+  if (data === null || data === undefined) return data;
 
   // Si c'est une primitive, retourner telle quelle
   if (typeof data !== "object") return data;
 
+  // Cas spéciaux: Date, Error, RegExp, etc.
+  if (data instanceof Date) return data.toISOString();
+  if (data instanceof Error)
+    return {
+      name: data.name,
+      message: data.message,
+      stack: data.stack ? sanitizeLogData(data.stack, depth + 1) : undefined,
+    };
+  if (data instanceof RegExp) return data.toString();
+
   // Si c'est un tableau
   if (Array.isArray(data)) {
-    return data.map((item) => sanitizeLogData(item));
+    return data.map((item) => sanitizeLogData(item, depth + 1));
   }
 
   // Si c'est un objet
@@ -105,15 +229,25 @@ export function sanitizeLogData(data: any): any {
   for (const [key, value] of Object.entries(data)) {
     const keyLower = key.toLowerCase();
 
-    // Vérifier si la clé est sensible
-    const isSensitive = SENSITIVE_KEYS.some((sensitiveKey) =>
+    // Vérifier si la clé doit être masquée complètement
+    const isFullyMasked = SENSITIVE_KEYS.some((sensitiveKey) =>
       keyLower.includes(sensitiveKey),
     );
 
-    if (isSensitive) {
+    // Vérifier si la clé doit être masquée partiellement
+    const isPartiallyMasked = PARTIAL_MASK_KEYS.some((partialKey) =>
+      keyLower.includes(partialKey),
+    );
+
+    if (isFullyMasked) {
       sanitized[key] = "[REDACTED]";
+    } else if (
+      isPartiallyMasked &&
+      (typeof value === "string" || typeof value === "number")
+    ) {
+      sanitized[key] = partialMask(key, value);
     } else if (typeof value === "object" && value !== null) {
-      sanitized[key] = sanitizeLogData(value);
+      sanitized[key] = sanitizeLogData(value, depth + 1);
     } else {
       sanitized[key] = value;
     }
@@ -179,11 +313,16 @@ const consoleFormat = winston.format.combine(
 const NODE_ENV = process.env.NODE_ENV || "development";
 const isDevelopment = NODE_ENV === "development";
 
+// LOG_LEVEL permet de contrôler le niveau de verbosité
+// Valeurs possibles: debug, info, http, warn, error, critical
+// Par défaut: debug en dev, info en prod
+const LOG_LEVEL = process.env.LOG_LEVEL || (isDevelopment ? "debug" : "info");
+
 /**
  * Transport Console - toujours actif
  */
 const consoleTransport = new winston.transports.Console({
-  level: isDevelopment ? "debug" : "info",
+  level: LOG_LEVEL,
   format: isDevelopment ? consoleFormat : jsonFormat,
 });
 
@@ -221,7 +360,7 @@ const combinedFileTransport = new DailyRotateFile({
 
 const baseLogger = winston.createLogger({
   levels: customLevels.levels,
-  level: isDevelopment ? "debug" : "info",
+  level: LOG_LEVEL,
   transports: [consoleTransport, errorFileTransport, combinedFileTransport],
   exitOnError: false,
 });
@@ -254,7 +393,7 @@ class Logger implements LoggerInterface {
   }
 
   private log(level: string, message: string, meta?: any): void {
-    const sanitizedMeta = meta ? sanitizeLogData(meta) : {};
+    const sanitizedMeta = meta ? sanitizeLogData(meta, 0) : {};
 
     // Ajouter automatiquement le correlation ID s'il est disponible
     const correlationId = getCorrelationId?.();
@@ -346,7 +485,7 @@ export const httpLogStream = {
 logger.info("Logger service initialized", {
   environment: NODE_ENV,
   logDirectory: LOG_DIR_PATH,
-  level: isDevelopment ? "debug" : "info",
+  level: LOG_LEVEL,
 });
 
 export default logger;

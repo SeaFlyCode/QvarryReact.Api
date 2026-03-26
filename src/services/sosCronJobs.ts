@@ -119,7 +119,7 @@ export function startSosEscalationJob(): void {
     } catch (error) {
       sosCronLogger.error("Erreur lors de la vérification des sessions SOS", {
         error: error instanceof Error ? error.message : error,
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
         instanceId: INSTANCE_ID,
       });
     } finally {
@@ -166,7 +166,7 @@ export function startSosCleanupJob(): void {
     } catch (error) {
       sosCronLogger.error("Erreur lors du nettoyage des sessions SOS", {
         error: error instanceof Error ? error.message : error,
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     }
   });

@@ -577,26 +577,45 @@ app.use("/api", generalLimiter);
     await secretsManager.initialize();
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // REDIS POOL: Initialiser en premier pour tous les services
+    // REDIS POOL: Initialiser si activé dans .env
     // ═══════════════════════════════════════════════════════════════════════════
-    serverLogger.info("[REDIS-POOL] Initialisation du pool Redis partagé...");
-    const RedisConnectionPool = await import("./config/redisPool");
-    await RedisConnectionPool.default.initialize();
+    const redisEnabled = process.env.REDIS_ENABLED !== "false";
 
-    const poolStats = RedisConnectionPool.default.getStats();
-    serverLogger.info("[REDIS-POOL] Pool Redis initialisé", poolStats);
+    if (redisEnabled) {
+      try {
+        serverLogger.info(
+          "[REDIS-POOL] Initialisation du pool Redis partagé...",
+        );
+        const RedisConnectionPool = await import("./config/redisPool");
+        await RedisConnectionPool.default.initialize();
 
-    // ═══════════════════════════════════════════════════════════════════════════
-    // WEBSOCKET STATE: Initialiser avec le pool Redis
-    // ═══════════════════════════════════════════════════════════════════════════
-    serverLogger.info(
-      "[WS-STATE] Initialisation WebSocket State avec le pool...",
-    );
-    const { initializeRedisWithPool, startStateCleanup } =
-      await import("./services/webSocketStateService");
-    await initializeRedisWithPool();
-    startStateCleanup();
-    serverLogger.info("[WS-STATE] WebSocket State initialisé avec le pool");
+        const poolStats = RedisConnectionPool.default.getStats();
+        serverLogger.info("[REDIS-POOL] Pool Redis initialisé", poolStats);
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // WEBSOCKET STATE: Initialiser avec le pool Redis
+        // ═══════════════════════════════════════════════════════════════════════════
+        serverLogger.info(
+          "[WS-STATE] Initialisation WebSocket State avec le pool...",
+        );
+        const { initializeRedisWithPool, startStateCleanup } =
+          await import("./services/webSocketStateService");
+        await initializeRedisWithPool();
+        startStateCleanup();
+        serverLogger.info("[WS-STATE] WebSocket State initialisé avec le pool");
+      } catch (error) {
+        serverLogger.error("[REDIS-POOL] Échec de l'initialisation Redis", {
+          error: error instanceof Error ? error.message : error,
+        });
+        serverLogger.warn(
+          "[REDIS-POOL] Continuing without Redis (fallback to memory)",
+        );
+      }
+    } else {
+      serverLogger.info(
+        "[REDIS-POOL] Redis désactivé (REDIS_ENABLED=false) - Mode développement sans clustering",
+      );
+    }
 
     // Audit des secrets (DEV uniquement)
     if (NODE_ENV !== "production") {
@@ -636,6 +655,7 @@ app.use("/api", generalLimiter);
     if (NODE_ENV === "production") {
       const dbSSLEnabled = process.env.DB_SSL !== "false";
       const redisTLSEnabled = process.env.REDIS_TLS === "true";
+      const redisEnabled = process.env.REDIS_ENABLED !== "false";
 
       if (!dbSSLEnabled) {
         serverLogger.warn(
@@ -643,16 +663,19 @@ app.use("/api", generalLimiter);
           { DB_SSL: process.env.DB_SSL },
         );
       }
-      if (!redisTLSEnabled) {
+
+      // Vérifier Redis TLS uniquement si Redis est activé
+      if (redisEnabled && !redisTLSEnabled) {
         serverLogger.warn(
           "[SECURITY] REDIS_TLS n'est pas activé en production - Connexion non sécurisée",
           { REDIS_TLS: process.env.REDIS_TLS },
         );
       }
-      if (dbSSLEnabled && redisTLSEnabled) {
+
+      if (dbSSLEnabled && (!redisEnabled || redisTLSEnabled)) {
         serverLogger.info("[SECURITY] TLS vérifié", {
           DB_SSL: true,
-          REDIS_TLS: true,
+          REDIS_TLS: redisEnabled ? true : "disabled",
         });
       }
     }

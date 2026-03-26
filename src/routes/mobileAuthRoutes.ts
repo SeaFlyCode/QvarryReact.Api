@@ -18,6 +18,10 @@ import {
   verifyMobilePlatform,
   mobileRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
+import {
+  mobileAttestationLimiter,
+  mobileAttestationByDeviceLimiter,
+} from "../config/rateLimitConfig";
 
 const router = express.Router();
 
@@ -38,8 +42,16 @@ const router = express.Router();
  * Body:
  *   - email: string
  *   - password: string
+ *
+ * HIGH-003: Double rate limiting (IP + Device) pour sécuriser l'attestation
  */
-router.post("/login", mobileSecurityMiddleware, handleMobileLogin);
+router.post(
+  "/login",
+  mobileAttestationLimiter, // ✅ Par IP (3/heure)
+  mobileAttestationByDeviceLimiter, // ✅ Par deviceId (5/jour)
+  mobileSecurityMiddleware,
+  handleMobileLogin,
+);
 
 /**
  * POST /api/mobile/auth/register
@@ -52,8 +64,16 @@ router.post("/login", mobileSecurityMiddleware, handleMobileLogin);
  *   - surname: string
  *   - email: string
  *   - password: string
+ *
+ * HIGH-003: Double rate limiting (IP + Device) pour sécuriser l'attestation
  */
-router.post("/register", mobileSecurityMiddleware, handleMobileRegister);
+router.post(
+  "/register",
+  mobileAttestationLimiter, // ✅ Par IP (3/heure)
+  mobileAttestationByDeviceLimiter, // ✅ Par deviceId (5/jour)
+  mobileSecurityMiddleware,
+  handleMobileRegister,
+);
 
 /**
  * POST /api/mobile/auth/forgot-password

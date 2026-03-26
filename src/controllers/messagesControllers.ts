@@ -95,6 +95,15 @@ export async function sendMessage(req: Request, res: Response) {
     // RÉPONSE COMPLÈTE — permet au frontend mobile d'afficher le message
     // immédiatement sans faire de GET /api/messages/:conversationId
     // ═══════════════════════════════════════════════════════════════════════════
+    messagesLogger.info("Message envoyé avec succès", {
+      userId,
+      conversationId,
+      messageId: result.messageId,
+      action: "send_message",
+      type: type || "text",
+      reactivated: result.reactivatedUserIds.length > 0,
+    });
+
     res.status(201).json({
       messageId: result.messageId,
       message: result.message,
@@ -104,7 +113,7 @@ export async function sendMessage(req: Request, res: Response) {
       return res.status(404).json({ error: err.message });
     messagesLogger.error("Erreur envoi message", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({ error: "Erreur lors de l'envoi du message" });
   }
@@ -129,13 +138,20 @@ export async function getMessages(req: Request, res: Response) {
       beforeId: req.query.beforeId as string | undefined,
     });
 
+    messagesLogger.debug("Messages récupérés avec succès", {
+      userId,
+      conversationId,
+      count: result.messages?.length || 0,
+      action: "read_messages",
+    });
+
     res.json(result);
   } catch (err: any) {
     if (err.statusCode === 404)
       return res.status(404).json({ error: err.message });
     messagesLogger.error("Erreur récupération messages", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({
       error: "Erreur lors de la récupération des messages",
@@ -181,7 +197,7 @@ export async function markMessageAsRead(req: Request, res: Response) {
         .json({ error: "Accès non autorisé à cette conversation" });
     messagesLogger.error("Erreur marquage message comme lu", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({ error: "Erreur lors du marquage comme lu" });
   }
@@ -212,7 +228,7 @@ export async function replyToMessage(req: Request, res: Response) {
         .json({ error: "Accès non autorisé à cette conversation" });
     messagesLogger.error("Erreur réponse message", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({ error: "Erreur lors de la réponse" });
   }
@@ -241,7 +257,7 @@ export async function editMessage(req: Request, res: Response) {
       return res.status(403).json({ error: "Non autorisé" });
     messagesLogger.error("Erreur modification message", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({ error: "Erreur lors de la modification" });
   }
@@ -267,7 +283,7 @@ export async function deleteMessage(req: Request, res: Response) {
       return res.status(403).json({ error: "Non autorisé" });
     messagesLogger.error("Erreur suppression message", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({ error: "Erreur lors de la suppression" });
   }
@@ -363,7 +379,7 @@ export async function markMessagesAsRead(req: Request, res: Response) {
   } catch (err) {
     messagesLogger.error("Mark messages as read batch error", {
       error: err instanceof Error ? err.message : String(err),
-      stack: err instanceof Error ? err.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({ error: "Erreur lors du marquage comme lu" });
   }

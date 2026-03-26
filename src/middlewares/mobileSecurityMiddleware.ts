@@ -15,6 +15,7 @@ import { anonymizeIp, maskDeviceId } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
 import DeviceAttestationService from "../services/deviceAttestationService";
 import { redisSessionService } from "../services/redisSessionService";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 const mobileSecLogger = logger.child({ service: "mobile-security" });
 
@@ -107,7 +108,10 @@ const MOBILE_SYNC_RL_PREFIX = "qvarry:mobile_sync_rl:";
  */
 function deserializeRateLimitEntry(raw: string): MobileRateLimitEntry | null {
   try {
-    const parsed: MobileRateLimitEntryRedis = JSON.parse(raw);
+    const parsed: MobileRateLimitEntryRedis = safeJsonParse(raw, {
+      context: "rate-limit-cache",
+      maxDepth: 3,
+    });
     return {
       count: parsed.count,
       firstAttempt: new Date(parsed.firstAttempt),
@@ -683,9 +687,10 @@ export const verifyDeviceAttestation = (strict: boolean = false) => {
 
     try {
       // Décoder et valider l'attestation
-      const attestationData = JSON.parse(
+      const attestationData = safeJsonParse<DeviceAttestationPayload>(
         Buffer.from(attestationHeader, "base64").toString("utf-8"),
-      ) as DeviceAttestationPayload;
+        { context: "device-attestation", maxDepth: 5 },
+      );
 
       // Vérifier le bundle ID
       if (!ALLOWED_BUNDLE_IDS.includes(attestationData.bundleId)) {

@@ -11,6 +11,7 @@ import mongoose from "mongoose";
 import { redisSessionService } from "../../services/redisSessionService";
 import { jwtKeyManager } from "../../utils/jwtKeyManager";
 import { logger } from "../../services/loggerService";
+import { safeJsonParse } from "../../utils/secureJsonParser";
 
 const authHelpersLogger = logger.child({ service: "auth-helpers" });
 // ═══════════════════════════════════════════════════════════════════════════
@@ -124,9 +125,10 @@ export async function resetLoginAttempts(email: string): Promise<void> {
 // REM-003: Support du key versioning pour rotation de clés
 export function generateSecureToken(
   userId: string,
-  isAdmin: boolean = false,
+  isAdmin: boolean,
   platform: "web" | "mobile" = "web",
   tokenId?: string,
+  deviceId?: string,
 ): { token: string; tokenId: string; keyVersion: string } {
   // REM-003: Utiliser le JWT Key Manager pour le versioning
   const { secret, version } = jwtKeyManager.getCurrentKey();
@@ -143,23 +145,26 @@ export function generateSecureToken(
 
   // Ajouter des claims de sécurité
   // REM-003: Inclure la version de la clé dans le token pour la vérification
-  const token = jwt.sign(
-    {
-      id: userId,
-      isAdmin,
-      iat: Math.floor(Date.now() / 1000), // Issued at
-      jti, // JWT ID unique pour l'invalidation
-      kv: version, // REM-003: Key Version pour le versioning
-      platform, // Platform claim (web/mobile)
-    },
-    secret,
-    {
-      expiresIn: expiresIn, // Durée courte configurable
-      algorithm: "HS256",
-      issuer: "qvarry-api",
-      audience: "qvarry-client",
-    } as jwt.SignOptions,
-  );
+  const payload: any = {
+    id: userId,
+    isAdmin,
+    iat: Math.floor(Date.now() / 1000), // Issued at
+    jti, // JWT ID unique pour l'invalidation
+    kv: version, // REM-003: Key Version pour le versioning
+    platform, // Platform claim (web/mobile)
+  };
+
+  // MED-001: Ajouter device_id pour tokens mobiles
+  if (platform === "mobile" && deviceId) {
+    payload.deviceId = deviceId;
+  }
+
+  const token = jwt.sign(payload, secret, {
+    expiresIn: expiresIn, // Durée courte configurable
+    algorithm: "HS256",
+    issuer: "qvarry-api",
+    audience: "qvarry-client",
+  } as jwt.SignOptions);
 
   return { token, tokenId: jti, keyVersion: version };
 }
@@ -178,151 +183,140 @@ function decryptListField(
   fallback: string,
 ): string {
   if (!value) return fallback;
-  // Heuristique : le format chiffré AES-256-GCM est "hex:hex:hex" (3 parties séparées par :)
-  // avec une longueur minimale. Si ça ne correspond pas, c'est du plaintext.
-  const parts = value.split(":");
-  if (parts.length === 3 && parts[0].length >= 16 && parts[1].length >= 16) {
+  if (value.includes(":")) {
+    // Format chiffré détecté
     try {
       return decryptWithKey(value, userKey);
     } catch {
-      // Déchiffrement échoué → plaintext (données pré-migration)
-      return value;
+      return fallback; // Si déchiffrement échoue, retourner fallback
     }
   }
-  // C'est du plaintext
+  // Sinon, c'est du plaintext (données pré-migration)
   return value;
 }
 
-// NOUVEAU: Charger et déchiffrer toutes les données utilisateur (VERSION OPTIMISÉE)
-export async function loadAndDecryptUserData(userId: string): Promise<void> {
+export async function loadAndDecryptUserData(userId: string) {
   const startTime = Date.now();
-  authHelpersLogger.info("Chargement des données de l'utilisateur", { userId });
 
-  // 1. Récupérer la clé AES utilisateur (type "user") - IGNORE les clés RSA
-  let userKeyData = await KeysModel.findOne({
-    userId,
-    type: "user", // IMPORTANT : Chercher uniquement la clé AES, pas les clés RSA
-  });
+  try {
+    // 1. Récupérer la clé de chiffrement de l'utilisateur
+    // IMPORTANT: Spécifier type: "user" pour récupérer la clé AES et non les clés RSA
+    const userKeyData = await KeysModel.findOne({
+      userId,
+      type: "user",
+    }).lean();
 
-  // Si la clé AES utilisateur n'existe pas, la créer
-  if (!userKeyData || !userKeyData.key) {
-    authHelpersLogger.info("Création d'une clé AES utilisateur", { userId });
-    const key = crypto.randomBytes(32).toString("hex");
-    const cryptedKey = encrypt(key);
-
-    // Créer une nouvelle clé AES de type "user"
-    userKeyData = await KeysModel.create({
-      userId: new mongoose.Types.ObjectId(userId),
-      key: cryptedKey,
-      type: "user", // Type "user" = clé AES pour les données
-      date: new Date(),
-    });
-    authHelpersLogger.info("Clé AES utilisateur créée", { userId });
-  }
-
-  // Vérifier que la clé existe avant de la déchiffrer
-  if (!userKeyData || !userKeyData.key) {
-    throw new Error(
-      `Impossible de récupérer la clé AES utilisateur pour ${userId}`,
-    );
-  }
-
-  // Vérifier que ce n'est pas une clé RSA (sécurité)
-  if (userKeyData.key.includes("-----BEGIN")) {
-    throw new Error(
-      `Erreur : La clé récupérée est une clé RSA, pas une clé AES utilisateur`,
-    );
-  }
-
-  // Déchiffrer la clé AES utilisateur avec la clé maître
-  const userKey = decrypt(userKeyData.key);
-
-  // 2. Initialiser la session
-  memoryStorage.initSession(userId, userKey);
-
-  // 3. Charger TOUTES les données en parallèle (au lieu de séquentiellement)
-  const [points, fiches, lists] = await Promise.all([
-    PointModel.find({ userId, deletedAt: null }).lean(), // .lean() pour de meilleures performances
-    FicheModel.find({ userId, deletedAt: null }).lean(),
-    ListModel.find({ userId, deletedAt: null }).lean(),
-  ]);
-
-  authHelpersLogger.info("Chargement des données", {
-    userId,
-    pointsCount: points.length,
-    fichesCount: fiches.length,
-    listsCount: lists.length,
-  });
-
-  // 4. Déchiffrer tous les points EN PARALLÈLE
-  const decryptPointsStart = Date.now();
-  const decryptedPoints = await Promise.all(
-    points.map((point) => decryptPointOptimized(point, userKey)),
-  );
-  authHelpersLogger.info("Points déchiffrés", {
-    userId,
-    duration: Date.now() - decryptPointsStart,
-  });
-
-  // 5. Déchiffrer toutes les fiches EN PARALLÈLE
-  const decryptFichesStart = Date.now();
-  const decryptedFiches = await Promise.all(
-    fiches.map((fiche) => decryptFicheOptimized(fiche, userKey)),
-  );
-  authHelpersLogger.info("Fiches déchiffrées", {
-    userId,
-    duration: Date.now() - decryptFichesStart,
-  });
-
-  // 6. Déchiffrer les listes et stocker toutes les données en mémoire
-  decryptedPoints.forEach((point) =>
-    memoryStorage.storePoint(userId, point as any),
-  );
-  decryptedFiches.forEach((fiche) =>
-    memoryStorage.storeFiche(userId, fiche as any),
-  );
-
-  // Déchiffrer les listes (name et description sont chiffrés en DB)
-  const { decryptWithKey } = await import("../../utils/userEncryptionUtils");
-  for (const list of lists) {
-    try {
-      const decryptedList = {
-        ...list,
-        name: decryptListField(
-          decryptWithKey,
-          (list as any).name,
-          userKey,
-          "Liste sans nom",
-        ),
-        description: decryptListField(
-          decryptWithKey,
-          (list as any).description,
-          userKey,
-          "",
-        ),
-      };
-      memoryStorage.storeList(userId, decryptedList as any);
-    } catch (_listDecryptError) {
-      // Fallback : si le déchiffrement échoue, la liste est probablement en plaintext (migration)
-      authHelpersLogger.warn(
-        "Déchiffrement de la liste échoué, stockage en plaintext (migration nécessaire)",
-        {
-          userId,
-          listId: (list as any)._id,
-        },
+    if (!userKeyData || !userKeyData.key) {
+      authHelpersLogger.error(
+        "Clé de chiffrement utilisateur introuvable en DB",
+        { userId },
       );
-      memoryStorage.storeList(userId, list as any);
+      throw new Error("Clé de chiffrement utilisateur non trouvée");
     }
+
+    // Vérifier que ce n'est pas une clé RSA (sécurité supplémentaire)
+    if (userKeyData.key.includes("-----BEGIN")) {
+      throw new Error(
+        `Erreur : La clé récupérée est une clé RSA, pas une clé AES utilisateur`,
+      );
+    }
+
+    // Déchiffrer la clé AES utilisateur avec la clé maître
+    const userKey = decrypt(userKeyData.key);
+
+    // 2. Initialiser la session
+    memoryStorage.initSession(userId, userKey);
+
+    // 3. Charger TOUTES les données en parallèle (au lieu de séquentiellement)
+    const [points, fiches, lists] = await Promise.all([
+      PointModel.find({ userId, deletedAt: null }).lean(), // .lean() pour de meilleures performances
+      FicheModel.find({ userId, deletedAt: null }).lean(),
+      ListModel.find({ userId, deletedAt: null }).lean(),
+    ]);
+
+    authHelpersLogger.info("Chargement des données", {
+      userId,
+      pointsCount: points.length,
+      fichesCount: fiches.length,
+      listsCount: lists.length,
+    });
+
+    // 4. Déchiffrer tous les points EN PARALLÈLE
+    const decryptPointsStart = Date.now();
+    const decryptedPoints = await Promise.all(
+      points.map((point) => decryptPointOptimized(point, userKey)),
+    );
+    authHelpersLogger.info("Points déchiffrés", {
+      userId,
+      duration: Date.now() - decryptPointsStart,
+    });
+
+    // 5. Déchiffrer toutes les fiches EN PARALLÈLE
+    const decryptFichesStart = Date.now();
+    const decryptedFiches = await Promise.all(
+      fiches.map((fiche) => decryptFicheOptimized(fiche, userKey)),
+    );
+    authHelpersLogger.info("Fiches déchiffrées", {
+      userId,
+      duration: Date.now() - decryptFichesStart,
+    });
+
+    // 6. Déchiffrer les listes et stocker toutes les données en mémoire
+    decryptedPoints.forEach((point) =>
+      memoryStorage.storePoint(userId, point as any, true),
+    );
+    decryptedFiches.forEach((fiche) =>
+      memoryStorage.storeFiche(userId, fiche as any, true),
+    );
+
+    // Déchiffrer les listes (name et description sont chiffrés en DB)
+    const { decryptWithKey } = await import("../../utils/userEncryptionUtils");
+    for (const list of lists) {
+      try {
+        const decryptedList = {
+          ...list,
+          name: decryptListField(
+            decryptWithKey,
+            (list as any).name,
+            userKey,
+            "Liste sans nom",
+          ),
+          description: decryptListField(
+            decryptWithKey,
+            (list as any).description,
+            userKey,
+            "",
+          ),
+        };
+        memoryStorage.storeList(userId, decryptedList as any, true);
+      } catch (_listDecryptError) {
+        // Fallback : si le déchiffrement échoue, la liste est probablement en plaintext (migration)
+        authHelpersLogger.warn(
+          "Déchiffrement de la liste échoué, stockage en plaintext (migration nécessaire)",
+          {
+            userId,
+            listId: (list as any)._id,
+          },
+        );
+        memoryStorage.storeList(userId, list as any, true);
+      }
+    }
+
+    // Marquer comme synchronisé (pas de modifications à ce stade)
+    memoryStorage.markAsSynced(userId);
+
+    const totalTime = Date.now() - startTime;
+    authHelpersLogger.info("Données de l'utilisateur chargées", {
+      userId,
+      duration: totalTime,
+    });
+  } catch (error) {
+    authHelpersLogger.error("Erreur chargement données utilisateur", {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
   }
-
-  // Marquer comme synchronisé (pas de modifications à ce stade)
-  memoryStorage.markAsSynced(userId);
-
-  const totalTime = Date.now() - startTime;
-  authHelpersLogger.info("Données de l'utilisateur chargées", {
-    userId,
-    duration: totalTime,
-  });
 }
 
 // Rafraîchir le memoryStorage avec les changements de la DB depuis le dernier refresh
@@ -382,7 +376,7 @@ export async function refreshFromDB(
   for (const point of newPoints) {
     const decrypted = await decryptPointOptimized(point, userKey);
     const pointId = (point._id as any).toString();
-    memoryStorage.storePoint(userId, decrypted as any);
+    memoryStorage.storePoint(userId, decrypted as any, true);
     if (currentPointIds.has(pointId)) {
       updated++;
     } else {
@@ -397,7 +391,7 @@ export async function refreshFromDB(
   for (const fiche of newFiches) {
     const decrypted = await decryptFicheOptimized(fiche, userKey);
     const ficheId = (fiche._id as any).toString();
-    memoryStorage.storeFiche(userId, decrypted as any);
+    memoryStorage.storeFiche(userId, decrypted as any, true);
     if (currentFicheIds.has(ficheId)) {
       updated++;
     } else {
@@ -427,7 +421,7 @@ export async function refreshFromDB(
         "",
       ),
     };
-    memoryStorage.storeList(userId, decryptedList as any);
+    memoryStorage.storeList(userId, decryptedList as any, true);
     if (currentListIds.has(listId)) {
       updated++;
     } else {
@@ -461,24 +455,7 @@ export async function refreshFromDB(
   }
 
   // 7. Mettre à jour le timestamp de refresh
-  // Important: ne pas marquer dirty les items qu'on vient d'ingérer (ils viennent de la DB)
-  // On remet les dirty sets à l'état d'avant le refresh pour ne pas re-sync vers la DB
-  // ce qui vient de la DB
-
   memoryStorage.setLastRefreshedAt(userId, new Date());
-
-  // Restaurer les dirty sets : enlever les IDs qu'on vient d'ingérer de la DB
-  // (ils ne sont pas des modifications locales)
-  // Note: markAsSynced vide tout, donc on ne l'utilise pas ici.
-  // Les storePoint/storeFiche/storeList ajoutent automatiquement aux dirty sets,
-  // mais ces items viennent de la DB, pas de modifications locales.
-  // Solution : on ne peut pas empêcher storePoint d'ajouter au dirty set
-  // (c'est par design), mais on note que ces IDs seront dans le dirty set.
-  // Au prochain syncUserDataToDB, ils seront "re-syncés" vers la DB — mais comme
-  // les données sont identiques (elles viennent de la DB), c'est un no-op fonctionnel
-  // avec juste un coût de re-chiffrement.
-  // TODO: Pour optimiser davantage, on pourrait ajouter un mode "silent store"
-  // qui ne marque pas dirty. Mais pour l'instant c'est acceptable.
 
   const totalTime = Date.now() - startTime;
   authHelpersLogger.info("Refresh terminé", {
@@ -509,7 +486,10 @@ export async function decryptPointOptimized(point: any, userKey: string) {
 
     if (point.location_encrypted) {
       const locationJson = decryptWithKey(point.location_encrypted, userKey);
-      const parsedLocation = JSON.parse(locationJson);
+      const parsedLocation = safeJsonParse(locationJson, {
+        context: "decrypt-point-location",
+        maxDepth: 3,
+      });
 
       // Convertir les coordonnées en nombres pour l'affichage
       location = {
@@ -533,7 +513,7 @@ export async function decryptPointOptimized(point: any, userKey: string) {
   } catch (error) {
     authHelpersLogger.error("Erreur lors du déchiffrement du point", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return point;
   }
@@ -640,7 +620,7 @@ export async function decryptFicheOptimized(fiche: any, userKey: string) {
   } catch (error) {
     authHelpersLogger.error("Erreur lors du déchiffrement de la fiche", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return fiche;
   }
@@ -772,7 +752,7 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
               pointId: point._id,
               error:
                 locError instanceof Error ? locError.message : String(locError),
-              stack: locError instanceof Error ? locError.stack : undefined,
+              // HIGH-001: stack trace supprimé pour sécurité,
             },
           );
           return Promise.reject(
@@ -872,7 +852,7 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
           authHelpersLogger.error("Erreur lors de la manipulation du ficheId", {
             userId,
             error: idError instanceof Error ? idError.message : String(idError),
-            stack: idError instanceof Error ? idError.stack : undefined,
+            // HIGH-001: stack trace supprimé pour sécurité,
           });
           // En cas d'erreur, garder la valeur originale
           pointFromDB.ficheId = (point as any).ficheId;
@@ -1201,7 +1181,7 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       {
         userId,
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       },
     );
     throw error;

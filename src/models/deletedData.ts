@@ -17,6 +17,7 @@
  */
 
 import mongoose, { Schema, Document } from "mongoose";
+import { sanitizeMixed } from "../utils/sanitizeUtils";
 
 export type DeletedEntityType =
   | "fiche"
@@ -89,13 +90,7 @@ const deletedDataSchema = new Schema<IDeletedData>({
     set: (v: any) => {
       if (!v) return v;
       try {
-        const json = JSON.stringify(v);
-        if (json.length > 500000)
-          return { error: "Data too large", truncated: true };
-        return JSON.parse(json, (key, value) => {
-          if (typeof key === "string" && key.startsWith("$")) return undefined;
-          return value;
-        });
+        return sanitizeMixed(v, 500000);
       } catch {
         return v;
       }

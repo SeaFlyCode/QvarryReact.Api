@@ -51,6 +51,14 @@ export const getNotifications = async (req: Request, res: Response) => {
       }),
     ]);
 
+    notifCtrlLogger.debug("Notifications récupérées avec succès", {
+      userId,
+      count: notifications.length,
+      total,
+      unreadCount,
+      action: "read_notifications",
+    });
+
     res.json({
       data: notifications,
       pagination: {
@@ -64,7 +72,7 @@ export const getNotifications = async (req: Request, res: Response) => {
   } catch (error) {
     notifCtrlLogger.error("Get notifications error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ message: "Erreur serveur" });
   }
@@ -89,7 +97,7 @@ export const getUnreadCount = async (req: Request, res: Response) => {
   } catch (error) {
     notifCtrlLogger.error("Get unread count error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ message: "Erreur serveur" });
   }
@@ -123,11 +131,17 @@ export const markAsRead = async (req: Request, res: Response) => {
       return res.status(404).json({ message: "Notification non trouvée" });
     }
 
+    notifCtrlLogger.info("Notification marquée comme lue", {
+      userId,
+      notificationId,
+      action: "mark_notification_read",
+    });
+
     res.json({ message: "Notification marquée comme lue" });
   } catch (error) {
     notifCtrlLogger.error("Mark as read error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ message: "Erreur serveur" });
   }
@@ -154,13 +168,18 @@ export const markAllAsRead = async (req: Request, res: Response) => {
       },
     );
 
+    notifCtrlLogger.info("Toutes les notifications marquées comme lues", {
+      userId,
+      action: "mark_all_notifications_read",
+    });
+
     res.json({
       message: "Toutes les notifications ont été marquées comme lues",
     });
   } catch (error) {
     notifCtrlLogger.error("Mark all as read error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ message: "Erreur serveur" });
   }
@@ -194,11 +213,17 @@ export const deleteNotification = async (req: Request, res: Response) => {
       new mongoose.Types.ObjectId(userId),
     );
 
+    notifCtrlLogger.info("Notification supprimée avec succès", {
+      userId,
+      notificationId,
+      action: "delete_notification",
+    });
+
     res.json({ message: "Notification supprimée" });
   } catch (error) {
     notifCtrlLogger.error("Delete notification error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ message: "Erreur serveur" });
   }
@@ -241,11 +266,17 @@ export const deleteAllRead = async (req: Request, res: Response) => {
       read: true,
     });
 
+    notifCtrlLogger.info("Toutes les notifications lues supprimées", {
+      userId,
+      count: readNotifications.length,
+      action: "delete_all_read_notifications",
+    });
+
     res.json({ message: "Toutes les notifications lues ont été supprimées" });
   } catch (error) {
     notifCtrlLogger.error("Delete all read error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ message: "Erreur serveur" });
   }
@@ -331,7 +362,7 @@ export const createTestNotification = async (req: Request, res: Response) => {
   } catch (error) {
     notifCtrlLogger.error("Create test notification error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ message: "Erreur serveur" });
   }

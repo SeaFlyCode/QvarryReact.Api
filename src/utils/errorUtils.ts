@@ -23,7 +23,7 @@ export function getErrorMessage(
   if (isProduction) {
     errorLogger.error("Internal error masked for client", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
   }
 

@@ -1,8 +1,11 @@
 import mongoose from "mongoose";
 import PointModel, { IPoint } from "../models/points";
 import { logger } from "./loggerService";
+import { createServiceLogger } from "../utils/contextLogger";
+import { logPerformance } from "../utils/performanceLogger";
 
 const pointLogger = logger.child({ service: "point" });
+const log = createServiceLogger("PointService");
 
 // Types pour les paramètres
 interface CreatePointData {
@@ -15,20 +18,39 @@ interface CreatePointData {
 
 // Création d'un point
 export const createPoint = async (pointData: CreatePointData) => {
+  log.info("Création d'un nouveau point", {
+    userId: pointData.userId,
+    name: pointData.name,
+    ficheId: pointData.ficheId,
+  });
+
   try {
-    const newPoint = new PointModel({
+    const { result: newPoint, duration } = await logPerformance(
+      "Point.create",
+      async () => {
+        const point = new PointModel({
+          userId: pointData.userId,
+          name: pointData.name,
+          description: pointData.description,
+          location_encrypted: pointData.location_encrypted,
+          ficheId: pointData.ficheId || null,
+        });
+        return await point.save();
+      },
+      { slowThreshold: 500 },
+    );
+
+    log.info("Point créé avec succès", {
+      pointId: newPoint._id.toString(),
       userId: pointData.userId,
-      name: pointData.name,
-      description: pointData.description,
-      location_encrypted: pointData.location_encrypted,
-      ficheId: pointData.ficheId || null, // Associer à une fiche si spécifié
+      duration,
     });
 
-    return await newPoint.save();
+    return newPoint;
   } catch (error) {
-    pointLogger.error("Erreur lors de la création du point", {
-      error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
+    log.error("Erreur lors de la création du point", {
+      userId: pointData.userId,
+      error: error instanceof Error ? error.message : String(error),
     });
     throw error;
   }
@@ -37,15 +59,40 @@ export const createPoint = async (pointData: CreatePointData) => {
 // Récupération de tous les points d'un utilisateur
 export async function getAllPointsByUserId(userId: string): Promise<any[]> {
   if (!mongoose.Types.ObjectId.isValid(userId)) {
+    log.warn("ID utilisateur invalide", { userId });
     throw new Error("L'ID utilisateur fourni n'est pas valide.");
   }
-  return PointModel.find({
-    userId,
-    is_active: true, // Ne récupère que les points actifs
-  })
-    .sort({ created_at: -1 })
-    .lean()
-    .maxTimeMS(5000); // Trie par date décroissante
+
+  log.debug("Récupération des points d'un utilisateur", { userId });
+
+  try {
+    const { result: points, duration } = await logPerformance(
+      "Point.findByUserId",
+      async () =>
+        await PointModel.find({
+          userId,
+          is_active: true,
+        })
+          .sort({ created_at: -1 })
+          .lean()
+          .maxTimeMS(5000),
+      { slowThreshold: 1000 },
+    );
+
+    log.info("Points utilisateur récupérés", {
+      userId,
+      count: points.length,
+      duration,
+    });
+
+    return points;
+  } catch (error) {
+    log.error("Erreur lors de la récupération des points", {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 // Récupération d'un point par ID
@@ -67,12 +114,32 @@ export async function getPointById(
 
 export async function deletePoint(pointId: string): Promise<IPoint | null> {
   if (!mongoose.Types.ObjectId.isValid(pointId)) {
+    log.warn("ID de point invalide pour suppression", { pointId });
     throw new Error("L'ID du point n'est pas valide");
   }
 
-  const deletedPoint = await PointModel.findByIdAndDelete(pointId);
+  log.warn("Suppression d'un point", { pointId });
 
-  return deletedPoint;
+  try {
+    const deletedPoint = await PointModel.findByIdAndDelete(pointId);
+
+    if (deletedPoint) {
+      log.info("Point supprimé avec succès", {
+        pointId,
+        userId: deletedPoint.userId.toString(),
+      });
+    } else {
+      log.warn("Point à supprimer non trouvé", { pointId });
+    }
+
+    return deletedPoint;
+  } catch (error) {
+    log.error("Erreur lors de la suppression du point", {
+      pointId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 // Mise à jour d'un point
@@ -82,20 +149,44 @@ export async function updatePoint(
   updateData: Partial<Omit<IPoint, "_id" | "userId" | "created_at">>,
 ): Promise<IPoint | null> {
   if (!mongoose.Types.ObjectId.isValid(pointId)) {
+    log.warn("ID de point invalide pour mise à jour", { pointId });
     throw new Error("L'ID du point n'est pas valide.");
   }
 
-  // Mise à jour de la date de modification
-  const dataToUpdate = {
-    ...updateData,
-    updated_at: new Date(),
-  };
+  log.info("Mise à jour d'un point", {
+    pointId,
+    userId,
+    fields: Object.keys(updateData),
+  });
 
-  return PointModel.findOneAndUpdate(
-    { _id: pointId, userId, is_active: true },
-    dataToUpdate,
-    { new: true, runValidators: true },
-  );
+  try {
+    // Mise à jour de la date de modification
+    const dataToUpdate = {
+      ...updateData,
+      updated_at: new Date(),
+    };
+
+    const updatedPoint = await PointModel.findOneAndUpdate(
+      { _id: pointId, userId, is_active: true },
+      dataToUpdate,
+      { new: true, runValidators: true },
+    );
+
+    if (updatedPoint) {
+      log.info("Point mis à jour avec succès", { pointId, userId });
+    } else {
+      log.warn("Point à mettre à jour non trouvé", { pointId, userId });
+    }
+
+    return updatedPoint;
+  } catch (error) {
+    log.error("Erreur lors de la mise à jour du point", {
+      pointId,
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 // Récupération des points liés à une fiche spécifique

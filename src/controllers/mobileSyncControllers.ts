@@ -80,7 +80,7 @@ export async function handleMobileSync(req: Request, res: Response) {
   } catch (error) {
     mobileSyncCtrlLogger.error("GET sync error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la synchronisation",
@@ -273,7 +273,7 @@ export async function handleMobileSyncPush(req: Request, res: Response) {
   } catch (error) {
     mobileSyncCtrlLogger.error("POST sync error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de l'application des changements",
@@ -324,7 +324,7 @@ export async function handleMobileFullData(req: Request, res: Response) {
   } catch (error) {
     mobileSyncCtrlLogger.error("Full data error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des données",
@@ -396,7 +396,7 @@ export async function handleMobileSyncStatus(req: Request, res: Response) {
   } catch (error) {
     mobileSyncCtrlLogger.error("Sync status error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la vérification",

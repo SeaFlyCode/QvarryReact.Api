@@ -7,6 +7,7 @@ import { sendEmail, EmailTemplate } from "./emailService";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import { maskEmail, anonymizeIp } from "../utils/logUtils";
 import { logger } from "./loggerService";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 const securityLogger = logger.child({ service: "security-alert" });
 
@@ -565,7 +566,11 @@ class SecurityAlertService {
         if (userAgent) userAgent = decrypt(userAgent);
       } catch {}
       try {
-        if (details) details = JSON.parse(decrypt(details));
+        if (details)
+          details = safeJsonParse(decrypt(details), {
+            context: "security-alert-details",
+            maxDepth: 5,
+          });
       } catch {}
       return { ...log, ipAddress, userAgent, details };
     });

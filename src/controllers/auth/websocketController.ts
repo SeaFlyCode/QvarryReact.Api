@@ -67,7 +67,7 @@ export const getWebSocketToken = (req: Request, res: Response) => {
   } catch (error: unknown) {
     wsAuthLogger.error("WebSocket token generation error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({
       error: "Erreur lors de la génération du token",

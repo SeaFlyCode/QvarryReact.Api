@@ -87,11 +87,6 @@ describe("rateLimitConfig", () => {
       expect(typeof rateLimitConfig.socialLimiter).toBe("function");
     });
 
-    it("wsConnectionLimiter is defined", () => {
-      expect(rateLimitConfig.wsConnectionLimiter).toBeDefined();
-      expect(typeof rateLimitConfig.wsConnectionLimiter).toBe("function");
-    });
-
     it("refreshTokenLimiter is defined", () => {
       expect(rateLimitConfig.refreshTokenLimiter).toBeDefined();
       expect(typeof rateLimitConfig.refreshTokenLimiter).toBe("function");
@@ -150,7 +145,6 @@ describe("rateLimitConfig", () => {
       "generalLimiter",
       "highTrafficLimiter",
       "socialLimiter",
-      "wsConnectionLimiter",
       "refreshTokenLimiter",
       "adminLimiter",
       "mobileAuthLimiter",
@@ -221,7 +215,6 @@ describe("rateLimitConfig", () => {
         "generalLimiter",
         "highTrafficLimiter",
         "socialLimiter",
-        "wsConnectionLimiter",
         "refreshTokenLimiter",
         "adminLimiter",
         "mobileAuthLimiter",
@@ -269,11 +262,6 @@ describe("rateLimitConfig", () => {
       expect(typeof rateLimitConfig.verifyEmailLimiter).toBe("function");
     });
 
-    it("has rate limiter for WebSocket connections", () => {
-      expect(rateLimitConfig.wsConnectionLimiter).toBeDefined();
-      expect(typeof rateLimitConfig.wsConnectionLimiter).toBe("function");
-    });
-
     it("has rate limiter for admin routes", () => {
       expect(rateLimitConfig.adminLimiter).toBeDefined();
       expect(typeof rateLimitConfig.adminLimiter).toBe("function");
@@ -300,7 +288,7 @@ describe("rateLimitConfig", () => {
   // ═══════════════════════════════════════════════════════════════════════════
 
   describe("all exported limiters", () => {
-    it("exports exactly 20 rate limiters", () => {
+    it("exports exactly 22 rate limiters (incluant les 3 nouveaux niveaux différenciés)", () => {
       const expectedLimiters = [
         "globalRateLimiter",
         "healthLimiter",
@@ -313,7 +301,6 @@ describe("rateLimitConfig", () => {
         "generalLimiter",
         "highTrafficLimiter",
         "socialLimiter",
-        "wsConnectionLimiter",
         "refreshTokenLimiter",
         "adminLimiter",
         "mobileAuthLimiter",
@@ -322,6 +309,10 @@ describe("rateLimitConfig", () => {
         "maintenanceLimiter",
         "usersLimiter",
         "notificationsLimiter",
+        // Nouveaux limiters différenciés (3 niveaux)
+        "strictAuthLimiter",
+        "moderateApiLimiter",
+        "permissiveMobileLimiter",
       ];
 
       expectedLimiters.forEach((limiter) => {
@@ -351,7 +342,6 @@ describe("rateLimitConfig", () => {
         "generalLimiter",
         "highTrafficLimiter",
         "socialLimiter",
-        "wsConnectionLimiter",
         "refreshTokenLimiter",
         "adminLimiter",
         "mobileAuthLimiter",
@@ -360,6 +350,10 @@ describe("rateLimitConfig", () => {
         "maintenanceLimiter",
         "usersLimiter",
         "notificationsLimiter",
+        // Nouveaux limiters différenciés
+        "strictAuthLimiter",
+        "moderateApiLimiter",
+        "permissiveMobileLimiter",
       ];
 
       limiters.forEach((limiter) => {
@@ -369,6 +363,43 @@ describe("rateLimitConfig", () => {
         // Verify it's a proper express middleware (accepts 3 args: req, res, next)
         // express-rate-limit returns a function with length 3
         expect(limiterFn.length).toBe(3);
+      });
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Test des limiters différenciés (3 niveaux: STRICT, MODERATE, PERMISSIVE)
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("Rate limiters différenciés par niveau de sécurité", () => {
+    it("strictAuthLimiter est défini pour l'authentification sensible", () => {
+      expect(rateLimitConfig.strictAuthLimiter).toBeDefined();
+      expect(typeof rateLimitConfig.strictAuthLimiter).toBe("function");
+      expect(rateLimitConfig.strictAuthLimiter.length).toBe(3);
+    });
+
+    it("moderateApiLimiter est défini pour les API standards", () => {
+      expect(rateLimitConfig.moderateApiLimiter).toBeDefined();
+      expect(typeof rateLimitConfig.moderateApiLimiter).toBe("function");
+      expect(rateLimitConfig.moderateApiLimiter.length).toBe(3);
+    });
+
+    it("permissiveMobileLimiter est défini pour les fonctionnalités mobiles", () => {
+      expect(rateLimitConfig.permissiveMobileLimiter).toBeDefined();
+      expect(typeof rateLimitConfig.permissiveMobileLimiter).toBe("function");
+      expect(rateLimitConfig.permissiveMobileLimiter.length).toBe(3);
+    });
+
+    it("les 3 niveaux différenciés sont tous configurés", () => {
+      const differentiatedLimiters = [
+        "strictAuthLimiter",
+        "moderateApiLimiter",
+        "permissiveMobileLimiter",
+      ];
+
+      differentiatedLimiters.forEach((limiter) => {
+        expect(rateLimitConfig[limiter]).toBeDefined();
+        expect(typeof rateLimitConfig[limiter]).toBe("function");
       });
     });
   });

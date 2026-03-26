@@ -17,6 +17,7 @@ import { decrypt as decryptMaster } from "../utils/masterEncryptionUtils";
 import { memoryStorage } from "./memoryStorageService";
 import { createNotification } from "./notificationService";
 import { logger } from "./loggerService";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 const dataShareLogger = logger.child({ service: "data-share" });
 
@@ -590,7 +591,7 @@ export async function shareData(
             notifError instanceof Error
               ? notifError.message
               : String(notifError),
-          stack: notifError instanceof Error ? notifError.stack : undefined,
+          // HIGH-001: stack trace supprimé pour sécurité,
         });
       }
     }),
@@ -672,7 +673,10 @@ export async function getSharedData(
   }
 
   // 5. Parser les données
-  const data = JSON.parse(decryptedDataJSON);
+  const data = safeJsonParse(decryptedDataJSON, {
+    context: "data-share-decrypt",
+    maxDepth: 10,
+  });
 
   // 6. Déchiffrer le message si présent
   let decryptedMessage;
@@ -789,7 +793,10 @@ async function getSharedDataForCopy(
   }
 
   // 6. Parser les données
-  const data = JSON.parse(decryptedDataJSON);
+  const data = safeJsonParse(decryptedDataJSON, {
+    context: "data-share-decrypt",
+    maxDepth: 10,
+  });
 
   dataShareLogger.info("Données récupérées pour copie", {
     shareId: shareId.toString(),
@@ -872,7 +879,10 @@ export async function updateShareStatus(
         );
       }
 
-      const data = JSON.parse(decryptedDataJSON);
+      const data = safeJsonParse(decryptedDataJSON, {
+        context: "data-share-preload",
+        maxDepth: 10,
+      });
       preloadedData = { data, dataType: dataShare.dataType };
 
       dataShareLogger.info("Données préchargées pour copie", {
@@ -884,7 +894,7 @@ export async function updateShareStatus(
           preloadError instanceof Error
             ? preloadError.message
             : String(preloadError),
-        stack: preloadError instanceof Error ? preloadError.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       throw new Error(
         `Impossible de déchiffrer les données: ${(preloadError as Error).message}`,
@@ -955,7 +965,7 @@ export async function updateShareStatus(
     dataShareLogger.error("Erreur notification pour l'expéditeur", {
       error:
         notifError instanceof Error ? notifError.message : String(notifError),
-      stack: notifError instanceof Error ? notifError.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
   }
 
@@ -971,7 +981,7 @@ export async function updateShareStatus(
     } catch (error) {
       dataShareLogger.error("Erreur lors de la copie des données", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       throw new Error(
         `Partage accepté mais erreur lors de la copie des données: ${(error as Error).message}`,
@@ -1013,7 +1023,10 @@ async function copySharedDataToReceiver(
   ): { lat: number; lng: number } | null => {
     try {
       if (typeof locationStr === "string") {
-        return JSON.parse(locationStr);
+        return safeJsonParse(locationStr, {
+          context: "location-parse",
+          maxDepth: 3,
+        });
       }
       return locationStr as any;
     } catch {

@@ -44,7 +44,7 @@ export async function getUserSessions(req: Request, res: Response) {
   } catch (error) {
     securityLogger.error("Get sessions error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -95,7 +95,7 @@ export async function revokeSession(req: Request, res: Response) {
   } catch (error) {
     securityLogger.error("Revoke session error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -138,7 +138,7 @@ export async function getSecurityEvents(req: Request, res: Response) {
   } catch (error) {
     securityLogger.error("Get security events error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)

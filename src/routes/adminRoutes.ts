@@ -48,6 +48,13 @@ import {
   handleAdminSosTriggerSms,
   handleAdminSosSendNotification,
 } from "../controllers/adminSosControllers";
+import {
+  getAllUsersStorage,
+  getUserStorageDetails,
+  updateUserQuota,
+  getGlobalStorageStats,
+  cleanupOrphanFiles,
+} from "../controllers/adminStorageController";
 
 const router = Router();
 
@@ -67,6 +74,7 @@ router.get("/stats/activity", getActivityStats);
 router.get("/users", listUsers);
 router.get("/users/pending", listPendingUsers);
 router.get("/users/pending/count", getPendingUsersCount);
+router.get("/users/storage", getAllUsersStorage);
 router.get("/users/:userId", validateObjectId("userId"), getUserDetails);
 router.post("/users/:userId/block", validateObjectId("userId"), blockUser);
 router.post("/users/:userId/unblock", validateObjectId("userId"), unblockUser);
@@ -170,5 +178,21 @@ router.post(
   validateObjectId("sessionId"),
   handleAdminSosSendNotification,
 );
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GESTION DU STOCKAGE
+// ═══════════════════════════════════════════════════════════════════════════
+router.get(
+  "/users/:userId/storage",
+  validateObjectId("userId"),
+  getUserStorageDetails,
+);
+router.patch(
+  "/users/:userId/quota",
+  validateObjectId("userId"),
+  updateUserQuota,
+);
+router.get("/storage/stats", getGlobalStorageStats);
+router.post("/storage/cleanup", cleanupOrphanFiles);
 
 export default router;

@@ -145,7 +145,7 @@ export class MemoryStorageService {
   }
 
   // Stocker un point déchiffré
-  storePoint(userId: string, point: IPoint): boolean {
+  storePoint(userId: string, point: IPoint, silent?: boolean): boolean {
     try {
       this.logAccess("storePoint", userId, { pointId: point._id });
       const session = this.getSession(userId);
@@ -156,8 +156,10 @@ export class MemoryStorageService {
 
       this.enforceLimit(session.points, MAX_ITEMS_PER_SESSION.points);
       session.points.set(point._id.toString(), point);
-      session.isDirty = true;
-      session.dirtyPointIds.add(point._id.toString());
+      if (!silent) {
+        session.isDirty = true;
+        session.dirtyPointIds.add(point._id.toString());
+      }
       this.touchSession(userId);
       return true;
     } catch (error) {
@@ -170,7 +172,7 @@ export class MemoryStorageService {
   }
 
   // Stocker une fiche déchiffrée
-  storeFiche(userId: string, fiche: IFiche): boolean {
+  storeFiche(userId: string, fiche: IFiche, silent?: boolean): boolean {
     try {
       this.logAccess("storeFiche", userId, { ficheId: fiche._id });
       const session = this.getSession(userId);
@@ -181,8 +183,10 @@ export class MemoryStorageService {
 
       this.enforceLimit(session.fiches, MAX_ITEMS_PER_SESSION.fiches);
       session.fiches.set(fiche._id.toString(), fiche);
-      session.isDirty = true;
-      session.dirtyFicheIds.add(fiche._id.toString());
+      if (!silent) {
+        session.isDirty = true;
+        session.dirtyFicheIds.add(fiche._id.toString());
+      }
       this.touchSession(userId);
       return true;
     } catch (error) {
@@ -195,7 +199,7 @@ export class MemoryStorageService {
   }
 
   // Stocker une liste déchiffrée
-  storeList(userId: string, list: IList): boolean {
+  storeList(userId: string, list: IList, silent?: boolean): boolean {
     try {
       this.logAccess("storeList", userId, { listId: list._id });
       const session = this.getSession(userId);
@@ -206,8 +210,10 @@ export class MemoryStorageService {
 
       this.enforceLimit(session.lists, MAX_ITEMS_PER_SESSION.lists);
       session.lists.set(list._id.toString(), list);
-      session.isDirty = true;
-      session.dirtyListIds.add(list._id.toString());
+      if (!silent) {
+        session.isDirty = true;
+        session.dirtyListIds.add(list._id.toString());
+      }
       this.touchSession(userId);
       return true;
     } catch (error) {

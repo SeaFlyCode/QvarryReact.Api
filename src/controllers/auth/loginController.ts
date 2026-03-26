@@ -333,7 +333,7 @@ export async function handleLoginUser(req: Request, res: Response) {
           loginLogger.error("[AUTH] Erreur envoi email alerte connexion", {
             email: maskEmail(email),
             error: err instanceof Error ? err.message : String(err),
-            stack: err instanceof Error ? err.stack : undefined,
+            // HIGH-001: stack trace supprimé pour sécurité,
           });
         });
     } else {
@@ -376,7 +376,7 @@ export async function handleLoginUser(req: Request, res: Response) {
   } catch (error: unknown) {
     loginLogger.error("[AUTH] Erreur lors de la connexion", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la connexion. Veuillez réessayer.",
@@ -587,7 +587,7 @@ export async function handleRefreshToken(req: Request, res: Response) {
   } catch (error: unknown) {
     loginLogger.error("[AUTH] Erreur lors du refresh du token", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors du renouvellement du token.",
@@ -736,7 +736,7 @@ export const checkAuth = async (req: Request, res: Response) => {
     } else {
       loginLogger.error("[AUTH] Erreur lors de la vérification du token", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       return res.status(401).json({
         authenticated: false,
@@ -859,7 +859,7 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
   } catch (error: unknown) {
     loginLogger.error("[AUTH] Erreur lors de la finalisation du login 2FA", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({ error: "Erreur lors de la connexion" });
   }

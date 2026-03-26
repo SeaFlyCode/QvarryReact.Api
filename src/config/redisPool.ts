@@ -26,6 +26,17 @@ class RedisConnectionPool {
       return;
     }
 
+    // Vérifier si Redis est activé
+    const redisEnabled = process.env.REDIS_ENABLED !== "false";
+
+    if (!redisEnabled) {
+      poolLogger.info(
+        "[Redis Pool] Redis disabled in environment (REDIS_ENABLED=false), skipping initialization",
+      );
+      this.isInitialized = false;
+      return;
+    }
+
     const isProduction = process.env.NODE_ENV === "production";
     const redisHost = process.env.REDIS_HOST || "localhost";
     const redisPort = parseInt(process.env.REDIS_PORT || "6379", 10);
@@ -152,7 +163,9 @@ class RedisConnectionPool {
    */
   static getPublisher(): Redis | Cluster {
     if (!this.publisherClient || !this.isInitialized) {
-      throw new Error("[Redis Pool] Not initialized. Call initialize() first.");
+      throw new Error(
+        "[Redis Pool] Not initialized or disabled. Check REDIS_ENABLED in .env",
+      );
     }
     return this.publisherClient;
   }
@@ -162,7 +175,9 @@ class RedisConnectionPool {
    */
   static getSubscriber(): Redis | Cluster {
     if (!this.subscriberClient || !this.isInitialized) {
-      throw new Error("[Redis Pool] Not initialized. Call initialize() first.");
+      throw new Error(
+        "[Redis Pool] Not initialized or disabled. Check REDIS_ENABLED in .env",
+      );
     }
     return this.subscriberClient;
   }
@@ -173,7 +188,9 @@ class RedisConnectionPool {
    */
   static createClient(): Redis | Cluster {
     if (!this.isInitialized) {
-      throw new Error("[Redis Pool] Not initialized. Call initialize() first.");
+      throw new Error(
+        "[Redis Pool] Not initialized or disabled. Check REDIS_ENABLED in .env",
+      );
     }
 
     // Dupliquer la configuration du publisher

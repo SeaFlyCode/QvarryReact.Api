@@ -9,6 +9,7 @@ import {
 } from "../utils/rsaEncryptionUtils";
 import dataArchiveService from "./dataArchiveService";
 import { logger } from "./loggerService";
+import { logPerformance } from "../utils/performanceLogger";
 
 const userServiceLogger = logger.child({ service: "user-service" });
 
@@ -28,8 +29,21 @@ import AuditLogModel from "../models/auditLogs";
 export async function createUser(
   userData: Omit<IUserBase, "_id">,
 ): Promise<IUser> {
+  userServiceLogger.info("Création d'un nouvel utilisateur", {
+    email: userData.email,
+  });
+
   // 1. Créer l'utilisateur en base
-  const newUser = await UserModel.create(userData);
+  const { result: newUser, duration: createDuration } = await logPerformance(
+    "User.create",
+    async () => await UserModel.create(userData),
+    { slowThreshold: 1000 },
+  );
+
+  userServiceLogger.debug("Utilisateur créé en base", {
+    userId: newUser._id.toString(),
+    duration: createDuration,
+  });
 
   try {
     // ⚠️ Pas de transaction MongoDB (nécessite replica set). Rollback manuel en cas d'échec (ligne 94).
@@ -39,8 +53,20 @@ export async function createUser(
     const encryptedAESKey = encrypt(aesKey);
 
     // 3. Générer la paire de clés RSA 4096 bits pour le partage de données
-    const { publicKey, privateKey } = generateRSAKeyPair();
-    const encryptedPrivateKey = encryptPrivateKey(privateKey);
+    const { result: keys, duration: keyGenDuration } = await logPerformance(
+      "User.generateKeys",
+      async () => {
+        const { publicKey, privateKey } = generateRSAKeyPair();
+        const encryptedPrivateKey = encryptPrivateKey(privateKey);
+        return { publicKey, encryptedPrivateKey };
+      },
+      { slowThreshold: 2000 },
+    );
+
+    userServiceLogger.debug("Clés RSA générées", {
+      userId: newUser._id.toString(),
+      duration: keyGenDuration,
+    });
 
     // 4. Stocker les clés en base de données
     await Promise.all([
@@ -54,14 +80,14 @@ export async function createUser(
       // Clé publique RSA (pour recevoir des données partagées)
       KeyModel.create({
         userId: newUser._id,
-        key: publicKey,
+        key: keys.publicKey,
         type: "rsa-public",
         date: new Date(),
       }),
       // Clé privée RSA chiffrée (pour déchiffrer les données reçues)
       KeyModel.create({
         userId: newUser._id,
-        key: encryptedPrivateKey,
+        key: keys.encryptedPrivateKey,
         type: "rsa-private",
         date: new Date(),
       }),
@@ -69,6 +95,7 @@ export async function createUser(
 
     userServiceLogger.info("Utilisateur créé avec clés AES-256 et RSA-4096", {
       userId: newUser._id.toString(),
+      totalDuration: createDuration + keyGenDuration,
     });
 
     return newUser;
@@ -78,8 +105,9 @@ export async function createUser(
     userServiceLogger.error(
       "Erreur lors de la création des clés, utilisateur supprimé",
       {
+        userId: newUser._id.toString(),
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       },
     );
     throw new Error("Erreur lors de la création du compte utilisateur");

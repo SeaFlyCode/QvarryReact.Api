@@ -9,6 +9,7 @@
 import express from "express";
 import rateLimit from "express-rate-limit";
 import { handleVonageDeliveryReceipt } from "../controllers/webhookControllers";
+import { validateVonageWebhook } from "../middlewares/vonageWebhookMiddleware"; // MED-003
 
 const router = express.Router();
 
@@ -60,11 +61,16 @@ const webhookLimiter = rateLimit({
  *   { success: true }
  *
  * Notes:
- *   - Pas d'authentification (Vonage ne supporte pas les headers custom)
+ *   - MED-003: Validation HMAC-SHA512 de la signature Vonage
  *   - Toujours retourner 200 OK, même en cas d'erreur interne
  *   - Les échecs sont loggés mais ne bloquent pas la réponse
  *   - Rate limiting basique pour éviter les abus
  */
-router.post("/delivery", webhookLimiter, handleVonageDeliveryReceipt);
+router.post(
+  "/delivery",
+  validateVonageWebhook, // MED-003: Validation HMAC AVANT le handler
+  webhookLimiter,
+  handleVonageDeliveryReceipt,
+);
 
 export default router;

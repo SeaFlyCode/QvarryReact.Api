@@ -8,6 +8,7 @@ import UserModel from "../models/users";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
 import { auditService } from "../services/auditService";
 import { logger } from "../services/loggerService";
+import * as totpMigrationService from "../services/totpMigrationService";
 
 const twoFactorLogger = logger.child({ service: "two-factor" });
 
@@ -80,18 +81,11 @@ export async function setupTwoFactor(
       });
     }
 
-    // Générer un nouveau secret TOTP
-    const secretObj = new Secret({ size: 32 });
-    const totp = new TOTP({
-      issuer: APP_NAME,
-      label: decrypt(user.email),
-      secret: secretObj,
-      algorithm: "SHA1",
-      digits: 6,
-      period: 30,
-    });
-    const base32Secret = secretObj.base32;
-    const otpauthUrl = totp.toString();
+    // Générer un nouveau secret TOTP avec SHA512 (via service de migration)
+    const decryptedEmail = decrypt(user.email);
+    const totpData = totpMigrationService.generateTOTPSecret(decryptedEmail);
+    const base32Secret = totpData.secret;
+    const otpauthUrl = totpData.qrCodeUrl;
 
     if (!base32Secret || !otpauthUrl) {
       return res
@@ -171,16 +165,16 @@ export async function verifyAndEnableTwoFactor(
       });
     }
 
-    // Déchiffrer le secret et vérifier le code
-    const decryptedSecret = decrypt(user.two_factor_secret);
-    const totpVerify = new TOTP({
-      secret: Secret.fromBase32(decryptedSecret),
-      algorithm: "SHA1",
-      digits: 6,
-      period: 30,
-    });
-    const delta = totpVerify.validate({ token: code, window: 1 });
-    const isValid = delta !== null;
+    // Déchiffrer le secret et vérifier le code avec support migration
+    const decryptedEmail = decrypt(user.email);
+    const verifyResult = await totpMigrationService.verifyTOTPCode(
+      userId,
+      decryptedEmail,
+      user.two_factor_secret,
+      code,
+      user.two_factor_algorithm as "SHA1" | "SHA512" | undefined,
+    );
+    const isValid = verifyResult.isValid;
 
     if (!isValid) {
       await auditService.log({
@@ -203,6 +197,7 @@ export async function verifyAndEnableTwoFactor(
 
     // Activer la 2FA
     user.two_factor_enabled = true;
+    user.two_factor_algorithm = "sha512"; // ✅ SHA512 pour nouveaux utilisateurs
     user.two_factor_confirmed_at = new Date();
     user.two_factor_recovery_codes = hashedRecoveryCodes;
     await user.save();
@@ -288,15 +283,15 @@ export async function disableTwoFactor(
     if (!user.two_factor_secret) {
       return res.status(400).json({ error: "Secret 2FA manquant" });
     }
-    const decryptedSecret = decrypt(user.two_factor_secret);
-    const totpVerify = new TOTP({
-      secret: Secret.fromBase32(decryptedSecret),
-      algorithm: "SHA1",
-      digits: 6,
-      period: 30,
-    });
-    const delta = totpVerify.validate({ token: code, window: 1 });
-    const isValidTotp = delta !== null;
+    const decryptedEmail = decrypt(user.email);
+    const verifyResult = await totpMigrationService.verifyTOTPCode(
+      userId,
+      decryptedEmail,
+      user.two_factor_secret,
+      code,
+      user.two_factor_algorithm as "SHA1" | "SHA512" | undefined,
+    );
+    const isValidTotp = verifyResult.isValid;
 
     if (!isValidTotp) {
       // Essayer comme code de récupération
@@ -456,16 +451,26 @@ export async function verifyTwoFactorLogin(
         remainingCodes: user.two_factor_recovery_codes?.length || 0,
       });
     } else {
-      // Vérifier comme code TOTP normal
-      const decryptedSecret = decrypt(user.two_factor_secret);
-      const totpVerify = new TOTP({
-        secret: Secret.fromBase32(decryptedSecret),
-        algorithm: "SHA1",
-        digits: 6,
-        period: 30,
-      });
-      const delta = totpVerify.validate({ token: code, window: 1 });
-      const isValid = delta !== null;
+      // Vérifier comme code TOTP normal avec support migration
+      const decryptedEmail = decrypt(user.email);
+      const verifyResult = await totpMigrationService.verifyTOTPCode(
+        userId,
+        decryptedEmail,
+        user.two_factor_secret,
+        code,
+        user.two_factor_algorithm as "SHA1" | "SHA512" | undefined,
+      );
+      const isValid = verifyResult.isValid;
+
+      // Si migration effectuée, mettre à jour le secret et l'algorithme
+      if (verifyResult.migrated && verifyResult.newEncryptedSecret) {
+        user.two_factor_secret = verifyResult.newEncryptedSecret;
+        user.two_factor_algorithm = "sha512";
+        await user.save();
+        twoFactorLogger.info("Utilisateur migré vers SHA512 durant login", {
+          userId,
+        });
+      }
 
       if (!isValid) {
         await auditService.log({

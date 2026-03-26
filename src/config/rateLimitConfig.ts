@@ -7,6 +7,8 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import rateLimit from "express-rate-limit";
+import { Request } from "express";
+import { createHash } from "crypto";
 import { anonymizeIp } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
 
@@ -48,17 +50,21 @@ const config = {
     register: 5, // Création de compte (par heure)
     resendEmail: 3, // Renvoi d'emails (par heure)
     passwordReset: 5, // Reset mot de passe
-    twoFactor: 5, // 2FA (strict, brute-force TOTP)
+    twoFactor: 5, // 2FA (strict, brute-force TOTP) - MED-002: Déjà au niveau militaire
     general: 300, // Routes générales
     highTraffic: 500, // Fiches, listes, points
     social: 100, // Contacts, messages, partages
-    refreshToken: 10, // Refresh token
+    refreshToken: 3, // MED-002: Refresh token (réduit de 10 à 3)
     admin: 60, // Routes admin
     security: 30, // Routes sécurité
     authCheck: 60, // Vérification auth
     maintenance: 30, // Routes maintenance
     users: 100, // Routes utilisateurs (SEC-044)
     notifications: 60, // Routes notifications (SEC-AUDIT)
+    // Configuration différenciée par niveau de sécurité (3 niveaux)
+    strictAuth: 10, // 🔴 STRICT - Auth sensible (login, register)
+    moderateApi: 100, // 🟡 MODERATE - API standard (events, users)
+    permissiveMobile: 50, // 🟢 PERMISSIVE - Fonctionnel mobile - MED-002: Réduit de 150 à 50
   },
 };
 
@@ -220,15 +226,28 @@ export const socialLimiter = rateLimit({
 
 /**
  * Rate limiter pour le refresh token
- * Plus permissif que l'auth car l'utilisateur est déjà authentifié
- * Mais doit être limité pour éviter les abus
+ * MED-002: Réduit à 3 refresh max toutes les 15 minutes (niveau militaire)
+ * Prévient l'abus de refresh tokens et les attaques par force brute
  */
 export const refreshTokenLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 minute
-  max: getLimit("refreshToken"),
-  message: "Trop de rafraîchissements de token, veuillez réessayer plus tard.",
+  windowMs: 15 * 60 * 1000, // 15 minutes (MED-002: changé de 1 min à 15 min)
+  max: getLimit("refreshToken"), // 3 en prod, 30 en dev
+  message:
+    "Trop de rafraîchissements de token, veuillez réessayer dans 15 minutes.",
   standardHeaders: true,
   legacyHeaders: false,
+  handler: (req, res) => {
+    rateLimitLogger.warn("🔴 REFRESH: Rate limit dépassé", {
+      ip: anonymizeIp(req.ip || ""),
+      path: req.path,
+    });
+    res.status(429).json({
+      error:
+        "Trop de rafraîchissements de token, veuillez réessayer dans 15 minutes.",
+      code: "REFRESH_TOKEN_RATE_LIMIT_EXCEEDED",
+      retryAfter: 15 * 60,
+    });
+  },
 });
 
 /**
@@ -314,6 +333,227 @@ export const notificationsLimiter = rateLimit({
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// RATE LIMITERS DIFFÉRENCIÉS PAR NIVEAU DE SÉCURITÉ (3 NIVEAUX)
+// ═══════════════════════════════════════════════════════════════════════════
+// Configuration différenciée pour gérer les différents besoins de rate limiting
+// selon la sensibilité des routes et les cas d'usage
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * 🔴 STRICT - Rate limiter pour l'authentification sensible
+ * Routes : /api/auth/login, /api/auth/register
+ * Limite : 10 requêtes / 15 minutes (100 en dev)
+ *
+ * Protection contre :
+ * - Brute force attacks sur les credentials
+ * - Account enumeration
+ * - Création de comptes en masse
+ */
+export const strictAuthLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: getLimit("strictAuth"),
+  message: {
+    error:
+      "Trop de tentatives d'authentification, veuillez réessayer dans 15 minutes.",
+    code: "STRICT_AUTH_RATE_LIMIT_EXCEEDED",
+    retryAfter: 15 * 60,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    rateLimitLogger.warn("🔴 STRICT: Rate limit auth dépassé", {
+      ip: anonymizeIp(req.ip || ""),
+      path: req.path,
+    });
+    res.status(429).json({
+      error:
+        "Trop de tentatives d'authentification, veuillez réessayer dans 15 minutes.",
+      code: "STRICT_AUTH_RATE_LIMIT_EXCEEDED",
+      retryAfter: 15 * 60,
+    });
+  },
+});
+
+/**
+ * 🟡 MODERATE - Rate limiter pour les API standards
+ * Routes : /api/events/*, /api/users/*
+ * Limite : 100 requêtes / 15 minutes (1000 en dev)
+ *
+ * Protection contre :
+ * - Abus des API standards
+ * - Énumération de ressources
+ * - Scraping de données
+ */
+export const moderateApiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: getLimit("moderateApi"),
+  message: {
+    error: "Trop de requêtes API, veuillez réessayer dans 15 minutes.",
+    code: "MODERATE_API_RATE_LIMIT_EXCEEDED",
+    retryAfter: 15 * 60,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    rateLimitLogger.warn("🟡 MODERATE: Rate limit API dépassé", {
+      ip: anonymizeIp(req.ip || ""),
+      path: req.path,
+    });
+    res.status(429).json({
+      error: "Trop de requêtes API, veuillez réessayer dans 15 minutes.",
+      code: "MODERATE_API_RATE_LIMIT_EXCEEDED",
+      retryAfter: 15 * 60,
+    });
+  },
+});
+
+/**
+ * 🟢 PERMISSIVE - Rate limiter pour les fonctionnalités mobiles et opérationnelles
+ * Routes : /api/mobile/push-tokens, /api/mobile/sync, /api/health
+ * Limite : 50 requêtes / 15 minutes (500 en dev) - MED-002: Réduit de 150 à 50
+ *
+ * Plus permissif que strictAuth mais réduit pour sécurité militaire/bancaire :
+ * - Routes authentifiées (moins de risque d'abus)
+ * - Utilisations légitimes fréquentes (sync offline, push tokens, health checks)
+ * - Les applications mobiles peuvent se reconnecter fréquemment
+ *
+ * Protection contre :
+ * - Abus massifs (bots, scripts malveillants)
+ * - DoS sur les endpoints fonctionnels
+ */
+export const permissiveMobileLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: getLimit("permissiveMobile"), // 50 en prod, 500 en dev (MED-002)
+  message: {
+    error:
+      "Trop de requêtes depuis l'application mobile, veuillez réessayer dans 15 minutes.",
+    code: "PERMISSIVE_MOBILE_RATE_LIMIT_EXCEEDED",
+    retryAfter: 15 * 60,
+  },
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    rateLimitLogger.warn("🟢 PERMISSIVE: Rate limit mobile dépassé", {
+      ip: anonymizeIp(req.ip || ""),
+      path: req.path,
+    });
+    res.status(429).json({
+      error:
+        "Trop de requêtes depuis l'application mobile, veuillez réessayer dans 15 minutes.",
+      code: "PERMISSIVE_MOBILE_RATE_LIMIT_EXCEEDED",
+      retryAfter: 15 * 60,
+    });
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HIGH-003 FIX: Rate Limiter Mobile Attestation (Durci)
+// ═══════════════════════════════════════════════════════════════════════════
+// Protection contre le bruteforce d'attestations et le contournement du
+// device binding. L'attestation d'appareil est coûteuse et critique pour
+// la sécurité, donc les limites doivent être strictes.
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * Rate limiter par IP pour les attestations mobiles (première couche)
+ * HIGH-003: Durci de 5/15min à 3/heure
+ */
+export const mobileAttestationLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000, // ✅ 1 heure (au lieu de 15min)
+  max: limit(3), // ✅ 3 tentatives/heure/IP (au lieu de 5/15min)
+  message: "Trop de tentatives d'attestation. Veuillez réessayer plus tard.",
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false, // ✅ Compter aussi les succès
+
+  // ✅ Handler personnalisé pour logger les abus
+  handler: (req, res, _next, options) => {
+    // Import dynamique pour éviter les dépendances circulaires
+    import("../services/auditService").then(({ auditService }) => {
+      auditService.log({
+        action: "RATE_LIMIT_EXCEEDED",
+        level: "warning",
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+        details: {
+          type: "mobile_attestation",
+          deviceId: (req.body as any)?.deviceId,
+          windowMs: options.windowMs,
+          max: options.max,
+        },
+      });
+    });
+
+    rateLimitLogger.warn("[RATE-LIMIT] Mobile attestation limit exceeded", {
+      ip: anonymizeIp(req.ip || ""),
+      deviceId: (req.body as any)?.deviceId,
+      userAgent: req.headers["user-agent"],
+    });
+
+    res.status(429).json({
+      error: "Trop de tentatives d'attestation",
+      retryAfter: Math.ceil(options.windowMs! / 1000),
+      code: "RATE_LIMIT_EXCEEDED",
+    });
+  },
+});
+
+/**
+ * ✅ NOUVEAU: Rate limiter par deviceId (deuxième couche de défense)
+ * Limite plus stricte par appareil pour empêcher la rotation d'IP
+ * HIGH-003: 5 tentatives par device par jour
+ */
+export const mobileAttestationByDeviceLimiter = rateLimit({
+  windowMs: 24 * 60 * 60 * 1000, // 24 heures
+  max: limit(5), // 5 tentatives par device par jour
+
+  // ✅ Clé basée sur deviceId (avec hash pour privacy)
+  keyGenerator: (req: Request): string => {
+    const deviceId = (req.body as any)?.deviceId || "unknown";
+
+    // Hash du deviceId pour ne pas stocker en clair dans Redis
+    const hash = createHash("sha256")
+      .update(deviceId + (process.env.IP_HASH_SECRET || "default-salt"))
+      .digest("hex");
+
+    return `mobile_attestation_device:${hash}`;
+  },
+
+  message: "Quota d'attestation dépassé pour cet appareil",
+  standardHeaders: true,
+  legacyHeaders: false,
+  skipSuccessfulRequests: false,
+
+  handler: (req, res, _next, options) => {
+    import("../services/auditService").then(({ auditService }) => {
+      auditService.log({
+        action: "DEVICE_ATTESTATION_QUOTA_EXCEEDED",
+        level: "warning",
+        ipAddress: req.ip,
+        userAgent: req.headers["user-agent"],
+        details: {
+          deviceId: (req.body as any)?.deviceId,
+          windowMs: options.windowMs,
+          max: options.max,
+        },
+      });
+    });
+
+    rateLimitLogger.warn("[RATE-LIMIT] Device attestation quota exceeded", {
+      ip: anonymizeIp(req.ip || ""),
+      deviceId: (req.body as any)?.deviceId,
+      userAgent: req.headers["user-agent"],
+    });
+
+    res.status(429).json({
+      error: "Quota d'attestation dépassé pour cet appareil",
+      retryAfter: Math.ceil(options.windowMs! / 1000),
+      code: "DEVICE_QUOTA_EXCEEDED",
+    });
+  },
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
 // LOG DE CONFIGURATION AU DÉMARRAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -327,4 +567,8 @@ rateLimitLogger.info("Rate limiting configuré", {
   twoFactor: `${getLimit("twoFactor")} req/5min`,
   general: `${getLimit("general")} req/min`,
   global: `${getLimit("global")} req/min`,
+  // Configuration différenciée par niveau
+  strictAuth: `${getLimit("strictAuth")} req/15min`,
+  moderateApi: `${getLimit("moderateApi")} req/15min`,
+  permissiveMobile: `${getLimit("permissiveMobile")} req/15min`,
 });

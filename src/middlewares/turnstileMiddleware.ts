@@ -39,10 +39,16 @@ export const verifyTurnstile = async (
     if (process.env.NODE_ENV !== "production") {
       turnstileLogger.warn(
         "Clé secrète non configurée - bypass en développement",
+        {
+          path: req.path,
+          userId: (req as any).user?.id,
+        },
       );
       return next();
     }
-    turnstileLogger.error("TURNSTILE_SECRET_KEY non définie");
+    turnstileLogger.error("TURNSTILE_SECRET_KEY non définie", {
+      path: req.path,
+    });
     return res.status(500).json({
       error: "Configuration du serveur incomplète",
       code: "CAPTCHA_CONFIG_ERROR",
@@ -58,6 +64,8 @@ export const verifyTurnstile = async (
   if (!token) {
     turnstileLogger.warn("Token manquant", {
       ip: anonymizeIp(req.ip || ""),
+      path: req.path,
+      userId: (req as any).user?.id,
     });
     return res.status(400).json({
       error: "Veuillez compléter la vérification anti-robot",
@@ -92,6 +100,9 @@ export const verifyTurnstile = async (
       // Token valide, continuer
       turnstileLogger.info("Vérification réussie", {
         ip: anonymizeIp(req.ip || ""),
+        path: req.path,
+        userId: (req as any).user?.id,
+        hostname: result.hostname,
       });
       return next();
     } else {
@@ -99,7 +110,9 @@ export const verifyTurnstile = async (
       const errorCodes = result["error-codes"] || ["unknown-error"];
       turnstileLogger.warn("Vérification échouée", {
         ip: anonymizeIp(req.ip || ""),
+        path: req.path,
         errorCodes,
+        userId: (req as any).user?.id,
       });
 
       // Mapper les codes d'erreur Cloudflare vers des messages utilisateur
@@ -115,6 +128,8 @@ export const verifyTurnstile = async (
   } catch (error) {
     turnstileLogger.error("Erreur lors de la vérification", {
       error: error instanceof Error ? error.message : String(error),
+      path: req.path,
+      userId: (req as any).user?.id,
     });
 
     // En cas d'erreur réseau, on peut choisir de laisser passer ou bloquer

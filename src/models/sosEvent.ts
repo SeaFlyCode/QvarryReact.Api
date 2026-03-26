@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema, Model } from "mongoose";
+import { sanitizeMixed } from "../utils/sanitizeUtils";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MODÈLE SOS EVENT (JOURNAL D'ÉVÉNEMENTS)
@@ -83,14 +84,7 @@ const sosEventSchema: Schema<ISosEvent> = new Schema(
       set: (v: any) => {
         if (!v) return v;
         try {
-          const json = JSON.stringify(v);
-          if (json.length > 10000)
-            return { error: "Data too large", truncated: true };
-          return JSON.parse(json, (key, value) => {
-            if (typeof key === "string" && key.startsWith("$"))
-              return undefined;
-            return value;
-          });
+          return sanitizeMixed(v, 10000);
         } catch {
           return v;
         }

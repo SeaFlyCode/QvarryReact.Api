@@ -1,5 +1,9 @@
 import mongoose from "mongoose";
 import FicheModel, { IFiche } from "../models/fiches";
+import { createServiceLogger } from "../utils/contextLogger";
+import { logPerformance } from "../utils/performanceLogger";
+
+const log = createServiceLogger("FicheService");
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FONCTIONS DE SÉCURITÉ
@@ -82,11 +86,33 @@ function validateCoordinates(longitude: number, latitude: number): void {
  * Crée une nouvelle fiche
  */
 export async function createFiche(ficheData: Partial<IFiche>): Promise<IFiche> {
-  // Logique métier spécifique si nécessaire
+  log.info("Création d'une nouvelle fiche", {
+    userId: ficheData.userId?.toString(),
+    type: ficheData.type,
+  });
 
-  // Création de la fiche
-  const newFiche = await FicheModel.create(ficheData);
-  return newFiche;
+  try {
+    // Création de la fiche avec mesure de performance
+    const { result: newFiche, duration } = await logPerformance(
+      "Fiche.create",
+      async () => await FicheModel.create(ficheData),
+      { slowThreshold: 500 },
+    );
+
+    log.info("Fiche créée avec succès", {
+      ficheId: newFiche._id.toString(),
+      userId: ficheData.userId?.toString(),
+      duration,
+    });
+
+    return newFiche;
+  } catch (error) {
+    log.error("Erreur lors de la création de la fiche", {
+      userId: ficheData.userId?.toString(),
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 /**
@@ -94,11 +120,32 @@ export async function createFiche(ficheData: Partial<IFiche>): Promise<IFiche> {
  * Limite le nombre de résultats et ajoute un timeout pour la performance
  */
 export async function getAllFiches(): Promise<any[]> {
-  return FicheModel.find()
-    .sort({ date_creation: -1 })
-    .limit(1000) // Limite pour éviter les surcharges
-    .maxTimeMS(10000) // Timeout de 10 secondes
-    .lean();
+  log.debug("Récupération de toutes les fiches");
+
+  try {
+    const { result: fiches, duration } = await logPerformance(
+      "Fiche.findAll",
+      async () =>
+        await FicheModel.find()
+          .sort({ date_creation: -1 })
+          .limit(1000)
+          .maxTimeMS(10000)
+          .lean(),
+      { slowThreshold: 1000 },
+    );
+
+    log.info("Fiches récupérées", {
+      count: fiches.length,
+      duration,
+    });
+
+    return fiches;
+  } catch (error) {
+    log.error("Erreur lors de la récupération des fiches", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 /**
@@ -106,7 +153,24 @@ export async function getAllFiches(): Promise<any[]> {
  */
 export async function getFicheById(ficheId: string): Promise<any | null> {
   validateObjectId(ficheId, "ID de fiche");
-  return FicheModel.findById(ficheId).lean();
+
+  log.debug("Récupération d'une fiche par ID", { ficheId });
+
+  try {
+    const fiche = await FicheModel.findById(ficheId).lean();
+
+    if (!fiche) {
+      log.warn("Fiche non trouvée", { ficheId });
+    }
+
+    return fiche;
+  } catch (error) {
+    log.error("Erreur lors de la récupération de la fiche", {
+      ficheId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 /**
@@ -126,14 +190,35 @@ export async function updateFicheById(
 ): Promise<IFiche | null> {
   validateObjectId(ficheId, "ID de fiche");
 
-  // Mise à jour de la date de modification
-  updateData.date_modification = new Date();
-
-  return FicheModel.findByIdAndUpdate(
+  log.info("Mise à jour d'une fiche", {
     ficheId,
-    updateData,
-    { new: true }, // Retourne le document mis à jour
-  );
+    fields: Object.keys(updateData),
+  });
+
+  try {
+    // Mise à jour de la date de modification
+    updateData.date_modification = new Date();
+
+    const updatedFiche = await FicheModel.findByIdAndUpdate(
+      ficheId,
+      updateData,
+      { new: true },
+    );
+
+    if (!updatedFiche) {
+      log.warn("Fiche à mettre à jour non trouvée", { ficheId });
+    } else {
+      log.info("Fiche mise à jour avec succès", { ficheId });
+    }
+
+    return updatedFiche;
+  } catch (error) {
+    log.error("Erreur lors de la mise à jour de la fiche", {
+      ficheId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 /**
@@ -142,8 +227,25 @@ export async function updateFicheById(
 export async function deleteFicheById(ficheId: string): Promise<boolean> {
   validateObjectId(ficheId, "ID de fiche");
 
-  const result = await FicheModel.findByIdAndDelete(ficheId);
-  return result !== null;
+  log.warn("Suppression d'une fiche", { ficheId });
+
+  try {
+    const result = await FicheModel.findByIdAndDelete(ficheId);
+
+    if (result) {
+      log.info("Fiche supprimée avec succès", { ficheId });
+    } else {
+      log.warn("Fiche à supprimer non trouvée", { ficheId });
+    }
+
+    return result !== null;
+  } catch (error) {
+    log.error("Erreur lors de la suppression de la fiche", {
+      ficheId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 /**
@@ -153,14 +255,40 @@ export async function deleteFicheById(ficheId: string): Promise<boolean> {
 export async function searchFiches(
   criteria: Record<string, any>,
 ): Promise<any[]> {
-  // Nettoyage et validation des critères
-  const query = sanitizeSearchCriteria(criteria);
+  log.info("Recherche de fiches", {
+    criteria: Object.keys(criteria),
+  });
 
-  return FicheModel.find(query)
-    .sort({ date_creation: -1 })
-    .limit(100) // Limiter le nombre de résultats
-    .maxTimeMS(5000) // Timeout de 5 secondes pour éviter les requêtes longues
-    .lean();
+  try {
+    // Nettoyage et validation des critères
+    const query = sanitizeSearchCriteria(criteria);
+
+    log.debug("Critères sanitizés", { query });
+
+    const { result: fiches, duration } = await logPerformance(
+      "Fiche.search",
+      async () =>
+        await FicheModel.find(query)
+          .sort({ date_creation: -1 })
+          .limit(100)
+          .maxTimeMS(5000)
+          .lean(),
+      { slowThreshold: 1000 },
+    );
+
+    log.info("Fiches trouvées", {
+      count: fiches.length,
+      duration,
+    });
+
+    return fiches;
+  } catch (error) {
+    log.error("Erreur lors de la recherche de fiches", {
+      criteria,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 /**
@@ -177,23 +305,52 @@ export async function findFichesNearLocation(
 
   // Validation de la distance maximale (entre 1m et 50km)
   if (maxDistance < 1 || maxDistance > 50000) {
+    log.warn("Distance maximale invalide", { maxDistance });
     throw new Error("La distance maximale doit être entre 1m et 50km.");
   }
 
-  return FicheModel.find({
-    "center_cavite.coordinates": {
-      $near: {
-        $geometry: {
-          type: "Point",
-          coordinates: [longitude, latitude],
-        },
-        $maxDistance: maxDistance, // en mètres
-      },
-    },
-  })
-    .limit(100) // Limiter le nombre de résultats
-    .maxTimeMS(10000) // Timeout de 10 secondes
-    .lean();
+  log.info("Recherche de fiches à proximité", {
+    longitude,
+    latitude,
+    maxDistance,
+  });
+
+  try {
+    const { result: fiches, duration } = await logPerformance(
+      "Fiche.nearLocation",
+      async () =>
+        await FicheModel.find({
+          "center_cavite.coordinates": {
+            $near: {
+              $geometry: {
+                type: "Point",
+                coordinates: [longitude, latitude],
+              },
+              $maxDistance: maxDistance,
+            },
+          },
+        })
+          .limit(100)
+          .maxTimeMS(10000)
+          .lean(),
+      { slowThreshold: 2000 },
+    );
+
+    log.info("Fiches à proximité trouvées", {
+      count: fiches.length,
+      duration,
+    });
+
+    return fiches;
+  } catch (error) {
+    log.error("Erreur lors de la recherche de fiches à proximité", {
+      longitude,
+      latitude,
+      maxDistance,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 /**
@@ -203,11 +360,30 @@ export async function addPointToFiche(ficheId: string, pointId: string) {
   validateObjectId(ficheId, "ID de fiche");
   validateObjectId(pointId, "ID de point");
 
-  return FicheModel.findByIdAndUpdate(
-    ficheId,
-    { $addToSet: { points_ids: pointId } }, // utilise $addToSet pour éviter les doublons
-    { new: true },
-  );
+  log.info("Ajout d'un point à une fiche", { ficheId, pointId });
+
+  try {
+    const updatedFiche = await FicheModel.findByIdAndUpdate(
+      ficheId,
+      { $addToSet: { points_ids: pointId } },
+      { new: true },
+    );
+
+    if (!updatedFiche) {
+      log.warn("Fiche non trouvée pour ajout de point", { ficheId, pointId });
+    } else {
+      log.info("Point ajouté à la fiche avec succès", { ficheId, pointId });
+    }
+
+    return updatedFiche;
+  } catch (error) {
+    log.error("Erreur lors de l'ajout du point à la fiche", {
+      ficheId,
+      pointId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }
 
 /**
@@ -217,9 +393,28 @@ export async function removePointFromFiche(ficheId: string, pointId: string) {
   validateObjectId(ficheId, "ID de fiche");
   validateObjectId(pointId, "ID de point");
 
-  return FicheModel.findByIdAndUpdate(
-    ficheId,
-    { $pull: { points_ids: pointId } },
-    { new: true },
-  );
+  log.info("Retrait d'un point d'une fiche", { ficheId, pointId });
+
+  try {
+    const updatedFiche = await FicheModel.findByIdAndUpdate(
+      ficheId,
+      { $pull: { points_ids: pointId } },
+      { new: true },
+    );
+
+    if (!updatedFiche) {
+      log.warn("Fiche non trouvée pour retrait de point", { ficheId, pointId });
+    } else {
+      log.info("Point retiré de la fiche avec succès", { ficheId, pointId });
+    }
+
+    return updatedFiche;
+  } catch (error) {
+    log.error("Erreur lors du retrait du point de la fiche", {
+      ficheId,
+      pointId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    throw error;
+  }
 }

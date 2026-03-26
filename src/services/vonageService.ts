@@ -69,7 +69,7 @@ class VonageService {
     } catch (error) {
       vonageLogger.error("Erreur lors de l'initialisation", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       this.isConfigured = false;
     }
@@ -250,7 +250,7 @@ class VonageService {
         error instanceof Error ? error.message : String(error);
       vonageLogger.error("Exception lors de l'envoi SMS", {
         error: errorMessage,
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       return {
         success: false,

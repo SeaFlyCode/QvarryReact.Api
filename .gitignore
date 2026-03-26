@@ -49,6 +49,7 @@ server/*.tsbuildinfo
 .env.production
 .env.production.local
 .env.test.local
+.env.secrets
 
 # Client environment files
 client/.env
@@ -103,6 +104,11 @@ secrets/
 .secrets/
 credentials/
 *.secret
+
+# Firebase Service Account (HIGH-001)
+firebase-service-account.json
+firebase-*.json
+!firebase-service-account.example.json
 
 # Session & tokens
 sessions/

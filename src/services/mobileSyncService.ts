@@ -17,6 +17,7 @@ import { decryptWithKey, encryptWithKey } from "../utils/userEncryptionUtils";
 import { getErrorMessage } from "../utils/errorUtils";
 import { logger } from "../services/loggerService";
 import { validateFicheData } from "../services/validationService";
+import { safeJsonParse } from "../utils/secureJsonParser";
 
 const mobileSyncLogger = logger.child({ service: "mobile-sync" });
 
@@ -185,7 +186,10 @@ class MobileSyncService {
       let location = null;
       if (point.location_encrypted) {
         const locationJson = decryptWithKey(point.location_encrypted, userKey);
-        const parsedLocation = JSON.parse(locationJson);
+        const parsedLocation = safeJsonParse(locationJson, {
+          context: "mobile-sync-point-location",
+          maxDepth: 3,
+        });
         location = {
           type: "Point" as const,
           coordinates: [

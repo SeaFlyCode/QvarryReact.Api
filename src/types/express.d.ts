@@ -1,5 +1,5 @@
 // server/src/types/express.d.ts
-// Extension globale des types Express pour l'authentification
+// Extension globale des types Express pour l'authentification et le logging
 
 declare global {
   namespace Express {
@@ -12,6 +12,7 @@ declare global {
         clientType?: "web" | "mobile";
       };
       correlationId?: string;
+      id?: string; // Request ID / Correlation ID (alias pour requestIdMiddleware)
     }
   }
 }

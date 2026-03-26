@@ -62,9 +62,9 @@ const refreshTokenSchema = new Schema<IRefreshToken>({
 
 // Index composé pour optimiser les requêtes
 refreshTokenSchema.index({ userId: 1, revoked: 1 });
-refreshTokenSchema.index({ expiresAt: 1, revoked: 1 });
 
 // Cleanup automatique des tokens expirés (TTL index)
+// Note: Le TTL index sur expiresAt seul suffit. Pas besoin d'index composé { expiresAt: 1, revoked: 1 }
 refreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
 
 export default mongoose.model<IRefreshToken>(

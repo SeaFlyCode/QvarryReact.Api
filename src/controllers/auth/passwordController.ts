@@ -92,7 +92,7 @@ export async function handleForgotPassword(req: Request, res: Response) {
   } catch (error: unknown) {
     passwordLogger.error("[FORGOT-PASSWORD] Erreur", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       message: "Erreur lors de l'envoi de l'email de réinitialisation.",
@@ -253,7 +253,7 @@ export async function handleResetPassword(req: Request, res: Response) {
   } catch (error: unknown) {
     passwordLogger.error("[RESET-PASSWORD] Erreur", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       message: "Erreur lors de la réinitialisation du mot de passe.",

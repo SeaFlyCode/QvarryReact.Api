@@ -32,7 +32,7 @@ class RefreshTokenService {
     } catch (error) {
       refreshLogger.error("Erreur de chiffrement", {
         error: error instanceof Error ? error.message : error,
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       return undefined;
     }

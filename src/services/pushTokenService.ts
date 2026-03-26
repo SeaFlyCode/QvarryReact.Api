@@ -57,7 +57,7 @@ export async function registerToken(
       deviceId,
       platform,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     throw error;
   }
@@ -99,7 +99,7 @@ export async function removeToken(
       userId,
       deviceId,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     throw error;
   }
@@ -128,7 +128,7 @@ export async function getTokensByUserId(userId: string): Promise<IPushToken[]> {
       {
         userId,
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       },
     );
     throw error;
@@ -176,7 +176,7 @@ export async function getTokensByUserIds(
       {
         userIdsCount: userIds.length,
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       },
     );
     throw error;
@@ -220,7 +220,7 @@ export async function removeInvalidTokens(
       {
         deviceIdsCount: deviceIds.length,
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       },
     );
     throw error;
@@ -255,7 +255,7 @@ export async function cleanupOldTokens(daysOld: number = 90): Promise<number> {
     pushTokenLogger.error("Erreur lors du nettoyage des tokens FCM obsolètes", {
       daysOld,
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     throw error;
   }

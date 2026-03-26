@@ -76,7 +76,7 @@ export async function activateMaintenance(req: Request, res: Response) {
   } catch (error) {
     maintenanceCtrlLogger.error("Maintenance activation error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -112,7 +112,7 @@ export async function deactivateMaintenance(req: Request, res: Response) {
   } catch (error) {
     maintenanceCtrlLogger.error("Maintenance deactivation error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la désactivation du mode maintenance",
@@ -170,7 +170,7 @@ export async function updateMaintenanceMessage(req: Request, res: Response) {
   } catch (error) {
     maintenanceCtrlLogger.error("Maintenance message update error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de la mise à jour du message" });
   }

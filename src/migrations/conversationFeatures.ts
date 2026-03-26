@@ -87,7 +87,7 @@ export async function migrateConversationFeatures(): Promise<void> {
   } catch (error) {
     migrationLogger.error("❌ Erreur lors de la migration des conversations", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     throw error;
   }
@@ -174,18 +174,20 @@ if (require.main === module) {
         process.env.MONGODB_URI || "mongodb://localhost:27017/qvarry";
       await mongoose.connect(MONGODB_URI);
 
-      console.log("✅ Connecté à MongoDB");
+      migrationLogger.info("✅ Connecté à MongoDB");
 
       // Exécuter la migration
       await migrateConversationFeatures();
 
-      console.log("✅ Migration terminée avec succès");
+      migrationLogger.info("✅ Migration terminée avec succès");
 
       // Se déconnecter
       await mongoose.disconnect();
       process.exit(0);
     } catch (error) {
-      console.error("❌ Erreur:", error);
+      migrationLogger.error("❌ Erreur:", {
+        error: error instanceof Error ? error.message : String(error),
+      });
       process.exit(1);
     }
   })();

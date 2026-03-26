@@ -29,7 +29,7 @@ class SyncService {
       syncLogger.error("Échec de la synchronisation", {
         userId,
         error: error instanceof Error ? error.message : error,
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       return {
         success: false,

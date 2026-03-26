@@ -162,7 +162,7 @@ export async function getGlobalStats(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur stats globales", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -339,7 +339,7 @@ export async function getRegistrationStats(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur stats inscriptions", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -406,7 +406,7 @@ export async function getActivityStats(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur stats activité", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -506,7 +506,7 @@ export async function listUsers(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur liste users", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -573,7 +573,7 @@ export async function getUserDetails(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur détails user", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -655,7 +655,7 @@ export async function blockUser(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur blocage user", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du blocage de l'utilisateur" });
   }
@@ -720,7 +720,7 @@ export async function unblockUser(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur déblocage user", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -791,7 +791,7 @@ export async function promoteToAdmin(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur promotion user", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -873,7 +873,7 @@ export async function demoteFromAdmin(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur rétrogradation user", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -932,7 +932,7 @@ export async function forceLogoutUser(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur force logout", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de la déconnexion forcée" });
   }
@@ -1019,7 +1019,7 @@ export async function resetUserPassword(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur reset password", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -1099,7 +1099,7 @@ export async function getAuditLogs(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur logs audit", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors de la récupération des logs" });
   }
@@ -1154,7 +1154,7 @@ export async function getAuditStats(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur stats audit", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -1176,7 +1176,7 @@ export async function getSecurityDashboard(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur dashboard sécurité", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des statistiques de sécurité",
@@ -1206,7 +1206,7 @@ export async function listBlockedIps(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur liste IPs bloquées", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -1262,7 +1262,7 @@ export async function blockIp(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur blocage IP", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du blocage de l'IP" });
   }
@@ -1305,7 +1305,7 @@ export async function unblockIp(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur déblocage IP", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du déblocage de l'IP" });
   }
@@ -1340,7 +1340,7 @@ export async function getIpThreatScore(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur threat score", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -1450,7 +1450,7 @@ export async function exportAuditLogs(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur export logs", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     // Vérifier si les headers n'ont pas déjà été envoyés
     if (!res.headersSent) {
@@ -1497,7 +1497,7 @@ export async function sendTestAlert(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur envoi alerte test", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -1563,7 +1563,7 @@ export async function listPendingUsers(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur liste utilisateurs en attente", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       error: "Erreur lors de la récupération des utilisateurs en attente",
@@ -1609,7 +1609,7 @@ export async function approveUser(req: Request, res: Response) {
       adminLogger.error("[EMAIL] Erreur envoi email approbation", {
         email: maskEmail(userEmail),
         error: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     });
 
@@ -1635,7 +1635,7 @@ export async function approveUser(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur approbation utilisateur", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)
@@ -1684,7 +1684,7 @@ export async function rejectUser(req: Request, res: Response) {
       adminLogger.error("[EMAIL] Erreur envoi email refus", {
         email: maskEmail(userEmail),
         error: err instanceof Error ? err.message : String(err),
-        stack: err instanceof Error ? err.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     });
 
@@ -1715,7 +1715,7 @@ export async function rejectUser(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur refus utilisateur", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({ error: "Erreur lors du refus de l'utilisateur" });
   }
@@ -1736,7 +1736,7 @@ export async function getPendingUsersCount(req: Request, res: Response) {
   } catch (error) {
     adminLogger.error("[ADMIN] Erreur comptage utilisateurs en attente", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res
       .status(500)

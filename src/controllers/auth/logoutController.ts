@@ -122,7 +122,7 @@ export async function handleLogoutUser(req: Request, res: Response) {
         {
           error:
             jwtError instanceof Error ? jwtError.message : String(jwtError),
-          stack: jwtError instanceof Error ? jwtError.stack : undefined,
+          // HIGH-001: stack trace supprimé pour sécurité,
         },
       );
       return res.status(200).json({
@@ -185,7 +185,7 @@ export async function handleLogoutUser(req: Request, res: Response) {
           userId,
           error:
             syncError instanceof Error ? syncError.message : String(syncError),
-          stack: syncError instanceof Error ? syncError.stack : undefined,
+          // HIGH-001: stack trace supprimé pour sécurité,
         });
         memoryStorage.endSession(userId);
         return res.status(500).json({
@@ -214,7 +214,7 @@ export async function handleLogoutUser(req: Request, res: Response) {
   } catch (error: unknown) {
     logoutLogger.error("[AUTH] Erreur lors de la déconnexion", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
 
     // Note: Le nettoyage de session devrait être fait avant cette erreur

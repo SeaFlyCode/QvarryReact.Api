@@ -38,7 +38,7 @@ export function startDataShareCleanupJob(): void {
     } catch (error) {
       cronLogger.error("Data share cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     } finally {
       isDataShareCleanupRunning = false;
@@ -72,7 +72,7 @@ export function startPushTokenCleanupJob(): void {
     } catch (error) {
       cronLogger.error("Push token cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     } finally {
       isPushTokenCleanupRunning = false;
@@ -110,7 +110,7 @@ export function startNotificationCleanupJob(): void {
     } catch (error) {
       cronLogger.error("Notification cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     } finally {
       isNotificationCleanupRunning = false;
@@ -144,7 +144,7 @@ export function startRefreshTokenCleanupJob(): void {
     } catch (error) {
       cronLogger.error("Refresh token cleanup failed", {
         error: error instanceof Error ? error.message : String(error),
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
     } finally {
       isRefreshTokenCleanupRunning = false;
@@ -167,7 +167,7 @@ export async function runManualCleanup(): Promise<number> {
   } catch (error) {
     cronLogger.error("Manual cleanup failed", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     throw error;
   }

@@ -8,6 +8,7 @@
 
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
 import { redisSessionService } from "../services/redisSessionService";
 // CRIT-10: blacklistedTokens Set supprimé, on utilise redisSessionService exclusivement
 import { jwtKeyManager } from "../utils/jwtKeyManager";
@@ -126,20 +127,52 @@ export const mobileAuthMiddleware = async (
       algorithms: ["HS256"],
     }) as MobileDecodedToken;
 
-    // 4. MED-001: VÉRIFICATION DU BINDING DEVICE-TOKEN
+    // 4. MED-001: VÉRIFICATION DU BINDING DEVICE-TOKEN (TIMING-SAFE)
     const headerDeviceId = req.headers["x-device-id"] as string;
-    if (
-      decoded.deviceId &&
-      headerDeviceId &&
-      decoded.deviceId !== headerDeviceId
-    ) {
-      mobileAuthLogger.warn("Device mismatch détecté", {
-        tokenDeviceId: decoded.deviceId,
-        headerDeviceId,
+    if (decoded.deviceId && headerDeviceId) {
+      // TIMING-SAFE COMPARISON pour éviter timing attacks
+      const tokenDeviceBuffer = Buffer.from(decoded.deviceId);
+      const headerDeviceBuffer = Buffer.from(headerDeviceId);
+
+      // Si longueurs différentes, faire quand même une comparaison timing-safe
+      if (tokenDeviceBuffer.length !== headerDeviceBuffer.length) {
+        // Comparer avec un buffer factice pour éviter timing leak
+        const dummyBuffer = Buffer.alloc(tokenDeviceBuffer.length);
+        try {
+          crypto.timingSafeEqual(tokenDeviceBuffer, dummyBuffer);
+        } catch {
+          // Ignore
+        }
+
+        mobileAuthLogger.warn("Device mismatch détecté (longueurs)", {
+          tokenDeviceIdLength: tokenDeviceBuffer.length,
+          headerDeviceIdLength: headerDeviceBuffer.length,
+        });
+        return res.status(401).json({
+          error: "Token invalide pour cet appareil. Veuillez vous reconnecter.",
+          code: "DEVICE_MISMATCH",
+        });
+      }
+
+      // Comparaison timing-safe
+      if (!crypto.timingSafeEqual(tokenDeviceBuffer, headerDeviceBuffer)) {
+        mobileAuthLogger.warn("Device mismatch détecté", {
+          tokenDeviceId: decoded.deviceId.substring(0, 8) + "...",
+          headerDeviceId: headerDeviceId.substring(0, 8) + "...",
+        });
+        return res.status(401).json({
+          error: "Token invalide pour cet appareil. Veuillez vous reconnecter.",
+          code: "DEVICE_MISMATCH",
+        });
+      }
+    } else if (decoded.deviceId && !headerDeviceId) {
+      // Token a un deviceId mais pas de header -> rejet
+      mobileAuthLogger.warn("Header x-device-id manquant", {
+        hasTokenDeviceId: !!decoded.deviceId,
       });
-      return res.status(401).json({
-        error: "Token invalide pour cet appareil. Veuillez vous reconnecter.",
-        code: "DEVICE_MISMATCH",
+      return res.status(400).json({
+        error: "Device ID requis (header x-device-id)",
+        code: "DEVICE_ID_MISSING",
       });
     }
 
@@ -329,7 +362,7 @@ export const mobileAuthMiddleware = async (
 
     mobileAuthLogger.error("Erreur inattendue", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({
       error: "Erreur d'authentification",

@@ -101,7 +101,7 @@ class DataArchiveService {
         entityType,
         entityId: entityId.toString(),
         error: error instanceof Error ? error.message : error,
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       });
       throw error;
     }

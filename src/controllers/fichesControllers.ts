@@ -112,6 +112,13 @@ export async function handleCreateFiche(req: Request, res: Response) {
       });
     }
 
+    fichesLogger.info("Fiche créée avec succès", {
+      userId,
+      ficheId: newFicheId.toString(),
+      action: "create_fiche",
+      hasPoints: validPointsIds.length > 0,
+    });
+
     res.status(201).json({
       message: "Fiche créée avec succès",
       ficheId: newFicheId,
@@ -196,6 +203,15 @@ export async function handleUpdateFiche(req: Request, res: Response) {
       });
     }
 
+    fichesLogger.info("Fiche mise à jour avec succès", {
+      userId,
+      ficheId,
+      action: "update_fiche",
+      fieldsUpdated: Object.keys(updateData).filter((k) =>
+        ALLOWED_UPDATE_FIELDS.includes(k),
+      ),
+    });
+
     res.status(200).json({
       message: "Fiche mise à jour avec succès",
       fiche,
@@ -265,6 +281,13 @@ export async function handleDeleteFiche(req: Request, res: Response) {
       });
     }
 
+    fichesLogger.info("Fiche supprimée avec succès", {
+      userId,
+      ficheId,
+      action: "delete_fiche",
+      pointsCount: fiche.points_ids?.length || 0,
+    });
+
     res.status(200).json({
       message: "Fiche supprimée avec succès",
       syncSuccess: true,
@@ -323,6 +346,13 @@ export async function handleGetAllFiches(req: Request, res: Response) {
         interets: typeof obj.interets === "string" ? obj.interets : "",
         commentaire: typeof obj.commentaire === "string" ? obj.commentaire : "",
       };
+    });
+
+    fichesLogger.debug("Fiches récupérées avec succès", {
+      userId,
+      count: fichesObj.length,
+      total,
+      action: "read_fiches",
     });
 
     res.status(200).json({
@@ -486,6 +516,13 @@ export async function handleAddPointToFiche(req: Request, res: Response) {
       });
     }
 
+    fichesLogger.info("Point ajouté à la fiche avec succès", {
+      userId,
+      ficheId,
+      pointId,
+      action: "add_point_to_fiche",
+    });
+
     res.status(200).json({
       message: "Point ajouté à la fiche avec succès",
       ficheId,
@@ -565,6 +602,13 @@ export async function handleRemovePointFromFiche(req: Request, res: Response) {
       });
     }
 
+    fichesLogger.info("Point retiré de la fiche avec succès", {
+      userId,
+      ficheId,
+      pointId,
+      action: "remove_point_from_fiche",
+    });
+
     res.status(200).json({
       success: true,
       message: "Point dissocié de la fiche avec succès",
@@ -575,7 +619,7 @@ export async function handleRemovePointFromFiche(req: Request, res: Response) {
   } catch (error: unknown) {
     fichesLogger.error("Erreur lors de la dissociation point-fiche", {
       error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({
       success: false,
@@ -612,7 +656,7 @@ export async function handleGetPointsByFicheId(req: Request, res: Response) {
   } catch (error: unknown) {
     fichesLogger.error("Erreur recuperation des points de la fiche", {
       error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({
       success: false,
@@ -686,7 +730,7 @@ export async function handleGetFicheByPointId(req: Request, res: Response) {
       "Erreur lors de la recuperation de la fiche associee au point",
       {
         error: error instanceof Error ? error.message : error,
-        stack: error instanceof Error ? error.stack : undefined,
+        // HIGH-001: stack trace supprimé pour sécurité,
       },
     );
     return res.status(500).json({
@@ -891,7 +935,7 @@ export async function handleSearchFiches(req: Request, res: Response) {
   } catch (error: unknown) {
     fichesLogger.error("Erreur lors de la recherche avancee de fiches", {
       error: error instanceof Error ? error.message : error,
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({
       message: "Erreur lors de la recherche avancée de fiches.",

@@ -26,8 +26,44 @@ const publicLogger = logger.child({ service: "public-routes" });
 
 router.get("/logo.svg", async (req: Request, res: Response) => {
   try {
-    // Chemin vers le fichier SVG
-    const logoPath = path.join(__dirname, "../public/logo.svg");
+    // CRIT-002: Protection path traversal (défense en profondeur)
+    const logoFileName = "logo.svg";
+    const sanitizedFileName = path.basename(logoFileName); // Protection path traversal
+
+    if (sanitizedFileName !== logoFileName) {
+      publicLogger.warn("Tentative path traversal détectée", { ip: req.ip });
+      return res.status(400).json({
+        error: "Nom de fichier invalide",
+        code: "INVALID_FILE_NAME",
+      });
+    }
+
+    // Vérifier extension autorisée
+    const allowedExtensions = [".svg"];
+    const ext = path.extname(sanitizedFileName).toLowerCase();
+    if (!allowedExtensions.includes(ext)) {
+      return res.status(400).json({
+        error: "Type de fichier non autorisé",
+        code: "FILE_TYPE_NOT_ALLOWED",
+      });
+    }
+
+    // Chemin vers le fichier SVG (sécurisé)
+    const logoPath = path.join(__dirname, "../public", sanitizedFileName);
+
+    // Vérifier que le path final est bien dans public/ (double check)
+    const resolvedPath = path.resolve(logoPath);
+    const resolvedPublicDir = path.resolve(__dirname, "../public");
+    if (!resolvedPath.startsWith(resolvedPublicDir)) {
+      publicLogger.error("Tentative d'accès hors public/", {
+        resolvedPath,
+        ip: req.ip,
+      });
+      return res.status(403).json({
+        error: "Accès refusé",
+        code: "ACCESS_DENIED",
+      });
+    }
 
     // Vérifier si le fichier existe
     try {

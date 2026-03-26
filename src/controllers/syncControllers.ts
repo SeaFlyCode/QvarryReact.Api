@@ -25,7 +25,7 @@ export async function handleManualSync(req: Request, res: Response) {
   } catch (error: unknown) {
     syncCtrlLogger.error("Manual sync error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       success: false,
@@ -71,7 +71,7 @@ export async function handleSyncRefresh(req: Request, res: Response) {
   } catch (error: unknown) {
     syncCtrlLogger.error("Sync refresh error", {
       error: error instanceof Error ? error.message : String(error),
-      stack: error instanceof Error ? error.stack : undefined,
+      // HIGH-001: stack trace supprimé pour sécurité,
     });
     res.status(500).json({
       success: false,
