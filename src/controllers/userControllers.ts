@@ -296,6 +296,27 @@ export async function handleGetAllUsers(req: Request, res: Response) {
   }
 }
 
+/**
+ * Récupère un utilisateur par son ID depuis MongoDB et retourne le profil décrypté et sanitisé.
+ * Extraction de la logique commune utilisée par handleGetUserById et handleGetMe.
+ */
+async function fetchAndFormatUser(
+  userId: string,
+): Promise<ReturnType<typeof sanitizeUserForResponse> | null> {
+  // SEC-044: Exclure les champs sensibles de la query Mongoose
+  const selectFields = EXCLUDED_USER_FIELDS.map((field) => `-${field}`).join(
+    " ",
+  );
+
+  const user = await UserModel.findById(userId).select(selectFields);
+  if (!user) {
+    return null;
+  }
+
+  const decrypted = decryptUser(user);
+  return sanitizeUserForResponse(decrypted);
+}
+
 export async function handleGetUserById(req: Request, res: Response) {
   try {
     const userId = req.params.id;
@@ -316,19 +337,10 @@ export async function handleGetUserById(req: Request, res: Response) {
       });
     }
 
-    // SEC-044: Exclure les champs sensibles de la query Mongoose
-    const selectFields = EXCLUDED_USER_FIELDS.map((field) => `-${field}`).join(
-      " ",
-    );
-
-    const user = await UserModel.findById(userId).select(selectFields);
-    if (!user) {
+    const sanitized = await fetchAndFormatUser(userId);
+    if (!sanitized) {
       return res.status(404).json({ message: "Utilisateur non trouvé." });
     }
-
-    // SEC-044: Déchiffrer puis sanitize
-    const decrypted = decryptUser(user);
-    const sanitized = sanitizeUserForResponse(decrypted);
 
     res.status(200).json(sanitized);
   } catch (error: unknown) {
@@ -336,7 +348,35 @@ export async function handleGetUserById(req: Request, res: Response) {
       userId: req.params.id,
       error: getErrorMessage(error),
     });
-    return res.status(400).json({ message: "Une erreur interne est survenue" });
+    return res.status(500).json({ message: "Une erreur interne est survenue" });
+  }
+}
+
+/**
+ * GET /users/me
+ * Retourne le profil de l'utilisateur connecté.
+ * Équivalent de handleGetUserById mais sans vérification d'autorisation
+ * puisque l'utilisateur accède toujours à son propre profil.
+ */
+export async function handleGetMe(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+
+    const sanitized = await fetchAndFormatUser(userId);
+    if (!sanitized) {
+      return res.status(404).json({ message: "Utilisateur non trouvé." });
+    }
+
+    res.status(200).json(sanitized);
+  } catch (error: unknown) {
+    userLogger.error("Erreur recuperation profil utilisateur connecté", {
+      userId: req.user?.id,
+      error: getErrorMessage(error),
+    });
+    return res.status(500).json({ message: "Une erreur interne est survenue" });
   }
 }
 

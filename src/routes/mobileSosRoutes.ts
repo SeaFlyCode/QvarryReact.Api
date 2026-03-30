@@ -26,6 +26,8 @@ import {
   handleSosGetContacts,
   handleSosUpdateContact,
   handleSosDeleteContact,
+  handleSosAddParticipant,
+  handleSosRemoveParticipant,
 } from "../controllers/mobileSosControllers";
 
 const router = express.Router();
@@ -68,6 +70,26 @@ const SOS_CRITICAL_WINDOW_MS = SOS_CRITICAL_WINDOW_MINUTES * 60 * 1000;
 const SOS_CRITICAL_BLOCK_DURATION_MS = SOS_CRITICAL_BLOCK_MINUTES * 60 * 1000;
 
 const sosCriticalRateLimitStore = new Map<string, SosRateLimitEntry>();
+
+// Nettoyage périodique des entrées expirées pour éviter un memory leak.
+// Une entrée est considérée expirée si :
+// - elle est bloquée et le blocage est terminé, OU
+// - sa fenêtre de temps est écoulée (et elle n'est pas bloquée)
+const sosCriticalRateLimitCleanup = setInterval(() => {
+  const now = new Date();
+  for (const [key, entry] of sosCriticalRateLimitStore.entries()) {
+    const windowExpired =
+      now.getTime() - entry.firstAttempt.getTime() > SOS_CRITICAL_WINDOW_MS;
+    const blockExpired =
+      entry.blockedUntil !== undefined && entry.blockedUntil <= now;
+    const notBlocked = entry.blockedUntil === undefined;
+
+    if ((notBlocked && windowExpired) || blockExpired) {
+      sosCriticalRateLimitStore.delete(key);
+    }
+  }
+}, 30 * 60 * 1000); // toutes les 30 minutes
+sosCriticalRateLimitCleanup.unref();
 
 /**
  * Génère un identifiant composite pour le rate limiting SOS (IP + Device)
@@ -150,6 +172,69 @@ const mobileSosCriticalMiddleware = [
   sosCriticalRateLimiter, // Rate limiter plus permissif pour dead-man's-switch
 ];
 
+// Rate limiter dédié à l'activation SOS.
+// authMiddleware a déjà été exécuté à ce stade (il précède ce middleware dans
+// mobileSosMiddleware), donc req.user?.id est disponible et inclus dans la clé
+// pour éviter qu'un attaquant contourne la limite en changeant simplement d'IP.
+const sosActivateRateLimiter = async (
+  req: express.Request,
+  res: express.Response,
+  next: express.NextFunction,
+) => {
+  const ip = req.ip || req.connection.remoteAddress || "unknown";
+  const deviceId = (req.headers["x-device-id"] as string) || "no-device";
+  const userId = (req as any).user?.id || "no-user";
+  const identifier = `sos_activate_${userId}_${ip}_${deviceId}`;
+  const now = new Date();
+
+  const entry = sosCriticalRateLimitStore.get(identifier);
+
+  if (!entry) {
+    sosCriticalRateLimitStore.set(identifier, {
+      count: 1,
+      firstAttempt: now,
+    });
+    return next();
+  }
+
+  if (entry.blockedUntil && entry.blockedUntil > now) {
+    const remainingMinutes = Math.ceil(
+      (entry.blockedUntil.getTime() - now.getTime()) / 60000,
+    );
+    return res.status(429).json({
+      error: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
+      code: "SOS_RATE_LIMIT_EXCEEDED",
+      retryAfter: remainingMinutes * 60,
+    });
+  }
+
+  const timeSinceFirst = now.getTime() - entry.firstAttempt.getTime();
+  if (timeSinceFirst > SOS_CRITICAL_WINDOW_MS) {
+    sosCriticalRateLimitStore.set(identifier, {
+      count: 1,
+      firstAttempt: now,
+    });
+    return next();
+  }
+
+  entry.count++;
+
+  if (entry.count > SOS_CRITICAL_MAX_REQUESTS) {
+    entry.blockedUntil = new Date(
+      now.getTime() + SOS_CRITICAL_BLOCK_DURATION_MS,
+    );
+    sosCriticalRateLimitStore.set(identifier, entry);
+    return res.status(429).json({
+      error: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
+      code: "SOS_RATE_LIMIT_EXCEEDED",
+      retryAfter: SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+    });
+  }
+
+  sosCriticalRateLimitStore.set(identifier, entry);
+  next();
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // ROUTES SESSION SOS
 // ═══════════════════════════════════════════════════════════════════════════
@@ -195,7 +280,7 @@ const mobileSosCriticalMiddleware = [
  *   - 409: SESSION_ALREADY_ACTIVE
  *   - 500: INTERNAL_ERROR
  */
-router.post("/activate", ...mobileSosMiddleware, handleSosActivate);
+router.post("/activate", ...mobileSosMiddleware, sosActivateRateLimiter, handleSosActivate);
 
 /**
  * POST /api/mobile/sos/heartbeat
@@ -427,6 +512,63 @@ router.delete(
   ...mobileSosMiddleware,
   validateObjectId("id"),
   handleSosDeleteContact,
+);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// ROUTES GESTION DES PARTICIPANTS (SESSION DE GROUPE)
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/mobile/sos/add-participant
+ * Ajouter un participant à une session SOS déjà active
+ * Seul le créateur de la session peut ajouter quelqu'un
+ *
+ * Body:
+ *   {
+ *     "targetUserId": "mongoId",         // ID de l'utilisateur à ajouter
+ *     "sessionId": "mongoId"             // Optionnel - prend la session active du créateur
+ *   }
+ *
+ * Response 200:
+ *   { success: true, session: { id, participants, ... } }
+ *
+ * Codes d'erreur:
+ *   - 400: INVALID_PARTICIPANT_IDS, ALREADY_PARTICIPANT, SESSION_ALREADY_ACTIVE
+ *   - 401: UNAUTHORIZED
+ *   - 403: FORBIDDEN (pas le créateur)
+ *   - 404: NO_ACTIVE_SESSION
+ *   - 500: INTERNAL_ERROR
+ */
+router.post(
+  "/add-participant",
+  ...mobileSosMiddleware,
+  handleSosAddParticipant,
+);
+
+/**
+ * POST /api/mobile/sos/remove-participant
+ * Retirer un participant d'une session SOS active
+ * N'importe quel participant actif peut retirer n'importe qui (soi-même inclus)
+ * Si dernier participant → session résolue automatiquement
+ *
+ * Body:
+ *   {
+ *     "targetUserId": "mongoId",         // ID de l'utilisateur à retirer
+ *     "sessionId": "mongoId"             // Optionnel - prend la session active
+ *   }
+ *
+ * Response 200:
+ *   { success: true, session: { id, participants, status, ... } }
+ *
+ * Codes d'erreur:
+ *   - 401: UNAUTHORIZED
+ *   - 404: NO_ACTIVE_SESSION, PARTICIPANT_NOT_FOUND
+ *   - 500: INTERNAL_ERROR
+ */
+router.post(
+  "/remove-participant",
+  ...mobileSosMiddleware,
+  handleSosRemoveParticipant,
 );
 
 export default router;

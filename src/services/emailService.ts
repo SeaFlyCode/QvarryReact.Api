@@ -30,7 +30,8 @@ export type EmailTemplate =
   | "contact-accepted"
   | "account-approved"
   | "account-rejected"
-  | "admin-pending-validation";
+  | "admin-pending-validation"
+  | "sos-admin-alert";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SYSTÈME DE DÉDUPLICATION DES EMAILS
@@ -270,6 +271,7 @@ const getSubjectForTemplate = (
     "account-rejected": "❌ Votre demande de compte QVARRY",
     "admin-pending-validation":
       "👤 Nouveau compte en attente de validation - QVARRY",
+    "sos-admin-alert": `🆘 Alerte SOS ${variables.EVENT_TYPE || "CRITIQUE"} - QVARRY`,
   };
 
   return subjects[template] || "Notification QVARRY";

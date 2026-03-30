@@ -826,17 +826,35 @@ app.use("/api", generalLimiter);
 
     // MED-004: Protection CSRF sur les routes sensibles (POST/PUT/DELETE uniquement)
     // S'applique après authentification mais avant les handlers
-    app.use("/api/v1/users", csrfProtection);
-    app.use("/api/v1/admin", csrfProtection);
-    app.use("/api/v1/security", csrfProtection);
-    app.use("/api/v1/fiches", csrfProtection);
-    app.use("/api/v1/lists", csrfProtection);
-    app.use("/api/v1/points", csrfProtection);
-    app.use("/api/v1/conversations", csrfProtection);
-    app.use("/api/v1/messages", csrfProtection);
-    app.use("/api/v1/contacts", csrfProtection);
-    app.use("/api/v1/data-share", csrfProtection);
-    app.use("/api/v1/notifications", csrfProtection);
+    // Fix: exempter les méthodes sûres (GET/HEAD/OPTIONS) et les requêtes mobiles
+    // Raison: le CSRF protège contre l'injection automatique de cookies par un navigateur.
+    // Les clients mobiles utilisent un Bearer token dans Authorization header → pas de risque CSRF.
+    const csrfProtectionWeb = (
+      req: express.Request,
+      res: express.Response,
+      next: express.NextFunction,
+    ) => {
+      const isSafeMethod = ["GET", "HEAD", "OPTIONS"].includes(req.method);
+      const isMobile =
+        req.headers["x-platform"] === "ios" ||
+        req.headers["x-platform"] === "android";
+      if (isSafeMethod || isMobile) {
+        return next();
+      }
+      return csrfProtection(req, res, next);
+    };
+
+    app.use("/api/v1/users", csrfProtectionWeb);
+    app.use("/api/v1/admin", csrfProtectionWeb);
+    app.use("/api/v1/security", csrfProtectionWeb);
+    app.use("/api/v1/fiches", csrfProtectionWeb);
+    app.use("/api/v1/lists", csrfProtectionWeb);
+    app.use("/api/v1/points", csrfProtectionWeb);
+    app.use("/api/v1/conversations", csrfProtectionWeb);
+    app.use("/api/v1/messages", csrfProtectionWeb);
+    app.use("/api/v1/contacts", csrfProtectionWeb);
+    app.use("/api/v1/data-share", csrfProtectionWeb);
+    app.use("/api/v1/notifications", csrfProtectionWeb);
 
     app.use("/api/v1/fiches", fichesRoutes);
     app.use("/api/v1/users", userRoutes);

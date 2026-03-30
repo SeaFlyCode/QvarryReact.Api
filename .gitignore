@@ -108,6 +108,7 @@ credentials/
 # Firebase Service Account (HIGH-001)
 firebase-service-account.json
 firebase-*.json
+config/firebase-service-account.json
 !firebase-service-account.example.json
 
 # Session & tokens

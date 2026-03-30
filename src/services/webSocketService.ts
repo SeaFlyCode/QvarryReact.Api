@@ -1153,8 +1153,22 @@ class WebSocketService {
       });
 
       // WS-004: Validation CORS pour WebSocket
+      // En développement : pas de vérification d'origin (clients mobiles sur réseau local
+      // peuvent avoir n'importe quelle IP LAN). La sécurité est assurée par le handshake JWT
+      // applicatif obligatoire (premier message { type: "auth", token: "..." }).
+      // En production : vérification stricte de l'origin dans ALLOWED_WS_ORIGINS.
       const origin = request.headers.origin;
-      if (origin && !ALLOWED_WS_ORIGINS.includes(origin)) {
+      if (NODE_ENV === "development" && origin) {
+        wsLogger.debug("WS upgrade origin (dev mode, non bloquée)", {
+          origin,
+          pathname,
+        });
+      }
+      if (
+        NODE_ENV !== "development" &&
+        origin &&
+        !ALLOWED_WS_ORIGINS.includes(origin)
+      ) {
         wsLogger.error("Origin non autorisée", {
           origin,
         });

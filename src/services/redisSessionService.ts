@@ -794,6 +794,18 @@ export class RedisSessionService {
     jti: string,
     clientType: "web" | "mobile" = "web",
   ): Promise<boolean> {
+    // Fix: Si Redis désactivé, fallback permissif pour mobile
+    // (le Map mémoire est vidé au redémarrage → tous les tokens mobiles actifs
+    // seraient invalides sans cette protection)
+    if (!redis) {
+      const memoryKey = `${userId}:${clientType}`;
+      const stored = memoryJtiStore.get(memoryKey);
+      if (!stored && clientType === "mobile") {
+        // Pas de JTI stocké en mode sans Redis → on fait confiance au JWT lui-même
+        return true;
+      }
+      return !stored || stored === jti;
+    }
     const storedJti = await this.getSessionJti(userId, clientType);
     return storedJti === jti;
   }

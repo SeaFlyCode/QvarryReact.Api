@@ -14,6 +14,14 @@ import {
   handleAdminSosCancelSession,
   handleAdminSosHistory,
   handleAdminSosStats,
+  handleAdminSosForceEscalation,
+  handleAdminSosExtendSession,
+  handleAdminSosActivateSession,
+  handleAdminSosConfirmSafe,
+  handleAdminSosTriggerSms,
+  handleAdminSosSendNotification,
+  handleAdminSosAddParticipant,
+  handleAdminSosRemoveParticipant,
 } from "../../controllers/adminSosControllers";
 import { mockRequest, mockResponse } from "../mocks";
 import { sosService } from "../../services/sosService";
@@ -665,6 +673,964 @@ describe("adminSosControllers", () => {
         expect.objectContaining({
           error: expect.stringContaining("statistiques"),
           code: "INTERNAL_ERROR",
+        }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TESTS: handleAdminSosForceEscalation
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("handleAdminSosForceEscalation", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        user: { id: "admin123", isAdmin: true },
+        params: { sessionId: "session123" },
+        body: { userId: "user123", targetStage: 1 },
+      });
+      res = mockResponse();
+
+      (sosService.adminForceEscalation as jest.Mock).mockResolvedValue({
+        session: {
+          _id: "session123",
+          status: "ESCALATING",
+          currentStage: 1,
+        },
+        participant: {
+          userId: "user123",
+          currentStage: 1,
+          escalationHistory: [],
+        },
+      });
+    });
+
+    it("devrait forcer l'escalade d'un participant", async () => {
+      await handleAdminSosForceEscalation(req as Request, res as Response);
+
+      expect(sosService.adminForceEscalation).toHaveBeenCalledWith(
+        "session123",
+        "user123",
+        1,
+        "admin123",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            id: "session123",
+            currentStage: 1,
+          }),
+          participant: expect.objectContaining({
+            userId: "user123",
+            currentStage: 1,
+          }),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req = mockRequest({ user: undefined });
+
+      await handleAdminSosForceEscalation(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: expect.stringContaining("Authentification requise"),
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("devrait rejeter si sessionId manquant", async () => {
+      req.params = {};
+
+      await handleAdminSosForceEscalation(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_SESSION_ID",
+        }),
+      );
+    });
+
+    it("devrait rejeter si userId manquant", async () => {
+      req.body = { targetStage: 1 };
+
+      await handleAdminSosForceEscalation(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_USER_ID",
+        }),
+      );
+    });
+
+    it("devrait rejeter si targetStage invalide", async () => {
+      req.body = { userId: "user123", targetStage: 5 };
+
+      await handleAdminSosForceEscalation(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_STAGE",
+        }),
+      );
+    });
+
+    it("devrait retourner 404 si session non trouvée", async () => {
+      (sosService.adminForceEscalation as jest.Mock).mockRejectedValue(
+        new Error("SESSION_NOT_FOUND"),
+      );
+
+      await handleAdminSosForceEscalation(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SESSION_NOT_FOUND",
+        }),
+      );
+    });
+
+    it("devrait retourner 409 si stage déjà atteint", async () => {
+      (sosService.adminForceEscalation as jest.Mock).mockRejectedValue(
+        new Error("STAGE_ALREADY_REACHED"),
+      );
+
+      await handleAdminSosForceEscalation(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "STAGE_ALREADY_REACHED",
+        }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TESTS: handleAdminSosExtendSession
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("handleAdminSosExtendSession", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        user: { id: "admin123", isAdmin: true },
+        params: { sessionId: "session123" },
+        body: { additionalMinutes: 30 },
+      });
+      res = mockResponse();
+
+      (sosService.adminExtendSession as jest.Mock).mockResolvedValue({
+        _id: "session123",
+        status: "ACTIVE",
+        expiresAt: new Date(Date.now() + 90 * 60 * 1000),
+        extensionCount: 1,
+      });
+    });
+
+    it("devrait étendre la durée d'une session", async () => {
+      await handleAdminSosExtendSession(req as Request, res as Response);
+
+      expect(sosService.adminExtendSession).toHaveBeenCalledWith(
+        "session123",
+        30,
+        "admin123",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            id: "session123",
+            extensionCount: 1,
+          }),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req = mockRequest({ user: undefined });
+
+      await handleAdminSosExtendSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("devrait rejeter si sessionId manquant", async () => {
+      req.params = {};
+
+      await handleAdminSosExtendSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_SESSION_ID",
+        }),
+      );
+    });
+
+    it("devrait rejeter si additionalMinutes invalide (trop court)", async () => {
+      req.body = { additionalMinutes: 5 };
+
+      await handleAdminSosExtendSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_EXTENSION_DURATION",
+        }),
+      );
+    });
+
+    it("devrait rejeter si additionalMinutes invalide (trop long)", async () => {
+      req.body = { additionalMinutes: 600 };
+
+      await handleAdminSosExtendSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_EXTENSION_DURATION",
+        }),
+      );
+    });
+
+    it("devrait retourner 404 si session non trouvée", async () => {
+      (sosService.adminExtendSession as jest.Mock).mockRejectedValue(
+        new Error("SESSION_NOT_FOUND"),
+      );
+
+      await handleAdminSosExtendSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SESSION_NOT_FOUND",
+        }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TESTS: handleAdminSosActivateSession
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("handleAdminSosActivateSession", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        user: { id: "admin123", isAdmin: true },
+        body: {
+          targetUserId: "user123",
+          expectedDuration: 60,
+          note: "Test dive",
+          lat: 48.8566,
+          lng: 2.3522,
+        },
+      });
+      res = mockResponse();
+
+      (sosService.adminActivateSession as jest.Mock).mockResolvedValue({
+        _id: "session123",
+        status: "ACTIVE",
+        activatedAt: new Date(),
+        expiresAt: new Date(Date.now() + 60 * 60 * 1000),
+        participants: [
+          { userId: { toString: () => "user123" }, status: "ACTIVE", currentStage: -1 },
+        ],
+      });
+    });
+
+    it("devrait activer une session pour un utilisateur cible", async () => {
+      await handleAdminSosActivateSession(req as Request, res as Response);
+
+      expect(sosService.adminActivateSession).toHaveBeenCalledWith(
+        expect.objectContaining({
+          targetUserId: "user123",
+          adminId: "admin123",
+          expectedDuration: 60,
+        }),
+      );
+      expect(res.status).toHaveBeenCalledWith(201);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            id: "session123",
+            status: "ACTIVE",
+          }),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req = mockRequest({ user: undefined });
+
+      await handleAdminSosActivateSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("devrait rejeter si targetUserId manquant", async () => {
+      req.body = { expectedDuration: 60 };
+
+      await handleAdminSosActivateSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_TARGET_USER_ID",
+        }),
+      );
+    });
+
+    it("devrait rejeter si expectedDuration invalide", async () => {
+      req.body = { targetUserId: "user123", expectedDuration: 5 };
+
+      await handleAdminSosActivateSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_DURATION",
+        }),
+      );
+    });
+
+    it("devrait retourner 409 si session déjà active", async () => {
+      (sosService.adminActivateSession as jest.Mock).mockRejectedValue(
+        new Error("SESSION_ALREADY_ACTIVE"),
+      );
+
+      await handleAdminSosActivateSession(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SESSION_ALREADY_ACTIVE",
+        }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TESTS: handleAdminSosConfirmSafe
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("handleAdminSosConfirmSafe", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        user: { id: "admin123", isAdmin: true },
+        params: { sessionId: "session123" },
+        body: { reason: "Résolution manuelle admin" },
+      });
+      res = mockResponse();
+
+      (sosService.adminConfirmSafe as jest.Mock).mockResolvedValue({
+        _id: "session123",
+        status: "RESOLVED",
+        resolvedAt: new Date(),
+        resolvedBy: "ADMIN_CONFIRM",
+        participants: [
+          { userId: { toString: () => "user123" }, status: "LEFT" },
+        ],
+      });
+    });
+
+    it("devrait confirmer la sécurité via admin", async () => {
+      await handleAdminSosConfirmSafe(req as Request, res as Response);
+
+      expect(sosService.adminConfirmSafe).toHaveBeenCalledWith(
+        "session123",
+        "admin123",
+        "Résolution manuelle admin",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            id: "session123",
+            status: "RESOLVED",
+          }),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req = mockRequest({ user: undefined });
+
+      await handleAdminSosConfirmSafe(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("devrait rejeter si sessionId manquant", async () => {
+      req.params = {};
+
+      await handleAdminSosConfirmSafe(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_SESSION_ID",
+        }),
+      );
+    });
+
+    it("devrait retourner 404 si session non trouvée", async () => {
+      (sosService.adminConfirmSafe as jest.Mock).mockRejectedValue(
+        new Error("SESSION_NOT_FOUND"),
+      );
+
+      await handleAdminSosConfirmSafe(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SESSION_NOT_FOUND",
+        }),
+      );
+    });
+
+    it("devrait gérer les erreurs du service", async () => {
+      (sosService.adminConfirmSafe as jest.Mock).mockRejectedValue(
+        new Error("Service error"),
+      );
+
+      await handleAdminSosConfirmSafe(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INTERNAL_ERROR",
+        }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TESTS: handleAdminSosTriggerSms
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("handleAdminSosTriggerSms", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        user: { id: "admin123", isAdmin: true },
+        params: { sessionId: "session123" },
+      });
+      res = mockResponse();
+
+      (sosService.adminTriggerSms as jest.Mock).mockResolvedValue({
+        sent: 2,
+        failed: 0,
+      });
+    });
+
+    it("devrait déclencher les SMS d'urgence", async () => {
+      await handleAdminSosTriggerSms(req as Request, res as Response);
+
+      expect(sosService.adminTriggerSms).toHaveBeenCalledWith(
+        "session123",
+        "admin123",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          sent: 2,
+          failed: 0,
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req = mockRequest({ user: undefined });
+
+      await handleAdminSosTriggerSms(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("devrait rejeter si sessionId manquant", async () => {
+      req.params = {};
+
+      await handleAdminSosTriggerSms(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_SESSION_ID",
+        }),
+      );
+    });
+
+    it("devrait retourner 404 si session non trouvée", async () => {
+      (sosService.adminTriggerSms as jest.Mock).mockRejectedValue(
+        new Error("SESSION_NOT_FOUND"),
+      );
+
+      await handleAdminSosTriggerSms(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SESSION_NOT_FOUND",
+        }),
+      );
+    });
+
+    it("devrait retourner 400 si aucun contact trouvé", async () => {
+      (sosService.adminTriggerSms as jest.Mock).mockRejectedValue(
+        new Error("NO_CONTACTS_FOUND"),
+      );
+
+      await handleAdminSosTriggerSms(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "NO_CONTACTS_FOUND",
+        }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TESTS: handleAdminSosSendNotification
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("handleAdminSosSendNotification", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        user: { id: "admin123", isAdmin: true },
+        params: { sessionId: "session123" },
+        body: { targetUserId: "user123", message: "Alerte admin" },
+      });
+      res = mockResponse();
+
+      (sosService.adminSendNotification as jest.Mock).mockResolvedValue(
+        undefined,
+      );
+    });
+
+    it("devrait envoyer une notification à un participant", async () => {
+      await handleAdminSosSendNotification(req as Request, res as Response);
+
+      expect(sosService.adminSendNotification).toHaveBeenCalledWith(
+        "session123",
+        "user123",
+        "Alerte admin",
+        "admin123",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          message: expect.stringContaining("Notification envoyée"),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req = mockRequest({ user: undefined });
+
+      await handleAdminSosSendNotification(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("devrait rejeter si sessionId manquant", async () => {
+      req.params = {};
+
+      await handleAdminSosSendNotification(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_SESSION_ID",
+        }),
+      );
+    });
+
+    it("devrait rejeter si targetUserId manquant", async () => {
+      req.body = { message: "Alerte" };
+
+      await handleAdminSosSendNotification(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_TARGET_USER_ID",
+        }),
+      );
+    });
+
+    it("devrait rejeter si message vide", async () => {
+      req.body = { targetUserId: "user123", message: "" };
+
+      await handleAdminSosSendNotification(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_MESSAGE",
+        }),
+      );
+    });
+
+    it("devrait rejeter si message trop long", async () => {
+      req.body = { targetUserId: "user123", message: "a".repeat(501) };
+
+      await handleAdminSosSendNotification(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MESSAGE_TOO_LONG",
+        }),
+      );
+    });
+
+    it("devrait retourner 404 si participant non trouvé", async () => {
+      (sosService.adminSendNotification as jest.Mock).mockRejectedValue(
+        new Error("PARTICIPANT_NOT_FOUND"),
+      );
+
+      await handleAdminSosSendNotification(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "PARTICIPANT_NOT_FOUND",
+        }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TESTS: handleAdminSosAddParticipant
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("handleAdminSosAddParticipant", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        user: { id: "admin123", isAdmin: true },
+        params: { sessionId: "session123" },
+        body: { targetUserId: "user456" },
+      });
+      res = mockResponse();
+
+      (sosService.adminAddParticipant as jest.Mock).mockResolvedValue({
+        _id: "session123",
+        participants: [
+          {
+            userId: { toString: () => "user123" },
+            status: "ACTIVE",
+            currentStage: -1,
+            joinedAt: new Date(),
+          },
+          {
+            userId: { toString: () => "user456" },
+            status: "ACTIVE",
+            currentStage: -1,
+            joinedAt: new Date(),
+          },
+        ],
+      });
+    });
+
+    it("devrait ajouter un participant à une session", async () => {
+      await handleAdminSosAddParticipant(req as Request, res as Response);
+
+      expect(sosService.adminAddParticipant).toHaveBeenCalledWith(
+        "session123",
+        "user456",
+        "admin123",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            id: "session123",
+            participantCount: 2,
+          }),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req = mockRequest({ user: undefined });
+
+      await handleAdminSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("devrait rejeter si sessionId manquant", async () => {
+      req.params = {};
+
+      await handleAdminSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_SESSION_ID",
+        }),
+      );
+    });
+
+    it("devrait rejeter si targetUserId manquant", async () => {
+      req.body = {};
+
+      await handleAdminSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_TARGET_USER_ID",
+        }),
+      );
+    });
+
+    it("devrait retourner 404 si session non trouvée", async () => {
+      (sosService.adminAddParticipant as jest.Mock).mockRejectedValue(
+        new Error("SESSION_NOT_FOUND"),
+      );
+
+      await handleAdminSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SESSION_NOT_FOUND",
+        }),
+      );
+    });
+
+    it("devrait retourner 409 si déjà participant", async () => {
+      (sosService.adminAddParticipant as jest.Mock).mockRejectedValue(
+        new Error("ALREADY_PARTICIPANT"),
+      );
+
+      await handleAdminSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "ALREADY_PARTICIPANT",
+        }),
+      );
+    });
+
+    it("devrait retourner 409 si utilisateur a déjà une session active", async () => {
+      (sosService.adminAddParticipant as jest.Mock).mockRejectedValue(
+        new Error("USER_HAS_ACTIVE_SESSION"),
+      );
+
+      await handleAdminSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "USER_HAS_ACTIVE_SESSION",
+        }),
+      );
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // TESTS: handleAdminSosRemoveParticipant
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  describe("handleAdminSosRemoveParticipant", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        user: { id: "admin123", isAdmin: true },
+        params: { sessionId: "session123" },
+        body: { targetUserId: "user456" },
+      });
+      res = mockResponse();
+
+      (sosService.adminRemoveParticipant as jest.Mock).mockResolvedValue({
+        _id: "session123",
+        status: "ACTIVE",
+        participants: [
+          {
+            userId: { toString: () => "user123" },
+            status: "ACTIVE",
+            leftAt: null,
+          },
+          {
+            userId: { toString: () => "user456" },
+            status: "LEFT",
+            leftAt: new Date(),
+          },
+        ],
+      });
+    });
+
+    it("devrait retirer un participant d'une session", async () => {
+      await handleAdminSosRemoveParticipant(req as Request, res as Response);
+
+      expect(sosService.adminRemoveParticipant).toHaveBeenCalledWith(
+        "session123",
+        "user456",
+        "admin123",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            id: "session123",
+            participantCount: 2,
+          }),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req = mockRequest({ user: undefined });
+
+      await handleAdminSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "UNAUTHORIZED",
+        }),
+      );
+    });
+
+    it("devrait rejeter si sessionId manquant", async () => {
+      req.params = {};
+
+      await handleAdminSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_SESSION_ID",
+        }),
+      );
+    });
+
+    it("devrait rejeter si targetUserId manquant", async () => {
+      req.body = {};
+
+      await handleAdminSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "MISSING_TARGET_USER_ID",
+        }),
+      );
+    });
+
+    it("devrait retourner 404 si session non trouvée", async () => {
+      (sosService.adminRemoveParticipant as jest.Mock).mockRejectedValue(
+        new Error("SESSION_NOT_FOUND"),
+      );
+
+      await handleAdminSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "SESSION_NOT_FOUND",
+        }),
+      );
+    });
+
+    it("devrait retourner 404 si participant non trouvé", async () => {
+      (sosService.adminRemoveParticipant as jest.Mock).mockRejectedValue(
+        new Error("PARTICIPANT_NOT_FOUND"),
+      );
+
+      await handleAdminSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "PARTICIPANT_NOT_FOUND",
+        }),
+      );
+    });
+
+    it("devrait retourner 409 si participant a déjà quitté", async () => {
+      (sosService.adminRemoveParticipant as jest.Mock).mockRejectedValue(
+        new Error("PARTICIPANT_ALREADY_LEFT"),
+      );
+
+      await handleAdminSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "PARTICIPANT_ALREADY_LEFT",
         }),
       );
     });

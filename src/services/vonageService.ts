@@ -287,8 +287,11 @@ class VonageService {
   ): Promise<SmsSendResult> {
     let text = `🆘 ALERTE QVARRY - ${userName} n'a pas donné signe de vie après son exploration souterraine.`;
 
-    if (sessionNote) {
-      text += ` Note: "${sessionNote}"`;
+    const safeNote = sessionNote
+      ? sessionNote.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 150)
+      : undefined;
+    if (safeNote) {
+      text += ` Note: "${safeNote}"`;
     }
 
     if (location) {

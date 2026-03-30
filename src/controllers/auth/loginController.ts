@@ -34,6 +34,19 @@ import {
 import { logger } from "../../services/loggerService";
 import { setRequestContext } from "../../middlewares/correlationMiddleware";
 
+// SEC-044: Champs sensibles à exclure des réponses /auth/me
+const AUTH_ME_EXCLUDED_FIELDS = [
+  "password",
+  "password_history",
+  "reset_password_token",
+  "reset_password_expires",
+  "email_verification_token",
+  "email_verification_code",
+  "email_verification_expires",
+  "two_factor_secret",
+  "two_factor_recovery_codes",
+];
+
 const loginLogger = logger.child({ service: "auth-login" });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -862,5 +875,58 @@ export async function completeLoginAfter2FA(req: Request, res: Response) {
       // HIGH-001: stack trace supprimé pour sécurité,
     });
     return res.status(500).json({ error: "Erreur lors de la connexion" });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HANDLER: PROFIL DE L'UTILISATEUR CONNECTÉ (GET /auth/me)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function handleAuthMe(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+
+    // SEC-044: Exclure les champs sensibles de la query Mongoose
+    const selectFields = AUTH_ME_EXCLUDED_FIELDS.map(
+      (field) => `-${field}`,
+    ).join(" ");
+
+    const user = await UserModel.findById(userId).select(selectFields);
+    if (!user) {
+      return res.status(404).json({ message: "Utilisateur non trouvé." });
+    }
+
+    // Déchiffrer les champs chiffrés
+    const decrypted = {
+      ...user.toObject(),
+      name: decrypt(user.name),
+      surname: decrypt(user.surname),
+      pseudo: user.pseudo ? decrypt(user.pseudo) : undefined,
+      email: decrypt(user.email),
+      ip_creation: decrypt(user.ip_creation),
+      ip_last_connection: decrypt(user.ip_last_connection),
+    };
+
+    // Sanitize finale : supprimer les champs exclus restants
+    const sanitized: Record<string, any> = { ...decrypted };
+    AUTH_ME_EXCLUDED_FIELDS.forEach((field) => {
+      delete sanitized[field];
+    });
+
+    loginLogger.debug("[AUTH] /auth/me — profil récupéré", { userId });
+
+    return res.status(200).json(sanitized);
+  } catch (error: unknown) {
+    loginLogger.error("[AUTH] Erreur lors de la récupération du profil /me", {
+      userId: req.user?.id,
+      error: error instanceof Error ? error.message : String(error),
+      // HIGH-001: stack trace supprimé pour sécurité,
+    });
+    return res.status(500).json({
+      message: "Erreur lors de la récupération du profil.",
+    });
   }
 }

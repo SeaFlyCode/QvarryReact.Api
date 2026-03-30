@@ -3,6 +3,7 @@ import {
   handleCreateUser,
   handleGetAllUsers,
   handleGetUserById,
+  handleGetMe,
   handleDeleteUser,
   handleUpdateUser,
   handleVerifyEmailByCode,
@@ -23,6 +24,10 @@ router.post("/", verifyTurnstile, handleCreateUser);
 // PUBLIC - Nécessaire pour l'inscription et la vérification d'email
 router.post("/verify-email", handleVerifyEmailByCode);
 router.post("/resend-verification", handleResendVerificationEmail);
+
+// Profil de l'utilisateur connecté - AVANT /:id pour que "me" ne soit pas capturé par le param
+// PROTÉGÉE - Nécessite authentification
+router.get("/me", authMiddleware, handleGetMe);
 
 // Liste des utilisateurs - ADMIN UNIQUEMENT (SEC-032)
 router.get("/", authMiddleware, adminMiddleware, handleGetAllUsers);

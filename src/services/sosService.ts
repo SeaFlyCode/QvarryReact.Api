@@ -20,6 +20,7 @@ import { auditService } from "./auditService";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import UserModel from "../models/users";
 import { logger } from "./loggerService";
+import { sendEmail } from "./emailService";
 
 // Create child logger for sos service
 const sosLogger = logger.child({ service: "sos" });
@@ -187,15 +188,14 @@ class SosService {
   }
 
   /**
-   * Sanitiser un contact pour l'admin en masquant le numéro de téléphone
-   * Les admins ne doivent PAS voir les numéros de téléphone des contacts d'urgence
+   * Sanitiser un contact pour l'admin
+   * Admin : accès complet aux données des contacts d'urgence
+   * Le numéro de téléphone est nécessaire pour contacter les proches en cas d'urgence réelle
    */
   private sanitizeContactForAdmin(contact: any): any {
-    const { phone, ...rest } = contact;
-    return {
-      ...rest,
-      phone: "***",
-    };
+    // Admin : accès complet aux données des contacts d'urgence
+    // Le numéro de téléphone est nécessaire pour contacter les proches en cas d'urgence réelle
+    return contact;
   }
 
   /**
@@ -263,32 +263,15 @@ class SosService {
       (id) => new mongoose.Types.ObjectId(id),
     );
 
-    const existingSessions = await SosSessionModel.find({
-      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-      "participants.userId": { $in: participantObjectIds },
-      "participants.status": { $ne: "LEFT" },
-    }).lean();
-
-    if (existingSessions.length > 0) {
-      throw new Error("SESSION_ALREADY_ACTIVE");
+    // Valider la durée avant d'ouvrir la transaction
+    if (
+      expectedDuration < MIN_DURATION_MINUTES ||
+      expectedDuration > MAX_DURATION_MINUTES
+    ) {
+      throw new Error("INVALID_DURATION");
     }
 
-    // Vérifier que les participants existent dans la base de données
-    if (participantIds && participantIds.length > 0) {
-      const participantUsers = await UserModel.find({
-        _id: {
-          $in: participantIds.map((id) => new mongoose.Types.ObjectId(id)),
-        },
-      })
-        .select("_id")
-        .lean();
-
-      if (participantUsers.length !== participantIds.length) {
-        throw new Error("INVALID_PARTICIPANT_IDS");
-      }
-    }
-
-    // Gérer les contacts de session (override)
+    // Gérer les contacts de session (override) — validation hors transaction
     let useDefaultContacts = true;
     const sessionContactIds: mongoose.Types.ObjectId[] = [];
 
@@ -307,34 +290,6 @@ class SosService {
         throw new Error("NO_EMERGENCY_CONTACTS");
       }
 
-      // Ajouter les contacts permanents sélectionnés
-      if (hasPermanentContacts) {
-        // Vérifier que les contacts permanents existent et appartiennent à l'utilisateur
-        const permanentContacts = await SosContactModel.find({
-          _id: {
-            $in: (sessionContacts.permanentContactIds || []).map(
-              (id) => new mongoose.Types.ObjectId(id),
-            ),
-          },
-          userId: userObjectId,
-          sessionId: { $exists: false }, // Uniquement les contacts permanents
-          deletedAt: null, // Exclure les contacts soft-deleted
-        })
-          .select("_id")
-          .lean();
-
-        if (
-          permanentContacts.length !==
-          (sessionContacts.permanentContactIds || []).length
-        ) {
-          throw new Error("INVALID_CONTACT_IDS");
-        }
-
-        sessionContactIds.push(
-          ...permanentContacts.map((c) => c._id as mongoose.Types.ObjectId),
-        );
-      }
-
       // Valider les contacts supplémentaires temporaires
       if (hasAdditionalContacts) {
         for (const additionalContact of sessionContacts.additionalContacts ||
@@ -345,112 +300,187 @@ class SosService {
           }
         }
       }
-    } else {
-      // Mode par défaut : vérifier qu'au moins UN participant a des contacts d'urgence
-      let hasEmergencyContacts = false;
+    }
 
-      for (const participantId of allParticipantIds) {
-        const contactCount = await SosContactModel.countDocuments({
-          userId: new mongoose.Types.ObjectId(participantId),
-          sessionId: { $exists: false },
-          deletedAt: null, // Exclure les contacts soft-deleted
-        });
-        if (contactCount > 0) {
-          hasEmergencyContacts = true;
-          break;
+    // Transaction : vérification session existante + création session + contacts temporaires
+    const mongoSession = await mongoose.startSession();
+    mongoSession.startTransaction();
+    let session: InstanceType<typeof SosSessionModel>;
+    let expiresAt: Date;
+    let participants: ISosParticipant[];
+    try {
+      // Vérifier qu'aucun participant n'a déjà une session active (dans la transaction)
+      const existingSessions = await SosSessionModel.find({
+        status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+        participants: {
+          $elemMatch: {
+            userId: { $in: participantObjectIds },
+            status: { $ne: "LEFT" },
+          },
+        },
+      })
+        .lean()
+        .session(mongoSession);
+
+      if (existingSessions.length > 0) {
+        throw new Error("SESSION_ALREADY_ACTIVE");
+      }
+
+      // Vérifier que les participants existent dans la base de données
+      if (participantIds && participantIds.length > 0) {
+        const participantUsers = await UserModel.find({
+          _id: {
+            $in: participantIds.map((id) => new mongoose.Types.ObjectId(id)),
+          },
+        })
+          .select("_id")
+          .lean()
+          .session(mongoSession);
+
+        if (participantUsers.length !== participantIds.length) {
+          throw new Error("INVALID_PARTICIPANT_IDS");
         }
       }
 
-      if (!hasEmergencyContacts) {
-        throw new Error("NO_EMERGENCY_CONTACTS");
+      if (sessionContacts) {
+        const hasPermanentContacts =
+          sessionContacts.permanentContactIds &&
+          sessionContacts.permanentContactIds.length > 0;
+
+        // Ajouter les contacts permanents sélectionnés
+        if (hasPermanentContacts) {
+          // Vérifier que les contacts permanents existent et appartiennent à l'utilisateur
+          const permanentContacts = await SosContactModel.find({
+            _id: {
+              $in: (sessionContacts.permanentContactIds || []).map(
+                (id) => new mongoose.Types.ObjectId(id),
+              ),
+            },
+            userId: userObjectId,
+            sessionId: { $exists: false }, // Uniquement les contacts permanents
+            deletedAt: null, // Exclure les contacts soft-deleted
+          })
+            .select("_id")
+            .lean()
+            .session(mongoSession);
+
+          if (
+            permanentContacts.length !==
+            (sessionContacts.permanentContactIds || []).length
+          ) {
+            throw new Error("INVALID_CONTACT_IDS");
+          }
+
+          sessionContactIds.push(
+            ...permanentContacts.map((c) => c._id as mongoose.Types.ObjectId),
+          );
+        }
+      } else {
+        // Mode par défaut : vérifier qu'au moins UN participant a des contacts d'urgence
+        let hasEmergencyContacts = false;
+
+        for (const participantId of allParticipantIds) {
+          const contactCount = await SosContactModel.countDocuments({
+            userId: new mongoose.Types.ObjectId(participantId),
+            sessionId: { $exists: false },
+            deletedAt: null, // Exclure les contacts soft-deleted
+          }).session(mongoSession);
+          if (contactCount > 0) {
+            hasEmergencyContacts = true;
+            break;
+          }
+        }
+
+        if (!hasEmergencyContacts) {
+          throw new Error("NO_EMERGENCY_CONTACTS");
+        }
       }
-    }
 
-    // Valider la durée
-    if (
-      expectedDuration < MIN_DURATION_MINUTES ||
-      expectedDuration > MAX_DURATION_MINUTES
-    ) {
-      throw new Error("INVALID_DURATION");
-    }
+      // Calculer la date d'expiration
+      const now = new Date();
+      expiresAt = new Date(now.getTime() + expectedDuration * 60 * 1000);
 
-    // Calculer la date d'expiration
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + expectedDuration * 60 * 1000);
+      // Créer les participants
+      participants = allParticipantIds.map(
+        (participantId) => ({
+          userId: new mongoose.Types.ObjectId(participantId),
+          joinedAt: now,
+          leftAt: null,
+          status: "ACTIVE" as SosParticipantStatus,
+          currentStage: -1,
+          stage0TriggeredAt: null,
+          stage1TriggeredAt: null,
+          stage2TriggeredAt: null,
+          lastHeartbeatAt: null,
+          lastKnownLat: lat,
+          lastKnownLng: lng,
+          lastKnownAccuracy: accuracy,
+          consecutiveHeartbeats: 0,
+          firstReconnectionAt: null,
+          surfaceDetectionSent: false,
+          reconnectionDetectionSent: false,
+        }),
+      );
 
-    // Créer les participants
-    const participants: ISosParticipant[] = allParticipantIds.map(
-      (participantId) => ({
-        userId: new mongoose.Types.ObjectId(participantId),
-        joinedAt: now,
-        leftAt: null,
-        status: "ACTIVE" as SosParticipantStatus,
+      // Créer la session
+      session = new SosSessionModel({
+        userId: userObjectId,
+        status: "ACTIVE",
         currentStage: -1,
-        stage0TriggeredAt: null,
-        stage1TriggeredAt: null,
-        stage2TriggeredAt: null,
-        lastHeartbeatAt: null,
+        activatedAt: now,
+        expectedDuration,
+        expiresAt,
         lastKnownLat: lat,
         lastKnownLng: lng,
         lastKnownAccuracy: accuracy,
+        entryLat: lat,
+        entryLng: lng,
+        note,
+        siteName,
+        zone,
+        depth,
+        heartbeatCount: 0,
+        extensionCount: 0,
         consecutiveHeartbeats: 0,
-        firstReconnectionAt: null,
         surfaceDetectionSent: false,
         reconnectionDetectionSent: false,
-      }),
-    );
+        useDefaultContacts,
+        sessionContactIds:
+          sessionContactIds.length > 0 ? sessionContactIds : undefined,
+        participants,
+      });
+      await session.save({ session: mongoSession });
 
-    // Créer la session
-    const session = new SosSessionModel({
-      userId: userObjectId,
-      status: "ACTIVE",
-      currentStage: -1,
-      activatedAt: now,
-      expectedDuration,
-      expiresAt,
-      lastKnownLat: lat,
-      lastKnownLng: lng,
-      lastKnownAccuracy: accuracy,
-      entryLat: lat,
-      entryLng: lng,
-      note,
-      siteName,
-      zone,
-      depth,
-      heartbeatCount: 0,
-      extensionCount: 0,
-      consecutiveHeartbeats: 0,
-      surfaceDetectionSent: false,
-      reconnectionDetectionSent: false,
-      useDefaultContacts,
-      sessionContactIds:
-        sessionContactIds.length > 0 ? sessionContactIds : undefined,
-      participants,
-    });
-    await session.save();
+      // Créer les contacts supplémentaires temporaires maintenant qu'on a un sessionId
+      if (
+        sessionContacts?.additionalContacts &&
+        sessionContacts.additionalContacts.length > 0
+      ) {
+        for (const additionalContact of sessionContacts.additionalContacts) {
+          const tempContact = new SosContactModel({
+            userId: userObjectId,
+            sessionId: session._id,
+            name: additionalContact.name,
+            phone: additionalContact.phone,
+            relationship: additionalContact.relationship,
+            isDefault: false,
+          });
 
-    // Créer les contacts supplémentaires temporaires maintenant qu'on a un sessionId
-    if (
-      sessionContacts?.additionalContacts &&
-      sessionContacts.additionalContacts.length > 0
-    ) {
-      for (const additionalContact of sessionContacts.additionalContacts) {
-        const tempContact = new SosContactModel({
-          userId: userObjectId,
-          sessionId: session._id,
-          name: additionalContact.name,
-          phone: additionalContact.phone,
-          relationship: additionalContact.relationship,
-          isDefault: false,
-        });
+          await tempContact.save({ session: mongoSession });
+          sessionContactIds.push(tempContact._id as mongoose.Types.ObjectId);
+        }
 
-        await tempContact.save();
-        sessionContactIds.push(tempContact._id as mongoose.Types.ObjectId);
+        // Mettre à jour la session avec tous les IDs de contacts
+        session.sessionContactIds = sessionContactIds;
+        await session.save({ session: mongoSession });
       }
 
-      // Mettre à jour la session avec tous les IDs de contacts
-      session.sessionContactIds = sessionContactIds;
-      await session.save();
+      await mongoSession.commitTransaction();
+    } catch (err) {
+      await mongoSession.abortTransaction();
+      throw err;
+    } finally {
+      mongoSession.endSession();
     }
 
     // Récupérer le nom du créateur pour les notifications
@@ -562,13 +592,21 @@ class SosService {
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
           status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-          "participants.userId": userObjectId,
-          "participants.status": { $ne: "LEFT" },
+          participants: {
+            $elemMatch: {
+              userId: userObjectId,
+              status: { $ne: "LEFT" },
+            },
+          },
         })
       : await SosSessionModel.findOne({
           status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-          "participants.userId": userObjectId,
-          "participants.status": { $ne: "LEFT" },
+          participants: {
+            $elemMatch: {
+              userId: userObjectId,
+              status: { $ne: "LEFT" },
+            },
+          },
         });
 
     if (!session) {
@@ -737,21 +775,25 @@ class SosService {
       }
     }
 
-    // Calculer le nouveau expiresAt basé sur le participant avec le dernier heartbeat le plus récent
-    const activeParticipants = session.participants.filter(
-      (p) => p.status === "ACTIVE" && p.lastHeartbeatAt,
+    // Calculer le nouveau expiresAt :
+    // On prend le MAX entre l'expiration actuelle et (now + HEARTBEAT_EXTENSION_MINUTES)
+    // afin de ne jamais réduire un timer initialement long (ex: 4h) lors des premiers heartbeats.
+    const heartbeatFloor = new Date(
+      now.getTime() + HEARTBEAT_EXTENSION_MINUTES * 60 * 1000,
     );
-
-    if (activeParticipants.length > 0) {
-      const mostRecentHeartbeat = Math.max(
-        ...activeParticipants
-          .map((p) => p.lastHeartbeatAt?.getTime())
-          .filter((t): t is number => t !== undefined),
-      );
-      const newExpiresAt = new Date(
-        mostRecentHeartbeat + HEARTBEAT_EXTENSION_MINUTES * 60 * 1000,
-      );
-      session.expiresAt = newExpiresAt;
+    const currentExpiresAt = new Date(session.expiresAt); // cast défensif string→Date
+    sosLogger.debug("[DEBUG-HEARTBEAT] Calcul expiresAt", {
+      userId,
+      sessionId: session._id?.toString(),
+      nowMs: now.getTime(),
+      heartbeatFloorMs: heartbeatFloor.getTime(),
+      currentExpiresAtMs: currentExpiresAt.getTime(),
+      heartbeatFloorISO: heartbeatFloor.toISOString(),
+      currentExpiresAtISO: currentExpiresAt.toISOString(),
+      willUpdate: heartbeatFloor > currentExpiresAt,
+    });
+    if (heartbeatFloor > currentExpiresAt) {
+      session.expiresAt = heartbeatFloor;
     }
 
     // Session-level fields (backward compat)
@@ -805,13 +847,21 @@ class SosService {
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
           status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-          "participants.userId": userObjectId,
-          "participants.status": { $ne: "LEFT" },
+          participants: {
+            $elemMatch: {
+              userId: userObjectId,
+              status: { $ne: "LEFT" },
+            },
+          },
         })
       : await SosSessionModel.findOne({
           status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-          "participants.userId": userObjectId,
-          "participants.status": { $ne: "LEFT" },
+          participants: {
+            $elemMatch: {
+              userId: userObjectId,
+              status: { $ne: "LEFT" },
+            },
+          },
         });
 
     if (!session) {
@@ -884,13 +934,21 @@ class SosService {
       ? await SosSessionModel.findOne({
           _id: new mongoose.Types.ObjectId(sessionId),
           status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-          "participants.userId": userObjectId,
-          "participants.status": { $ne: "LEFT" },
+          participants: {
+            $elemMatch: {
+              userId: userObjectId,
+              status: { $ne: "LEFT" },
+            },
+          },
         })
       : await SosSessionModel.findOne({
           status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-          "participants.userId": userObjectId,
-          "participants.status": { $ne: "LEFT" },
+          participants: {
+            $elemMatch: {
+              userId: userObjectId,
+              status: { $ne: "LEFT" },
+            },
+          },
         });
 
     if (!session) {
@@ -1115,6 +1173,14 @@ class SosService {
       throw new Error("SESSION_NOT_FOUND_OR_NOT_ESCALATING");
     }
 
+    // Vérifier que le confirmeur est un participant actif de la session
+    const isActiveParticipant = session.participants.some(
+      (p) => p.userId.toString() === confirmerId && p.status !== "LEFT",
+    );
+    if (!isActiveParticipant) {
+      throw new Error("NOT_AUTHORIZED_TO_CONFIRM");
+    }
+
     const now = new Date();
 
     // Marquer tous les participants comme LEFT
@@ -1198,11 +1264,54 @@ class SosService {
    * Cherche où l'utilisateur est participant et n'a pas LEFT
    */
   async getActiveSession(userId: string): Promise<ISosSession | null> {
-    return SosSessionModel.findOne({
-      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-      "participants.userId": new mongoose.Types.ObjectId(userId),
-      "participants.status": { $ne: "LEFT" },
+    const userObjectId = new mongoose.Types.ObjectId(userId);
+
+    sosLogger.debug("[DEBUG-STATUS] getActiveSession appelé", {
+      userId,
+      userObjectId: userObjectId.toString(),
     });
+
+    const session = await SosSessionModel.findOne({
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+      participants: {
+        $elemMatch: {
+          userId: userObjectId,
+          status: { $ne: "LEFT" },
+        },
+      },
+    });
+
+    sosLogger.debug("[DEBUG-STATUS] getActiveSession résultat", {
+      userId,
+      found: session !== null,
+      sessionId: session?._id?.toString(),
+      sessionStatus: session?.status,
+      participantsCount: session?.participants?.length,
+    });
+
+    // Debug: si null, chercher sans filtre status pour diagnostic
+    if (!session && process.env.NODE_ENV !== "production") {
+      const anySession = await SosSessionModel.findOne({
+        participants: {
+          $elemMatch: {
+            userId: userObjectId,
+            status: { $ne: "LEFT" },
+          },
+        },
+      }).lean();
+      sosLogger.debug("[DEBUG-STATUS] Recherche sans filtre statut", {
+        userId,
+        found: anySession !== null,
+        sessionId: (anySession as any)?._id?.toString(),
+        sessionStatus: (anySession as any)?.status,
+        participants: (anySession as any)?.participants?.map((p: any) => ({
+          userId: p.userId?.toString(),
+          status: p.status,
+        })),
+      });
+    }
+
+    return session;
   }
 
   /**
@@ -1227,23 +1336,37 @@ class SosService {
   }> {
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
-    // Récupérer les sessions (limitées pour l'affichage)
-    // Sessions où l'utilisateur est créateur OU participant
-    const sessions = await SosSessionModel.find({
+    const matchQuery = {
       $or: [{ userId: userObjectId }, { "participants.userId": userObjectId }],
-    })
-      .sort({ createdAt: -1 })
-      .limit(limit)
-      .lean();
+    };
 
-    // Calculer les stats sur TOUTES les sessions de l'utilisateur (pas juste la page courante)
-    const allSessions = await SosSessionModel.find({
-      $or: [{ userId: userObjectId }, { "participants.userId": userObjectId }],
-    })
-      .select(
-        "expectedDuration heartbeatCount status currentStage siteName activatedAt resolvedAt",
-      )
-      .lean();
+    // Une seule agrégation pour les documents paginés ET les données de stats
+    const [facetResult] = await SosSessionModel.aggregate([
+      { $match: matchQuery },
+      {
+        $facet: {
+          // Branche 1 : documents paginés complets pour l'affichage
+          data: [{ $sort: { createdAt: -1 } }, { $limit: limit }],
+          // Branche 2 : champs légers pour les calculs de statistiques
+          statsRaw: [
+            {
+              $project: {
+                expectedDuration: 1,
+                heartbeatCount: 1,
+                status: 1,
+                currentStage: 1,
+                siteName: 1,
+                activatedAt: 1,
+                resolvedAt: 1,
+              },
+            },
+          ],
+        },
+      },
+    ]);
+
+    const sessions: any[] = facetResult?.data ?? [];
+    const allSessions: any[] = facetResult?.statsRaw ?? [];
 
     const totalSessions = allSessions.length;
 
@@ -1289,7 +1412,8 @@ class SosService {
       .sort((a, b) => b.count - a.count)
       .slice(0, 5);
 
-    const lastSession = allSessions.length > 0 ? allSessions[0] : null;
+    // sessions (branche data) est triée par createdAt desc — prendre la première
+    const lastSession = sessions.length > 0 ? sessions[0] : null;
 
     // Enrichir chaque session avec des données calculées
     const enrichedSessions = sessions.map((session: any) => {
@@ -1341,6 +1465,7 @@ class SosService {
       currentStage: { $gte: 1 },
       "participants.userId": { $ne: userObjectId },
     })
+      .select("-lastKnownLat -lastKnownLng -lastKnownAccuracy -entryLat -entryLng -depth")
       .populate("userId", "name surname")
       .sort({ createdAt: -1 })
       .lean();
@@ -1570,41 +1695,51 @@ class SosService {
       notifiedCount: allVerifiedUsers.length,
     });
 
-    // Envoyer les notifications à chaque utilisateur avec retry
+    // Envoyer les notifications à chaque utilisateur avec retry (par batches de 50)
     let successCount = 0;
     let failCount = 0;
 
-    for (const targetUser of allVerifiedUsers) {
-      // Push notification avec retry
-      const pushSuccess = await this.sendSosNotificationWithRetry({
-        userId: targetUser._id.toString(),
-        title: "🆘 Alerte SOS",
-        message: `${userName} a besoin d'aide ! Consultez la carte SOS.`,
-        type: "sos_stage1_alert",
-        data: {
-          sosSessionId: sessionId,
-        },
-      });
-
-      if (pushSuccess) {
-        successCount++;
-      } else {
-        failCount++;
-      }
-
-      // WebSocket notification avec gestion d'erreur
-      this.sendSosWebSocketNotification(
-        targetUser._id.toString(),
-        {
-          type: "sos_alert_stage1",
-          stage: 1,
-          sessionId: sessionId.toString(),
-          userName,
-          participantId: participantUserId,
-          message: `${userName} a besoin d'aide ! Consultez la carte SOS.`,
-        },
-        { sessionId: sessionId.toString(), stage: 1 },
+    const BATCH_SIZE = 50;
+    for (let i = 0; i < allVerifiedUsers.length; i += BATCH_SIZE) {
+      const batch = allVerifiedUsers.slice(i, i + BATCH_SIZE);
+      const results = await Promise.allSettled(
+        batch.map((targetUser) =>
+          this.sendSosNotificationWithRetry({
+            userId: targetUser._id.toString(),
+            title: "🆘 Alerte SOS",
+            message: `${userName} a besoin d'aide ! Consultez la carte SOS.`,
+            type: "sos_stage1_alert",
+            data: {
+              sosSessionId: sessionId,
+            },
+          }),
+        ),
       );
+
+      for (let j = 0; j < results.length; j++) {
+        const result = results[j];
+        const targetUser = batch[j];
+
+        if (result.status === "fulfilled" && result.value) {
+          successCount++;
+        } else {
+          failCount++;
+        }
+
+        // WebSocket notification avec gestion d'erreur
+        this.sendSosWebSocketNotification(
+          targetUser._id.toString(),
+          {
+            type: "sos_alert_stage1",
+            stage: 1,
+            sessionId: sessionId.toString(),
+            userName,
+            participantId: participantUserId,
+            message: `${userName} a besoin d'aide ! Consultez la carte SOS.`,
+          },
+          { sessionId: sessionId.toString(), stage: 1 },
+        );
+      }
     }
 
     await this.logEvent(sessionId, participantUserId, "STAGE_CHANGE", {
@@ -1621,6 +1756,16 @@ class SosService {
       successCount,
       failCount,
       participantId: participantUserId,
+    });
+
+    // Notifier les admins (push + email)
+    await this.notifyAdmins({
+      eventType: "STAGE_1",
+      session,
+      participantName: userName,
+      participantId: participantUserId,
+      stage: 1,
+      triggeredAt: participant.stage1TriggeredAt ?? new Date(),
     });
 
     sosLogger.info("Stage 1 completed", {
@@ -1829,6 +1974,16 @@ class SosService {
       },
     });
 
+    // Notifier les admins (push + email)
+    await this.notifyAdmins({
+      eventType: "STAGE_2",
+      session,
+      participantName: userName,
+      participantId: participantUserId,
+      stage: 2,
+      triggeredAt: participant.stage2TriggeredAt ?? new Date(),
+    });
+
     sosLogger.info("Stage 2 completed - SMS sent to emergency contacts", {
       sessionId: sessionId.toString(),
       participantId: participantUserId,
@@ -2022,11 +2177,15 @@ class SosService {
         userId: userInfo ? userInfo._id?.toString() : p.userId?.toString(),
         name: userInfo?.name ? decrypt(userInfo.name) : null,
         surname: userInfo?.surname ? decrypt(userInfo.surname) : null,
+        email: userInfo?.email ? decrypt(userInfo.email) : null,
         status: p.status,
         currentStage: p.currentStage,
         lastHeartbeatAt: p.lastHeartbeatAt,
         joinedAt: p.joinedAt,
         leftAt: p.leftAt,
+        lastKnownLat: p.lastKnownLat ?? null,
+        lastKnownLng: p.lastKnownLng ?? null,
+        lastKnownAccuracy: p.lastKnownAccuracy ?? null,
       };
     });
 
@@ -2090,8 +2249,8 @@ class SosService {
     const sessions = await SosSessionModel.find({
       status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
     })
-      .populate("userId", "name surname")
-      .populate("participants.userId", "name surname")
+      .populate("userId", "name surname email")
+      .populate("participants.userId", "name surname email")
       .sort({ status: -1, currentStage: -1, activatedAt: 1 })
       .lean();
 
@@ -2134,8 +2293,8 @@ class SosService {
     const sessions = await SosSessionModel.find({
       status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
     })
-      .populate("userId", "name surname")
-      .populate("participants.userId", "name surname")
+      .populate("userId", "name surname email")
+      .populate("participants.userId", "name surname email")
       .sort({ status: -1, currentStage: -1, activatedAt: 1 })
       .lean();
 
@@ -3125,11 +3284,13 @@ class SosService {
     // Incrémenter le compteur de heartbeats de la session
     session.heartbeatCount = (session.heartbeatCount || 0) + 1;
 
-    // Prolonger l'expiration si la session est active
-    if (session.status === "ACTIVE") {
-      session.expiresAt = new Date(
-        now.getTime() + HEARTBEAT_EXTENSION_MINUTES * 60 * 1000,
-      );
+    // Prolonger l'expiration : MAX(expiresAt actuel, now + HEARTBEAT_EXTENSION_MINUTES)
+    // Ne jamais réduire un timer long existant
+    const adminHeartbeatFloor = new Date(
+      now.getTime() + HEARTBEAT_EXTENSION_MINUTES * 60 * 1000,
+    );
+    if (adminHeartbeatFloor > session.expiresAt) {
+      session.expiresAt = adminHeartbeatFloor;
     }
 
     // Si session était EXPIRED ou ESCALATING et plus aucun participant en danger → repasser en ACTIVE
@@ -3363,6 +3524,21 @@ class SosService {
       adminId,
     });
 
+    // Notifier les autres admins (push + email) — escalade forcée par un admin
+    const targetUser = await UserModel.findById(userId).lean();
+    const targetUserName = targetUser
+      ? `${decrypt(targetUser.name)} ${decrypt(targetUser.surname)}`
+      : "Un utilisateur";
+
+    await this.notifyAdmins({
+      eventType: "ADMIN_FORCE_ESCALATION",
+      session,
+      participantName: targetUserName,
+      participantId: userId,
+      stage: targetStage,
+      triggeredAt: new Date(),
+    });
+
     return session;
   }
 
@@ -3420,8 +3596,12 @@ class SosService {
 
     const existingSessions = await SosSessionModel.find({
       status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-      "participants.userId": { $in: participantObjectIds },
-      "participants.status": { $ne: "LEFT" },
+      participants: {
+        $elemMatch: {
+          userId: { $in: participantObjectIds },
+          status: { $ne: "LEFT" },
+        },
+      },
     }).lean();
 
     if (existingSessions.length > 0) {
@@ -3695,8 +3875,12 @@ class SosService {
     // Vérifier que l'utilisateur n'a pas déjà une autre session active
     const userActiveSession = await SosSessionModel.findOne({
       status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-      "participants.userId": new mongoose.Types.ObjectId(targetUserId),
-      "participants.status": { $ne: "LEFT" },
+      participants: {
+        $elemMatch: {
+          userId: new mongoose.Types.ObjectId(targetUserId),
+          status: { $ne: "LEFT" },
+        },
+      },
     });
 
     if (userActiveSession) {
@@ -4122,6 +4306,462 @@ class SosService {
   }
 
   // ─── UTILITAIRES ───────────────────────────────────────────────────
+
+  // ─── MÉTHODES MOBILES GESTION PARTICIPANTS ──────────────────────────
+
+  /**
+   * Mobile: Ajouter un participant à une session déjà active
+   * Seul le créateur de la session (session.userId) peut appeler cette méthode.
+   * Mêmes vérifications qu'à la création : user existant, pas de session active.
+   */
+  async addParticipantToSession(
+    creatorId: string,
+    targetUserId: string,
+    sessionId?: string,
+  ): Promise<ISosSession> {
+    const creatorObjectId = new mongoose.Types.ObjectId(creatorId);
+
+    // Trouver la session active dont le créateur est bien creatorId
+    const session = sessionId
+      ? await SosSessionModel.findOne({
+          _id: new mongoose.Types.ObjectId(sessionId),
+          userId: creatorObjectId,
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+        })
+      : await SosSessionModel.findOne({
+          userId: creatorObjectId,
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+        });
+
+    if (!session) {
+      throw new Error("NO_ACTIVE_SESSION");
+    }
+
+    // Vérifier que l'utilisateur cible existe
+    const targetUser = await UserModel.findById(targetUserId).lean();
+    if (!targetUser) {
+      throw new Error("INVALID_PARTICIPANT_IDS");
+    }
+
+    // Vérifier qu'il n'est pas déjà participant actif
+    const existingParticipant = session.participants.find(
+      (p) => p.userId.toString() === targetUserId && p.status !== "LEFT",
+    );
+    if (existingParticipant) {
+      throw new Error("ALREADY_PARTICIPANT");
+    }
+
+    // Vérifier qu'il n'a pas une autre session active
+    const userActiveSession = await SosSessionModel.findOne({
+      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+      participants: {
+        $elemMatch: {
+          userId: new mongoose.Types.ObjectId(targetUserId),
+          status: { $ne: "LEFT" },
+        },
+      },
+    });
+    if (userActiveSession) {
+      throw new Error("SESSION_ALREADY_ACTIVE");
+    }
+
+    const now = new Date();
+
+    // Ajouter le nouveau participant
+    const newParticipant: ISosParticipant = {
+      userId: new mongoose.Types.ObjectId(targetUserId),
+      joinedAt: now,
+      leftAt: null,
+      status: "ACTIVE" as SosParticipantStatus,
+      currentStage: -1,
+      stage0TriggeredAt: null,
+      stage1TriggeredAt: null,
+      stage2TriggeredAt: null,
+      lastHeartbeatAt: null,
+      lastKnownLat: session.lastKnownLat,
+      lastKnownLng: session.lastKnownLng,
+      lastKnownAccuracy: session.lastKnownAccuracy,
+      consecutiveHeartbeats: 0,
+      firstReconnectionAt: null,
+      surfaceDetectionSent: false,
+      reconnectionDetectionSent: false,
+    };
+
+    session.participants.push(newParticipant);
+    await session.save();
+
+    // Récupérer le nom du créateur
+    const creator = await UserModel.findById(creatorObjectId).lean();
+    const creatorName = creator ? decrypt(creator.name) : "Un utilisateur";
+
+    // Notifier le participant ajouté (push + WebSocket)
+    try {
+      await createNotification(
+        new mongoose.Types.ObjectId(targetUserId),
+        "sos_alert",
+        "🆘 Tu as été ajouté à une session SOS",
+        `${creatorName} t'a ajouté à une session SOS de groupe.`,
+        {
+          sosSessionId: session._id,
+        },
+      );
+
+      webSocketService.sendNotificationToUser(targetUserId, {
+        type: "sos_participant_added",
+        sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+        creatorName,
+        creatorId,
+        message: `Tu as été ajouté à une session SOS par ${creatorName}`,
+      });
+
+      await this.logEvent(
+        session._id as mongoose.Types.ObjectId,
+        targetUserId,
+        "PARTICIPANT_ADDED",
+        {
+          addedBy: creatorId,
+          creatorName,
+        },
+      );
+    } catch (error) {
+      sosLogger.error("Failed to notify added participant", {
+        targetUserId,
+        sessionId: session._id?.toString(),
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
+    // Audit
+    await auditService.log({
+      userId: creatorId,
+      action: "SOS_PARTICIPANT_ADDED",
+      level: "info",
+      details: {
+        sessionId: session._id,
+        targetUserId,
+      },
+    });
+
+    sosLogger.info("Participant added to SOS session (mobile)", {
+      sessionId: session._id?.toString(),
+      addedBy: creatorId,
+      targetUserId,
+    });
+
+    return session;
+  }
+
+  /**
+   * Mobile: Retirer un participant d'une session active
+   * N'importe quel participant actif peut retirer n'importe qui (soi-même inclus).
+   * Si c'est le dernier participant → session RESOLVED.
+   */
+  async removeParticipantFromSession(
+    requesterId: string,
+    targetUserId: string,
+    sessionId?: string,
+  ): Promise<ISosSession> {
+    const requesterObjectId = new mongoose.Types.ObjectId(requesterId);
+
+    // Trouver la session où le demandeur est participant actif
+    const session = sessionId
+      ? await SosSessionModel.findOne({
+          _id: new mongoose.Types.ObjectId(sessionId),
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+          participants: {
+            $elemMatch: {
+              userId: requesterObjectId,
+              status: { $ne: "LEFT" },
+            },
+          },
+        })
+      : await SosSessionModel.findOne({
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+          participants: {
+            $elemMatch: {
+              userId: requesterObjectId,
+              status: { $ne: "LEFT" },
+            },
+          },
+        });
+
+    if (!session) {
+      throw new Error("NO_ACTIVE_SESSION");
+    }
+
+    // Si le demandeur retire quelqu'un d'autre, vérifier qu'il est le créateur
+    if (requesterId !== targetUserId) {
+      const isCreator = session.userId.toString() === requesterId;
+      if (!isCreator) {
+        throw new Error("NOT_AUTHORIZED_TO_REMOVE_PARTICIPANT");
+      }
+    }
+
+    // Vérifier que la cible est bien un participant actif
+    const targetParticipant = session.participants.find(
+      (p) => p.userId.toString() === targetUserId && p.status !== "LEFT",
+    );
+    if (!targetParticipant) {
+      throw new Error("PARTICIPANT_NOT_FOUND");
+    }
+
+    const now = new Date();
+
+    // Récupérer le nom du demandeur pour les notifications
+    const requester = await UserModel.findById(requesterObjectId).lean();
+    const requesterName = requester
+      ? decrypt(requester.name)
+      : "Un utilisateur";
+
+    // Marquer la cible comme LEFT
+    targetParticipant.status = "LEFT";
+    targetParticipant.leftAt = now;
+
+    // Vérifier s'il reste des participants actifs
+    const remainingActive = session.participants.filter(
+      (p) => p.status !== "LEFT",
+    );
+
+    if (remainingActive.length === 0) {
+      // Dernier participant → résoudre la session
+      session.status = "RESOLVED";
+      session.resolvedAt = now;
+      session.resolvedBy = "USER";
+      session.resolvedByUserId = requesterObjectId;
+
+      await session.save();
+      await this.cleanupSessionContacts(session._id.toString());
+
+      sosLogger.info("Session resolved - last participant removed", {
+        sessionId: session._id?.toString(),
+        removedBy: requesterId,
+        targetUserId,
+      });
+    } else {
+      await session.save();
+
+      // Notifier la cible si elle n'est pas le demandeur
+      if (requesterId !== targetUserId) {
+        try {
+          webSocketService.sendNotificationToUser(targetUserId, {
+            type: "sos_participant_removed",
+            sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+            requesterName,
+            requesterId,
+            message: `Tu as été retiré de la session SOS par ${requesterName}`,
+          });
+
+          await createNotification(
+            new mongoose.Types.ObjectId(targetUserId),
+            "sos_session_cancelled",
+            "Retiré de la session SOS",
+            `${requesterName} t'a retiré de la session SOS.`,
+            {
+              sosSessionId: session._id as mongoose.Types.ObjectId,
+              senderId: requesterObjectId,
+            },
+          );
+        } catch (error) {
+          sosLogger.error("Failed to notify removed participant (mobile)", {
+            targetUserId,
+            sessionId: session._id?.toString(),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+
+      // Notifier les participants restants
+      for (const other of remainingActive) {
+        const otherId = other.userId.toString();
+        if (otherId === requesterId || otherId === targetUserId) continue;
+        try {
+          webSocketService.sendNotificationToUser(otherId, {
+            type: "sos_participant_left",
+            sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+            removedUserId: targetUserId,
+            removedBy: requesterId,
+            requesterName,
+            message: `Un participant a été retiré de la session SOS`,
+          });
+        } catch (error) {
+          sosLogger.error("Failed to notify other participant of removal", {
+            otherId,
+            sessionId: session._id?.toString(),
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
+      }
+    }
+
+    await this.logEvent(
+      session._id as mongoose.Types.ObjectId,
+      targetUserId,
+      "PARTICIPANT_LEFT",
+      {
+        removedBy: requesterId,
+        requesterName,
+        leftAt: now,
+      },
+    );
+
+    await auditService.log({
+      userId: requesterId,
+      action: "SOS_PARTICIPANT_REMOVED",
+      level: "info",
+      details: {
+        sessionId: session._id,
+        targetUserId,
+        sessionResolved: remainingActive.length === 0,
+      },
+    });
+
+    sosLogger.info("Participant removed from SOS session (mobile)", {
+      sessionId: session._id?.toString(),
+      removedBy: requesterId,
+      targetUserId,
+      sessionResolved: remainingActive.length === 0,
+    });
+
+    return session;
+  }
+
+  /**
+   * Notifier tous les admins par push et email lors d'un événement SOS critique
+   * Appelé sur : triggerStage1, triggerStage2, adminForceEscalation
+   */
+  private async notifyAdmins(params: {
+    eventType: "STAGE_1" | "STAGE_2" | "ADMIN_FORCE_ESCALATION";
+    session: ISosSession;
+    participantName: string;
+    participantId: string;
+    stage: number;
+    triggeredAt: Date;
+  }): Promise<void> {
+    const {
+      eventType,
+      session,
+      participantName,
+      participantId,
+      stage,
+      triggeredAt,
+    } = params;
+    const sessionId = (session._id as mongoose.Types.ObjectId).toString();
+
+    const eventLabels: Record<string, string> = {
+      STAGE_1: "🆘 SOS Stage 1 — Alerte diffusée à la communauté",
+      STAGE_2: "🆘 SOS Stage 2 — SMS d'urgence envoyés",
+      ADMIN_FORCE_ESCALATION: "🆘 SOS — Escalade forcée par un administrateur",
+    };
+
+    const stageLabels: Record<number, string> = {
+      1: "Stage 1 — Alerte communauté",
+      2: "Stage 2 — SMS contacts d'urgence",
+    };
+
+    const eventLabel = eventLabels[eventType] || "🆘 Alerte SOS critique";
+    const stageLabel = stageLabels[stage] || `Stage ${stage}`;
+
+    try {
+      // Récupérer tous les admins actifs et validés
+      const admins = await UserModel.find({
+        is_admin: true,
+        is_blocked: false,
+      })
+        .select("_id name email")
+        .lean();
+
+      if (admins.length === 0) {
+        sosLogger.warn("No admins found for SOS alert notification", {
+          sessionId,
+        });
+        return;
+      }
+
+      const adminIds = admins.map((a) => a._id.toString());
+      const adminPanelLink = `${process.env.FRONTEND_URL}/admin/sos/sessions/${sessionId}`;
+      const triggeredAtStr = triggeredAt.toLocaleString("fr-FR", {
+        timeZone: "Europe/Paris",
+      });
+
+      // ── PUSH NOTIFICATIONS (batch) ───────────────────────────────────
+      try {
+        for (const adminId of adminIds) {
+          await createNotification(
+            new mongoose.Types.ObjectId(adminId),
+            "sos_alert",
+            eventLabel,
+            `${participantName} — ${stageLabel}`,
+            {
+              sosSessionId: session._id as mongoose.Types.ObjectId,
+            },
+          );
+        }
+      } catch (pushError) {
+        sosLogger.error(
+          "[SOS-CRITICAL] Failed to send admin push notifications",
+          {
+            sessionId,
+            eventType,
+            error:
+              pushError instanceof Error
+                ? pushError.message
+                : String(pushError),
+          },
+        );
+      }
+
+      // ── EMAILS (un par admin) ────────────────────────────────────────
+      for (const admin of admins) {
+        try {
+          const adminName = decrypt(admin.name);
+          const adminEmail = decrypt((admin as any).email);
+
+          await sendEmail({
+            to: adminEmail,
+            subject: `${eventLabel} - QVARRY`,
+            template: "sos-admin-alert",
+            variables: {
+              ADMIN_NAME: adminName,
+              EVENT_TYPE: eventType,
+              EVENT_LABEL: eventLabel,
+              SESSION_ID: sessionId,
+              PARTICIPANT_NAME: participantName,
+              PARTICIPANT_ID: participantId,
+              STAGE: String(stage),
+              STAGE_LABEL: stageLabel,
+              TRIGGERED_AT: triggeredAtStr,
+              SITE_NAME: session.siteName || "",
+              ADMIN_PANEL_LINK: adminPanelLink,
+            },
+          });
+        } catch (emailError) {
+          sosLogger.error("[SOS-CRITICAL] Failed to send admin email", {
+            adminId: admin._id.toString(),
+            sessionId,
+            eventType,
+            error:
+              emailError instanceof Error
+                ? emailError.message
+                : String(emailError),
+          });
+        }
+      }
+
+      sosLogger.info("Admin SOS alert sent", {
+        sessionId,
+        eventType,
+        stage,
+        adminCount: admins.length,
+      });
+    } catch (error) {
+      sosLogger.error("[SOS-CRITICAL] notifyAdmins failed", {
+        sessionId,
+        eventType,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      // Ne pas lever l'exception — l'escalade doit continuer quoi qu'il arrive
+    }
+  }
 
   /**
    * Nettoyer les contacts temporaires d'une session (override)

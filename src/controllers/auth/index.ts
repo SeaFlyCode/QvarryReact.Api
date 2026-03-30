@@ -2,12 +2,13 @@
 // MED-06: Module auth — Barrel file (re-exports)
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Login, refresh, check auth, 2FA
+// Login, refresh, check auth, 2FA, profil /me
 export {
   handleLoginUser,
   handleRefreshToken,
   checkAuth,
   completeLoginAfter2FA,
+  handleAuthMe,
 } from "./loginController";
 
 // Password reset

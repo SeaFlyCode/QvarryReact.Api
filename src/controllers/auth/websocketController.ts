@@ -2,6 +2,7 @@ import { getErrorMessage } from "../../utils/errorUtils";
 import { Request, Response } from "express";
 import jwt from "jsonwebtoken";
 import crypto from "crypto";
+import { Types } from "mongoose";
 import { logger } from "../../services/loggerService";
 
 const wsAuthLogger = logger.child({ service: "ws-auth" });
@@ -15,9 +16,9 @@ export const getWebSocketToken = (req: Request, res: Response) => {
     // Récupérer l'utilisateur authentifié (via le middleware authMiddleware)
     const userId = req.user?.id;
 
-    if (!userId) {
+    if (!userId || !Types.ObjectId.isValid(userId)) {
       return res.status(401).json({
-        error: "Non authentifié",
+        error: "Session invalide",
       });
     }
 

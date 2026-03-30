@@ -1,0 +1,62 @@
+<!-- Template: Alerte SOS pour les administrateurs -->
+<!-- Variables: {{ADMIN_NAME}}, {{EVENT_TYPE}}, {{EVENT_LABEL}}, {{SESSION_ID}}, {{PARTICIPANT_NAME}}, {{PARTICIPANT_ID}}, {{STAGE}}, {{STAGE_LABEL}}, {{TRIGGERED_AT}}, {{SITE_NAME}}, {{ADMIN_PANEL_LINK}} -->
+
+<h1 class="greeting">{{EVENT_LABEL}}</h1>
+
+<p class="text">
+  Une session SOS vient d'atteindre un niveau d'alerte critique sur la
+  plateforme QVARRY et nécessite votre attention immédiate.
+</p>
+
+<div class="info-box danger">
+  <p class="info-box-title">🆘 Événement : {{EVENT_TYPE}}</p>
+  <p class="info-box-text">
+    <strong>Participant :</strong> {{PARTICIPANT_NAME}}<br />
+    <strong>Stage atteint :</strong> {{STAGE_LABEL}}<br />
+    <strong>Date et heure :</strong> {{TRIGGERED_AT}}<br />
+    <strong>Session ID :</strong> {{SESSION_ID}}
+  </p>
+</div>
+
+{{#if SITE_NAME}}
+<div class="info-box warning">
+  <p class="info-box-title">📍 Localisation</p>
+  <p class="info-box-text"><strong>Site :</strong> {{SITE_NAME}}</p>
+</div>
+{{/if}}
+
+<div class="info-box info">
+  <p class="info-box-title">📋 Description du stage</p>
+  <p class="info-box-text">
+    <strong>Stage 1 :</strong> Tous les utilisateurs Qvarry vérifiés ont été
+    notifiés.<br />
+    <strong>Stage 2 :</strong> Les SMS d'urgence ont été envoyés aux contacts
+    d'urgence du participant.<br />
+    <strong>Escalade admin :</strong> Un administrateur a forcé l'escalade de la
+    session.
+  </p>
+</div>
+
+<div class="divider"></div>
+
+<p class="text">
+  <strong>Actions recommandées :</strong>
+</p>
+<ul style="color: #333; margin-left: 20px">
+  <li>Consulter les détails de la session dans le panel d'administration</li>
+  <li>Vérifier la localisation du participant si disponible</li>
+  <li>Contacter les secours si la situation l'exige</li>
+  <li>Documenter toute intervention dans les logs d'audit</li>
+</ul>
+
+<div class="button-container">
+  <a href="{{ADMIN_PANEL_LINK}}" class="button button-primary">
+    🔐 Voir la session SOS
+  </a>
+</div>
+
+<div class="security-notice">
+  <strong>⚠️ Important :</strong>
+  Cet email est automatiquement envoyé à tous les administrateurs lorsqu'une
+  session SOS atteint un stade critique. Traitez cette alerte en priorité.
+</div>

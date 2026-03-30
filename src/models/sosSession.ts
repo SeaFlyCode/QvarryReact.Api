@@ -313,6 +313,7 @@ const sosSessionSchema: Schema<ISosSession> = new Schema(
     note: {
       type: String,
       maxlength: 500,
+      trim: true,
     },
     siteName: {
       type: String,

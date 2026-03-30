@@ -32,15 +32,23 @@ export async function handleSosActivate(req: Request, res: Response) {
     const {
       expectedDuration,
       note,
+      // Le client mobile envoie lastKnownLat/Lng/Accuracy — on accepte les deux formes
       lat,
+      lastKnownLat,
       lng,
+      lastKnownLng,
       accuracy,
+      lastKnownAccuracy,
       siteName,
       zone,
       depth,
       sessionContacts,
       participantIds,
     } = req.body;
+
+    const resolvedLat = lat ?? lastKnownLat;
+    const resolvedLng = lng ?? lastKnownLng;
+    const resolvedAccuracy = accuracy ?? lastKnownAccuracy;
 
     // Validation
     if (!expectedDuration || typeof expectedDuration !== "number") {
@@ -50,9 +58,11 @@ export async function handleSosActivate(req: Request, res: Response) {
       });
     }
 
-    if (expectedDuration < 15 || expectedDuration > 480) {
+    // En développement on accepte 1 min pour les tests ; en production : 15 min minimum
+    const minDuration = process.env.NODE_ENV === "production" ? 15 : 1;
+    if (expectedDuration < minDuration || expectedDuration > 480) {
       return res.status(400).json({
-        error: "La durée doit être entre 15 minutes et 8 heures.",
+        error: `La durée doit être entre ${minDuration} minute(s) et 8 heures.`,
         code: "INVALID_DURATION",
       });
     }
@@ -61,9 +71,9 @@ export async function handleSosActivate(req: Request, res: Response) {
       userId,
       expectedDuration,
       note,
-      lat,
-      lng,
-      accuracy,
+      lat: resolvedLat,
+      lng: resolvedLng,
+      accuracy: resolvedAccuracy,
       siteName,
       zone,
       depth,
@@ -454,12 +464,20 @@ export async function handleSosStatus(req: Request, res: Response) {
 
     const session = await sosService.getActiveSession(userId);
 
+    mobileSosLogger.debug("[DEBUG-STATUS] handleSosStatus résultat", {
+      userId,
+      active: session !== null,
+      sessionId: session?._id?.toString(),
+      sessionStatus: session?.status,
+    });
+
     res.status(200).json({
       success: true,
       active: session !== null,
       session: session
         ? {
             id: session._id,
+            userId: session.userId,
             status: session.status,
             activatedAt: session.activatedAt,
             expiresAt: session.expiresAt,
@@ -472,6 +490,16 @@ export async function handleSosStatus(req: Request, res: Response) {
             siteName: session.siteName,
             zone: session.zone,
             depth: session.depth,
+            // Coordonnées GPS (champs manquants côté client au boot → crash)
+            lastKnownLat: session.lastKnownLat ?? 0,
+            lastKnownLng: session.lastKnownLng ?? 0,
+            lastKnownAccuracy: session.lastKnownAccuracy ?? 0,
+            // Contacts (champs manquants côté client au boot → crash)
+            contactIds: (session.sessionContactIds ?? []).map((c: any) =>
+              typeof c === "string"
+                ? c
+                : (c._id?.toString?.() ?? c.id?.toString?.() ?? String(c)),
+            ),
             creatorId: session.userId,
             isGroupSession: session.participants.length > 1,
             participants: session.participants.map((p) => ({
@@ -824,6 +852,187 @@ export async function handleSosDeleteContact(req: Request, res: Response) {
     });
     res.status(500).json({
       error: "Erreur lors de la suppression du contact.",
+      code: "INTERNAL_ERROR",
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HANDLER: AJOUTER UN PARTICIPANT À UNE SESSION ACTIVE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/mobile/sos/add-participant
+ * Ajouter un participant à une session SOS déjà active.
+ * Seul le créateur de la session peut appeler cette route.
+ */
+export async function handleSosAddParticipant(req: Request, res: Response) {
+  const startTime = Date.now();
+
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        error: "Authentification requise.",
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    const { targetUserId, sessionId } = req.body;
+
+    if (!targetUserId) {
+      return res.status(400).json({
+        error: "ID de l'utilisateur à ajouter requis.",
+        code: "MISSING_TARGET_USER_ID",
+      });
+    }
+
+    const session = await sosService.addParticipantToSession(
+      userId,
+      targetUserId,
+      sessionId,
+    );
+
+    const duration = Date.now() - startTime;
+    mobileSosLogger.info("Participant ajouté à la session SOS", {
+      sessionId: session._id,
+      addedBy: userId,
+      targetUserId,
+      duration: `${duration}ms`,
+    });
+
+    res.status(200).json({
+      success: true,
+      session: {
+        id: session._id,
+        status: session.status,
+        participants: session.participants.map((p) => ({
+          userId: p.userId,
+          status: p.status,
+          joinedAt: p.joinedAt,
+          leftAt: p.leftAt,
+        })),
+      },
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "NO_ACTIVE_SESSION") {
+        return res.status(404).json({
+          error: "Aucune session SOS active trouvée pour ce créateur.",
+          code: "NO_ACTIVE_SESSION",
+        });
+      }
+      if (error.message === "INVALID_PARTICIPANT_IDS") {
+        return res.status(400).json({
+          error: "L'utilisateur cible est introuvable.",
+          code: "INVALID_PARTICIPANT_IDS",
+        });
+      }
+      if (error.message === "ALREADY_PARTICIPANT") {
+        return res.status(409).json({
+          error: "Cet utilisateur est déjà participant actif de la session.",
+          code: "ALREADY_PARTICIPANT",
+        });
+      }
+      if (error.message === "SESSION_ALREADY_ACTIVE") {
+        return res.status(409).json({
+          error: "Cet utilisateur a déjà une session SOS active.",
+          code: "SESSION_ALREADY_ACTIVE",
+        });
+      }
+    }
+
+    mobileSosLogger.error("Erreur ajout participant", {
+      error: getErrorMessage(error),
+    });
+    res.status(500).json({
+      error: "Erreur lors de l'ajout du participant.",
+      code: "INTERNAL_ERROR",
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HANDLER: RETIRER UN PARTICIPANT D'UNE SESSION ACTIVE
+// ═══════════════════════════════════════════════════════════════════════════
+
+/**
+ * POST /api/mobile/sos/remove-participant
+ * Retirer un participant d'une session SOS active.
+ * N'importe quel participant actif peut retirer n'importe qui (soi-même inclus).
+ */
+export async function handleSosRemoveParticipant(req: Request, res: Response) {
+  const startTime = Date.now();
+
+  try {
+    const userId = (req as any).user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        error: "Authentification requise.",
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    const { targetUserId, sessionId } = req.body;
+
+    if (!targetUserId) {
+      return res.status(400).json({
+        error: "ID de l'utilisateur à retirer requis.",
+        code: "MISSING_TARGET_USER_ID",
+      });
+    }
+
+    const session = await sosService.removeParticipantFromSession(
+      userId,
+      targetUserId,
+      sessionId,
+    );
+
+    const duration = Date.now() - startTime;
+    mobileSosLogger.info("Participant retiré de la session SOS", {
+      sessionId: session._id,
+      removedBy: userId,
+      targetUserId,
+      duration: `${duration}ms`,
+    });
+
+    res.status(200).json({
+      success: true,
+      session: {
+        id: session._id,
+        status: session.status,
+        resolvedAt: session.resolvedAt,
+        resolvedBy: session.resolvedBy,
+        participants: session.participants.map((p) => ({
+          userId: p.userId,
+          status: p.status,
+          joinedAt: p.joinedAt,
+          leftAt: p.leftAt,
+        })),
+      },
+    });
+  } catch (error) {
+    if (error instanceof Error) {
+      if (error.message === "NO_ACTIVE_SESSION") {
+        return res.status(404).json({
+          error: "Aucune session SOS active.",
+          code: "NO_ACTIVE_SESSION",
+        });
+      }
+      if (error.message === "PARTICIPANT_NOT_FOUND") {
+        return res.status(404).json({
+          error:
+            "Le participant cible est introuvable ou a déjà quitté la session.",
+          code: "PARTICIPANT_NOT_FOUND",
+        });
+      }
+    }
+
+    mobileSosLogger.error("Erreur retrait participant", {
+      error: getErrorMessage(error),
+    });
+    res.status(500).json({
+      error: "Erreur lors du retrait du participant.",
       code: "INTERNAL_ERROR",
     });
   }

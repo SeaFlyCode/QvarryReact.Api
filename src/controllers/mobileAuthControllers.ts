@@ -103,6 +103,12 @@ export async function handleMobileLogin(req: Request, res: Response) {
 
     if (!user || !isPasswordValid) {
       await recordFailedLogin(email);
+      // Debug log pour identifier le problème
+      mobileAuthLogger.info("[AUTH-DEBUG] Login failed", {
+        email: maskEmail(email),
+        userExists: !!user,
+        passwordValid: isPasswordValid,
+      });
       return res.status(401).json({
         error: "Email ou mot de passe incorrect.",
         code: "INVALID_CREDENTIALS",
@@ -589,6 +595,89 @@ export async function handleMobileForgotPassword(req: Request, res: Response) {
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
+// HANDLER: GET ME MOBILE
+// ═══════════════════════════════════════════════════════════════════════════
+
+// SEC-044: Champs sensibles à exclure des réponses /mobile/auth/me
+const MOBILE_ME_EXCLUDED_FIELDS = [
+  "password",
+  "password_history",
+  "reset_password_token",
+  "reset_password_expires",
+  "email_verification_token",
+  "email_verification_code",
+  "email_verification_expires",
+  "two_factor_secret",
+  "two_factor_recovery_codes",
+];
+
+/**
+ * GET /api/v1/mobile/auth/me
+ * Retourne le profil de l'utilisateur mobile connecté.
+ * Route dédiée mobile, exempte de CSRF.
+ * Inspiré de handleAuthMe dans loginController.ts.
+ */
+export async function handleMobileGetMe(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        error: "Authentification requise.",
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    // SEC-044: Exclure les champs sensibles de la query Mongoose
+    const selectFields = MOBILE_ME_EXCLUDED_FIELDS.map(
+      (field) => `-${field}`,
+    ).join(" ");
+
+    const user = await UserModel.findById(userId).select(selectFields);
+    if (!user) {
+      return res.status(404).json({
+        error: "Utilisateur non trouvé.",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    // Déchiffrer les champs chiffrés
+    const decrypted = {
+      ...user.toObject(),
+      name: decrypt(user.name),
+      surname: decrypt(user.surname),
+      pseudo: user.pseudo ? decrypt(user.pseudo) : undefined,
+      email: decrypt(user.email),
+      ip_creation: decrypt(user.ip_creation),
+      ip_last_connection: decrypt(user.ip_last_connection),
+    };
+
+    // Sanitize finale : supprimer les champs exclus restants
+    const sanitized: Record<string, any> = { ...decrypted };
+    MOBILE_ME_EXCLUDED_FIELDS.forEach((field) => {
+      delete sanitized[field];
+    });
+
+    mobileAuthLogger.debug("[MOBILE-AUTH] /mobile/auth/me — profil récupéré", {
+      userId,
+    });
+
+    return res.status(200).json(sanitized);
+  } catch (error) {
+    mobileAuthLogger.error(
+      "[MOBILE-AUTH] Erreur lors de la récupération du profil /me",
+      {
+        userId: req.user?.id,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    return res.status(500).json({
+      error: "Erreur lors de la récupération du profil.",
+      code: "INTERNAL_ERROR",
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: REFRESH TOKEN MOBILE
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -633,11 +722,19 @@ export async function handleMobileRefreshToken(req: Request, res: Response) {
       }
     }
 
-    // Générer nouveau token
+    // Récupérer les données utilisateur depuis la DB (isAdmin réel + deviceId)
+    const user = await UserModel.findById(userId).select("is_admin").lean();
+
+    // Récupérer le deviceId depuis le header ou le refresh token décodé
+    const deviceId = req.headers["x-device-id"] as string | undefined;
+
+    // Générer nouveau token avec isAdmin depuis la DB et deviceId préservé
     const { token: newAccessToken, tokenId: newTokenId } = generateSecureToken(
       userId,
-      false,
+      user?.is_admin || false,
       "mobile",
+      undefined,
+      deviceId,
     );
 
     // Rotation du refresh token

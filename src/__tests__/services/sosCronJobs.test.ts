@@ -3,6 +3,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import cron from "node-cron";
+import mongoose from "mongoose";
 import {
   startSosEscalationJob,
   startSosCleanupJob,
@@ -30,6 +31,8 @@ jest.mock("../../models/cronLock", () => ({
 }));
 
 describe("SosCronJobs Service", () => {
+  const mockUserId = "507f1f77bcf86cd799439011";
+
   let mockSchedule: jest.Mock;
   let scheduledCallbacks: Array<() => Promise<void>> = [];
   let SosSessionModel: any;
@@ -261,6 +264,76 @@ describe("SosCronJobs Service", () => {
       await expect(scheduledCallbacks[0]()).resolves.not.toThrow();
       expect(mockProcess).toHaveBeenCalledTimes(1);
       // Lock should still be released even on non-Error exception
+      expect(CronLockModel.deleteOne).toHaveBeenCalledTimes(1);
+    });
+  });
+
+  // ═════════════════════════════════════════════════════════════════════════
+  // processExpiredSessions — IDEMPOTENCE
+  // ═════════════════════════════════════════════════════════════════════════
+
+  describe("processExpiredSessions - idempotence", () => {
+    it("should not re-trigger stage notifications if stage was already triggered", async () => {
+      // Simulate a session where stage 0 was already triggered (currentStage === 0)
+      // but stage0TriggeredAt is recent (< 15 min ago) so stage 1 threshold is not reached.
+      // processExpiredSessions should not call triggerStage1 in this case.
+      const stage0RecentTime = new Date(Date.now() - 5 * 60 * 1000); // only 5 min ago
+
+      const mockSessionAlreadyInStage0 = {
+        _id: "session-stage0-already",
+        status: "EXPIRED",
+        expiresAt: new Date(Date.now() - 30 * 60 * 1000),
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "DISCONNECTED",
+            currentStage: 0,
+            stage0TriggeredAt: stage0RecentTime, // triggered recently — stage 1 threshold NOT reached
+            lastHeartbeatAt: null,
+          },
+        ],
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      // Import SosSessionModel to mock it
+      const SosSessionModel = (await import("../../models/sosSession")).default;
+      (SosSessionModel.find as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue([mockSessionAlreadyInStage0]);
+
+      await sosService.processExpiredSessions();
+
+      // Stage is 0, stage0TriggeredAt is only 5 min ago (threshold = 15 min)
+      // So currentStage must remain 0 — triggerStage1 was NOT called
+      expect(mockSessionAlreadyInStage0.participants[0].currentStage).toBe(0);
+    });
+
+    it("should not process a session that was already resolved between cron cycles", async () => {
+      // Simulate that SosSessionModel.find returns no sessions (already resolved/cancelled)
+      const SosSessionModel = (await import("../../models/sosSession")).default;
+      (SosSessionModel.find as jest.Mock) = jest.fn().mockResolvedValue([]);
+
+      const mockProcess = jest
+        .spyOn(sosService, "processExpiredSessions")
+        .mockResolvedValue(undefined);
+
+      // Acquire lock and execute the cron callback
+      CronLockModel.findOneAndUpdate.mockImplementationOnce((query, update) => {
+        return Promise.resolve({
+          lockName: "sos-escalation",
+          lockedBy: update.lockedBy,
+          lockedAt: new Date(),
+          expiresAt: new Date(Date.now() + 90000),
+          lastHeartbeat: new Date(),
+        });
+      });
+
+      startSosEscalationJob();
+      await scheduledCallbacks[0]();
+
+      // processExpiredSessions is called once but since no sessions are returned,
+      // no stage triggers happen. The spy confirms it ran exactly once.
+      expect(mockProcess).toHaveBeenCalledTimes(1);
       expect(CronLockModel.deleteOne).toHaveBeenCalledTimes(1);
     });
   });

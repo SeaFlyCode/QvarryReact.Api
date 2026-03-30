@@ -1017,6 +1017,211 @@ describe("SosService", () => {
   });
 
   // ═══════════════════════════════════════════════════════════════════
+  // CONFIRM SAFE — ACCESS CONTROL
+  // ═══════════════════════════════════════════════════════════════════
+
+  describe("confirmSafe - access control", () => {
+    it("should throw NOT_AUTHORIZED_TO_CONFIRM when confirmerId is not a participant", async () => {
+      const mockSession = {
+        _id: new mongoose.Types.ObjectId(mockSessionId),
+        userId: new mongoose.Types.ObjectId(mockUserId),
+        status: "ESCALATING",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "ESCALATING",
+          },
+        ],
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      (SosSessionModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockSession);
+
+      const outsiderId = "507f1f77bcf86cd799439099";
+      await expect(
+        sosService.confirmSafe(mockSessionId, outsiderId),
+      ).rejects.toThrow("NOT_AUTHORIZED_TO_CONFIRM");
+    });
+
+    it("should throw NOT_AUTHORIZED_TO_CONFIRM when participant status is LEFT", async () => {
+      const leftUserId = "507f1f77bcf86cd799439020";
+      const mockSession = {
+        _id: new mongoose.Types.ObjectId(mockSessionId),
+        userId: new mongoose.Types.ObjectId(mockUserId),
+        status: "ESCALATING",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "ESCALATING",
+          },
+          {
+            userId: new mongoose.Types.ObjectId(leftUserId),
+            status: "LEFT",
+          },
+        ],
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      (SosSessionModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockSession);
+
+      await expect(
+        sosService.confirmSafe(mockSessionId, leftUserId),
+      ).rejects.toThrow("NOT_AUTHORIZED_TO_CONFIRM");
+    });
+
+    it("should resolve session when confirmerId is an active participant", async () => {
+      const mockSession = {
+        _id: new mongoose.Types.ObjectId(mockSessionId),
+        userId: new mongoose.Types.ObjectId(mockUserId),
+        status: "ESCALATING",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "ESCALATING",
+          },
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId2),
+            status: "ACTIVE",
+          },
+        ],
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      (SosSessionModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockSession);
+      (SosContactModel.deleteMany as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue({ deletedCount: 0 });
+
+      await sosService.confirmSafe(mockSessionId, mockUserId2);
+
+      expect(mockSession.status).toBe("RESOLVED");
+      expect(mockSession.resolvedBy).toBe("CONTACT_CONFIRM");
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
+  // REMOVE PARTICIPANT FROM SESSION — ACCESS CONTROL
+  // ═══════════════════════════════════════════════════════════════════
+
+  describe("removeParticipantFromSession - access control", () => {
+    it("should allow a participant to remove themselves", async () => {
+      const mockSession = {
+        _id: new mongoose.Types.ObjectId(mockSessionId),
+        userId: new mongoose.Types.ObjectId(mockUserId),
+        status: "ACTIVE",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "ACTIVE",
+          },
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId2),
+            status: "ACTIVE",
+          },
+        ],
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      (SosSessionModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockSession);
+      (UserModel.findById as jest.Mock) = jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ name: "Test User" }),
+      });
+
+      const result = await sosService.removeParticipantFromSession(
+        mockUserId2,
+        mockUserId2,
+        mockSessionId,
+      );
+
+      expect(result).toBeDefined();
+      expect(mockSession.save).toHaveBeenCalled();
+    });
+
+    it("should allow the session creator to remove another participant", async () => {
+      const mockSession = {
+        _id: new mongoose.Types.ObjectId(mockSessionId),
+        userId: new mongoose.Types.ObjectId(mockUserId),
+        status: "ACTIVE",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "ACTIVE",
+          },
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId2),
+            status: "ACTIVE",
+          },
+        ],
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      (SosSessionModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockSession);
+      (UserModel.findById as jest.Mock) = jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ name: "Creator" }),
+      });
+
+      // Creator (mockUserId) removes participant (mockUserId2)
+      const result = await sosService.removeParticipantFromSession(
+        mockUserId,
+        mockUserId2,
+        mockSessionId,
+      );
+
+      expect(result).toBeDefined();
+      expect(mockSession.save).toHaveBeenCalled();
+    });
+
+    it("should throw NOT_AUTHORIZED_TO_REMOVE_PARTICIPANT when a non-creator tries to remove someone else", async () => {
+      const nonCreatorId = "507f1f77bcf86cd799439015";
+      const mockSession = {
+        _id: new mongoose.Types.ObjectId(mockSessionId),
+        userId: new mongoose.Types.ObjectId(mockUserId),
+        status: "ACTIVE",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "ACTIVE",
+          },
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId2),
+            status: "ACTIVE",
+          },
+          {
+            userId: new mongoose.Types.ObjectId(nonCreatorId),
+            status: "ACTIVE",
+          },
+        ],
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      (SosSessionModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockSession);
+
+      // nonCreator tries to remove mockUserId2 (not themselves, not creator)
+      await expect(
+        sosService.removeParticipantFromSession(
+          nonCreatorId,
+          mockUserId2,
+          mockSessionId,
+        ),
+      ).rejects.toThrow("NOT_AUTHORIZED_TO_REMOVE_PARTICIPANT");
+
+      expect(mockSession.save).not.toHaveBeenCalled();
+    });
+  });
+
+  // ═══════════════════════════════════════════════════════════════════
   // CONTACT MANAGEMENT
   // ═══════════════════════════════════════════════════════════════════
 

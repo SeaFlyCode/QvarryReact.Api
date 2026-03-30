@@ -163,7 +163,7 @@ export function generateSecureToken(
     expiresIn: expiresIn, // Durée courte configurable
     algorithm: "HS256",
     issuer: "qvarry-api",
-    audience: "qvarry-client",
+    audience: platform === "mobile" ? "qvarry-mobile" : "qvarry-client",
   } as jwt.SignOptions);
 
   return { token, tokenId: jti, keyVersion: version };

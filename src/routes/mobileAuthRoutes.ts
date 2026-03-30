@@ -11,6 +11,7 @@ import {
   handleMobileRegister,
   handleMobileForgotPassword,
   handleMobileRefreshToken,
+  handleMobileGetMe,
 } from "../controllers/mobileAuthControllers";
 import { handleLogoutUser } from "../controllers/auth/logoutController";
 import {
@@ -18,6 +19,7 @@ import {
   verifyMobilePlatform,
   mobileRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
+import { mobileAuthMiddleware } from "../middlewares/mobileAuthMiddleware";
 import {
   mobileAttestationLimiter,
   mobileAttestationByDeviceLimiter,
@@ -125,6 +127,23 @@ router.post(
   verifyMobilePlatform,
   mobileRateLimitMiddleware,
   handleLogoutUser,
+);
+
+/**
+ * GET /api/mobile/auth/me
+ * Récupération du profil de l'utilisateur mobile connecté
+ * Route dédiée mobile, exempte de CSRF — utilise mobileAuthMiddleware
+ *
+ * Headers requis:
+ *   - X-Platform: ios | android
+ *   - Authorization: Bearer <token>
+ */
+router.get(
+  "/me",
+  verifyMobilePlatform,
+  mobileRateLimitMiddleware,
+  mobileAuthMiddleware,
+  handleMobileGetMe,
 );
 
 export default router;

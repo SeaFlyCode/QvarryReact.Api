@@ -8,6 +8,7 @@ import {
   handleForgotPassword,
   handleResetPassword,
   completeLoginAfter2FA,
+  handleAuthMe,
 } from "../controllers/auth";
 import {
   handleManualSync,
@@ -156,6 +157,25 @@ router.get("/sync/refresh", authMiddleware, handleSyncRefresh);
  *                   nullable: true
  */
 router.get("/check", checkAuth);
+
+/**
+ * @swagger
+ * /auth/me:
+ *   get:
+ *     summary: Récupérer le profil de l'utilisateur connecté
+ *     tags: [Auth]
+ *     security:
+ *       - bearerAuth: []
+ *       - cookieAuth: []
+ *     responses:
+ *       200:
+ *         description: Profil utilisateur complet (champs sensibles exclus)
+ *       401:
+ *         description: Non authentifié
+ *       404:
+ *         description: Utilisateur non trouvé
+ */
+router.get("/me", authMiddleware, handleAuthMe);
 
 /**
  * @swagger
