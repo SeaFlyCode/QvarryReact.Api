@@ -1283,6 +1283,13 @@ class MobileSyncService {
             userKey,
           );
         }
+        // Normaliser pointIds → points (champ MongoDB)
+        if (encryptedData.pointIds !== undefined) {
+          encryptedData.points = encryptedData.pointIds.map(
+            (id: string) => new mongoose.Types.ObjectId(id),
+          );
+          delete encryptedData.pointIds;
+        }
         encryptedData.version = serverVersion + 1;
 
         await ListModel.updateOne(

@@ -956,7 +956,11 @@ describe("adminSosControllers", () => {
         activatedAt: new Date(),
         expiresAt: new Date(Date.now() + 60 * 60 * 1000),
         participants: [
-          { userId: { toString: () => "user123" }, status: "ACTIVE", currentStage: -1 },
+          {
+            userId: { toString: () => "user123" },
+            status: "ACTIVE",
+            currentStage: -1,
+          },
         ],
       });
     });
@@ -1010,7 +1014,7 @@ describe("adminSosControllers", () => {
     });
 
     it("devrait rejeter si expectedDuration invalide", async () => {
-      req.body = { targetUserId: "user123", expectedDuration: 5 };
+      req.body = { targetUserId: "user123", expectedDuration: 0 };
 
       await handleAdminSosActivateSession(req as Request, res as Response);
 

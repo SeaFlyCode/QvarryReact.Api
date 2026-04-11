@@ -237,7 +237,7 @@ const sosSessionSchema: Schema<ISosSession> = new Schema(
     expectedDuration: {
       type: Number,
       required: true,
-      min: 15, // Minimum 15 minutes
+      min: 1, // Minimum 1 minute
       max: 480, // Maximum 8 heures
     },
     expiresAt: {

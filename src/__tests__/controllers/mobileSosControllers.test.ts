@@ -99,13 +99,13 @@ describe("mobileSosControllers", () => {
     });
 
     it("devrait rejeter si durée hors limites", async () => {
-      req.body.expectedDuration = 10;
+      req.body.expectedDuration = 0;
 
       await handleSosActivate(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({
-        error: "La durée doit être entre 15 minutes et 8 heures.",
+        error: "La durée doit être entre 1 minute et 8 heures.",
         code: "INVALID_DURATION",
       });
     });

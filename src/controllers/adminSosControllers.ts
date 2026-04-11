@@ -662,11 +662,11 @@ export async function handleAdminSosActivateSession(
     if (
       !expectedDuration ||
       typeof expectedDuration !== "number" ||
-      expectedDuration < 15 ||
+      expectedDuration < 1 ||
       expectedDuration > 480
     ) {
       return res.status(400).json({
-        error: "Durée invalide (15-480 minutes).",
+        error: "Durée invalide (1-480 minutes).",
         code: "INVALID_DURATION",
       });
     }

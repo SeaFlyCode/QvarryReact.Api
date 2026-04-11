@@ -32,7 +32,7 @@ const sosLogger = logger.child({ service: "sos" });
 const HEARTBEAT_EXTENSION_MINUTES = 15; // Prolongation par heartbeat
 const STAGE_1_DELAY_MINUTES = 15; // Délai avant stage 1 (après expiration)
 const STAGE_2_DELAY_MINUTES = 30; // Délai avant stage 2 (après expiration)
-const MIN_DURATION_MINUTES = 15; // Durée minimale
+const MIN_DURATION_MINUTES = 1; // Durée minimale
 const MAX_DURATION_MINUTES = 480; // Durée maximale (8h)
 
 // Détection de surface et reconnexion
@@ -401,26 +401,24 @@ class SosService {
       expiresAt = new Date(now.getTime() + expectedDuration * 60 * 1000);
 
       // Créer les participants
-      participants = allParticipantIds.map(
-        (participantId) => ({
-          userId: new mongoose.Types.ObjectId(participantId),
-          joinedAt: now,
-          leftAt: null,
-          status: "ACTIVE" as SosParticipantStatus,
-          currentStage: -1,
-          stage0TriggeredAt: null,
-          stage1TriggeredAt: null,
-          stage2TriggeredAt: null,
-          lastHeartbeatAt: null,
-          lastKnownLat: lat,
-          lastKnownLng: lng,
-          lastKnownAccuracy: accuracy,
-          consecutiveHeartbeats: 0,
-          firstReconnectionAt: null,
-          surfaceDetectionSent: false,
-          reconnectionDetectionSent: false,
-        }),
-      );
+      participants = allParticipantIds.map((participantId) => ({
+        userId: new mongoose.Types.ObjectId(participantId),
+        joinedAt: now,
+        leftAt: null,
+        status: "ACTIVE" as SosParticipantStatus,
+        currentStage: -1,
+        stage0TriggeredAt: null,
+        stage1TriggeredAt: null,
+        stage2TriggeredAt: null,
+        lastHeartbeatAt: null,
+        lastKnownLat: lat,
+        lastKnownLng: lng,
+        lastKnownAccuracy: accuracy,
+        consecutiveHeartbeats: 0,
+        firstReconnectionAt: null,
+        surfaceDetectionSent: false,
+        reconnectionDetectionSent: false,
+      }));
 
       // Créer la session
       session = new SosSessionModel({
@@ -1465,7 +1463,9 @@ class SosService {
       currentStage: { $gte: 1 },
       "participants.userId": { $ne: userObjectId },
     })
-      .select("-lastKnownLat -lastKnownLng -lastKnownAccuracy -entryLat -entryLng -depth")
+      .select(
+        "-lastKnownLat -lastKnownLng -lastKnownAccuracy -entryLat -entryLng -depth",
+      )
       .populate("userId", "name surname")
       .sort({ createdAt: -1 })
       .lean();

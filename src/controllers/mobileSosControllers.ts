@@ -58,11 +58,11 @@ export async function handleSosActivate(req: Request, res: Response) {
       });
     }
 
-    // En développement on accepte 1 min pour les tests ; en production : 15 min minimum
-    const minDuration = process.env.NODE_ENV === "production" ? 15 : 1;
+    // Durée minimale : 1 minute
+    const minDuration = 1;
     if (expectedDuration < minDuration || expectedDuration > 480) {
       return res.status(400).json({
-        error: `La durée doit être entre ${minDuration} minute(s) et 8 heures.`,
+        error: "La durée doit être entre 1 minute et 8 heures.",
         code: "INVALID_DURATION",
       });
     }

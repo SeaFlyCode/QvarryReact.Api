@@ -133,7 +133,7 @@ describe("SosService", () => {
       await expect(
         sosService.activateSession({
           userId: mockUserId,
-          expectedDuration: 10, // Too short
+          expectedDuration: 0, // Too short
         }),
       ).rejects.toThrow("INVALID_DURATION");
 
