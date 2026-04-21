@@ -20,6 +20,7 @@ import {
   mobileRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
 import { mobileAuthMiddleware } from "../middlewares/mobileAuthMiddleware";
+import { appCheckMiddleware } from "../middlewares/appCheckMiddleware";
 import {
   mobileAttestationLimiter,
   mobileAttestationByDeviceLimiter,
@@ -49,6 +50,7 @@ const router = express.Router();
  */
 router.post(
   "/login",
+  appCheckMiddleware,
   mobileAttestationLimiter, // ✅ Par IP (3/heure)
   mobileAttestationByDeviceLimiter, // ✅ Par deviceId (5/jour)
   mobileSecurityMiddleware,
@@ -71,6 +73,7 @@ router.post(
  */
 router.post(
   "/register",
+  appCheckMiddleware,
   mobileAttestationLimiter, // ✅ Par IP (3/heure)
   mobileAttestationByDeviceLimiter, // ✅ Par deviceId (5/jour)
   mobileSecurityMiddleware,

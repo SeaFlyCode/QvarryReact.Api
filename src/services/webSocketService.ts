@@ -27,6 +27,8 @@ import {
 import { webSocketStateService, ClientState } from "./webSocketStateService";
 import { randomBytes } from "crypto";
 import { safeJsonParse } from "../utils/secureJsonParser";
+import { getAppCheck } from "firebase-admin/app-check";
+import admin from "firebase-admin";
 
 const wsLogger = logger.child({ service: "websocket" });
 
@@ -1140,7 +1142,7 @@ class WebSocketService {
     }
 
     // Gérer manuellement l'upgrade HTTP vers WebSocket
-    server.on("upgrade", (request, socket, head) => {
+    server.on("upgrade", async (request, socket, head) => {
       const parsedUrl = url.parse(request.url || "", true);
       const pathname = parsedUrl.pathname;
 
@@ -1175,6 +1177,35 @@ class WebSocketService {
         socket.write("HTTP/1.1 403 Forbidden\r\n\r\n");
         socket.destroy();
         return;
+      }
+
+      // App Check WebSocket : vérification du token passé en query param
+      if (NODE_ENV !== "development") {
+        const appCheckToken = parsedUrl.query.appcheck as string | undefined;
+
+        if (!appCheckToken) {
+          wsLogger.warn("App Check WS absent", { pathname });
+          socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+          socket.destroy();
+          return;
+        }
+
+        if (admin.apps.length === 0) {
+          wsLogger.warn(
+            "Firebase non initialisé — App Check WS ignoré",
+            { pathname },
+          );
+        } else {
+          try {
+            await getAppCheck().verifyToken(appCheckToken);
+            wsLogger.debug("App Check WS validé", { pathname });
+          } catch {
+            wsLogger.warn("App Check WS invalide", { pathname });
+            socket.write("HTTP/1.1 401 Unauthorized\r\n\r\n");
+            socket.destroy();
+            return;
+          }
+        }
       }
 
       if (pathname === "/ws/notifications") {

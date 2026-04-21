@@ -22,6 +22,7 @@ import {
   uploadRateLimit,
 } from "../middlewares/imageUploadMiddleware";
 import { checkStorageQuota } from "../middlewares/storageQuotaMiddleware";
+import { appCheckMiddleware } from "../middlewares/appCheckMiddleware";
 
 const router = express.Router();
 
@@ -301,6 +302,7 @@ router.put("/:id", authMiddleware, validateObjectId("id"), handleUpdatePoint);
  */
 router.post(
   "/:pointId/photo",
+  appCheckMiddleware,
   authMiddleware,
   uploadRateLimit,
   upload.single("photo"),

@@ -12,6 +12,7 @@ import {
   verifyMobilePlatform,
   mobileRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
+import { appCheckMiddleware } from "../middlewares/appCheckMiddleware";
 import {
   handleSosActivate,
   handleSosHeartbeat,
@@ -37,6 +38,7 @@ const router = express.Router();
 // ═══════════════════════════════════════════════════════════════════════════
 
 const mobileSosMiddleware = [
+  appCheckMiddleware,
   verifyMobilePlatform,
   authMiddleware,
   mobileRateLimitMiddleware,
@@ -167,6 +169,7 @@ const sosCriticalRateLimiter = async (
 
 // Middleware pour opérations SOS critiques (avec rate limit élevé)
 const mobileSosCriticalMiddleware = [
+  appCheckMiddleware,
   verifyMobilePlatform,
   authMiddleware,
   sosCriticalRateLimiter, // Rate limiter plus permissif pour dead-man's-switch
