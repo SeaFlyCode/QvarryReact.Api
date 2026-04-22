@@ -6,13 +6,28 @@
 // En développement: limites automatiquement multipliées par DEV_MULTIPLIER
 // ═══════════════════════════════════════════════════════════════════════════
 
-import rateLimit from "express-rate-limit";
+import rateLimit, { Store } from "express-rate-limit";
+import { RedisStore } from "rate-limit-redis";
 import { Request } from "express";
 import { createHash } from "crypto";
 import { anonymizeIp } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
+import { getRedisClient } from "../services/redisSessionService";
 
 const rateLimitLogger = logger.child({ service: "rate-limit" });
+
+const makeStore = (prefix: string): Store | undefined => {
+  const client = getRedisClient();
+  if (!client) return undefined;
+  try {
+    return new RedisStore({
+      sendCommand: (...args: string[]) => (client as any).call(...args),
+      prefix,
+    });
+  } catch {
+    return undefined;
+  }
+};
 
 const NODE_ENV = process.env.NODE_ENV || "development";
 const isProduction = NODE_ENV === "production";
@@ -86,6 +101,7 @@ const getLimit = (key: keyof typeof config.limits): number => {
 export const globalRateLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: getLimit("global"),
+  store: makeStore("rl:global:"),
   message: {
     error: "Trop de requêtes globales, veuillez réessayer plus tard.",
     code: "GLOBAL_RATE_LIMIT_EXCEEDED",
@@ -113,6 +129,7 @@ export const globalRateLimiter = rateLimit({
 export const healthLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: getLimit("health"),
+  store: makeStore("rl:health:"),
   message: "Too many health check requests",
   standardHeaders: true,
   legacyHeaders: false,
@@ -125,6 +142,7 @@ export const healthLimiter = rateLimit({
 export const authLimiter = rateLimit({
   windowMs: config.auth.windowMinutes * 60 * 1000,
   max: limit(config.auth.maxRequests),
+  store: makeStore("rl:auth:"),
   message: `Trop de tentatives de connexion, veuillez réessayer dans ${config.auth.windowMinutes} minutes.`,
   standardHeaders: true,
   legacyHeaders: false,
@@ -136,6 +154,7 @@ export const authLimiter = rateLimit({
 export const registerLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 heure
   max: getLimit("register"),
+  store: makeStore("rl:register:"),
   message: "Trop de créations de compte, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -149,6 +168,7 @@ export const registerLimiter = rateLimit({
 export const verifyEmailLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: limit(5), // 5 en prod, 50 en dev
+  store: makeStore("rl:verifyEmail:"),
   message:
     "Trop de tentatives de vérification, veuillez réessayer dans 15 minutes.",
   standardHeaders: true,
@@ -161,6 +181,7 @@ export const verifyEmailLimiter = rateLimit({
 export const resendEmailLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // 1 heure
   max: getLimit("resendEmail"),
+  store: makeStore("rl:resendEmail:"),
   message: "Trop de demandes de renvoi d'email, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -172,6 +193,7 @@ export const resendEmailLimiter = rateLimit({
 export const passwordResetLimiter = rateLimit({
   windowMs: config.auth.windowMinutes * 60 * 1000,
   max: getLimit("passwordReset"),
+  store: makeStore("rl:passwordReset:"),
   message:
     "Trop de tentatives de réinitialisation, veuillez réessayer plus tard.",
   standardHeaders: true,
@@ -186,6 +208,7 @@ export const passwordResetLimiter = rateLimit({
 export const twoFactorLimiter = rateLimit({
   windowMs: 5 * 60 * 1000, // 5 minutes
   max: getLimit("twoFactor"),
+  store: makeStore("rl:twoFactor:"),
   message: "Trop de tentatives 2FA, veuillez réessayer dans 5 minutes.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -197,6 +220,7 @@ export const twoFactorLimiter = rateLimit({
 export const generalLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: getLimit("general"),
+  store: makeStore("rl:general:"),
   message: "Trop de requêtes, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -208,6 +232,7 @@ export const generalLimiter = rateLimit({
 export const highTrafficLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: getLimit("highTraffic"),
+  store: makeStore("rl:highTraffic:"),
   message: "Trop de requêtes, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -219,6 +244,7 @@ export const highTrafficLimiter = rateLimit({
 export const socialLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: getLimit("social"),
+  store: makeStore("rl:social:"),
   message: "Trop de requêtes, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -232,6 +258,7 @@ export const socialLimiter = rateLimit({
 export const refreshTokenLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes (MED-002: changé de 1 min à 15 min)
   max: getLimit("refreshToken"), // 3 en prod, 30 en dev
+  store: makeStore("rl:refreshToken:"),
   message:
     "Trop de rafraîchissements de token, veuillez réessayer dans 15 minutes.",
   standardHeaders: true,
@@ -257,6 +284,7 @@ export const refreshTokenLimiter = rateLimit({
 export const adminLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: getLimit("admin"),
+  store: makeStore("rl:admin:"),
   message: "Trop de requêtes admin, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -269,6 +297,7 @@ export const adminLimiter = rateLimit({
 export const mobileAuthLimiter = rateLimit({
   windowMs: config.mobile.windowMinutes * 60 * 1000,
   max: config.mobile.maxRequests,
+  store: makeStore("rl:mobileAuth:"),
   message: `Trop de tentatives depuis l'application mobile. Réessayez dans ${config.mobile.windowMinutes} minutes.`,
   standardHeaders: true,
   legacyHeaders: false,
@@ -280,6 +309,7 @@ export const mobileAuthLimiter = rateLimit({
 export const securityLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: getLimit("security"),
+  store: makeStore("rl:security:"),
   message: "Trop de requêtes de sécurité, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -292,6 +322,7 @@ export const securityLimiter = rateLimit({
 export const authCheckLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: getLimit("authCheck"),
+  store: makeStore("rl:authCheck:"),
   message: "Trop de vérifications d'authentification.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -303,6 +334,7 @@ export const authCheckLimiter = rateLimit({
 export const maintenanceLimiter = rateLimit({
   windowMs: 60 * 1000,
   max: getLimit("maintenance"),
+  store: makeStore("rl:maintenance:"),
   message: "Trop de requêtes de maintenance.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -315,6 +347,7 @@ export const maintenanceLimiter = rateLimit({
 export const usersLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: getLimit("users"),
+  store: makeStore("rl:users:"),
   message: "Trop de requêtes utilisateurs, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -327,6 +360,7 @@ export const usersLimiter = rateLimit({
 export const notificationsLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
   max: getLimit("notifications"),
+  store: makeStore("rl:notifications:"),
   message: "Trop de requêtes de notifications, veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -352,6 +386,7 @@ export const notificationsLimiter = rateLimit({
 export const strictAuthLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: getLimit("strictAuth"),
+  store: makeStore("rl:strictAuth:"),
   message: {
     error:
       "Trop de tentatives d'authentification, veuillez réessayer dans 15 minutes.",
@@ -387,6 +422,7 @@ export const strictAuthLimiter = rateLimit({
 export const moderateApiLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: getLimit("moderateApi"),
+  store: makeStore("rl:moderateApi:"),
   message: {
     error: "Trop de requêtes API, veuillez réessayer dans 15 minutes.",
     code: "MODERATE_API_RATE_LIMIT_EXCEEDED",
@@ -424,6 +460,7 @@ export const moderateApiLimiter = rateLimit({
 export const permissiveMobileLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: getLimit("permissiveMobile"), // 50 en prod, 500 en dev (MED-002)
+  store: makeStore("rl:permissiveMobile:"),
   message: {
     error:
       "Trop de requêtes depuis l'application mobile, veuillez réessayer dans 15 minutes.",
@@ -461,6 +498,7 @@ export const permissiveMobileLimiter = rateLimit({
 export const mobileAttestationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // ✅ 1 heure (au lieu de 15min)
   max: limit(3), // ✅ 3 tentatives/heure/IP (au lieu de 5/15min)
+  store: makeStore("rl:mobileAttestation:"),
   message: "Trop de tentatives d'attestation. Veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
@@ -506,6 +544,7 @@ export const mobileAttestationLimiter = rateLimit({
 export const mobileAttestationByDeviceLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 heures
   max: limit(5), // 5 tentatives par device par jour
+  store: makeStore("rl:mobileAttestationDevice:"),
 
   // ✅ Clé basée sur deviceId (avec hash pour privacy)
   keyGenerator: (req: Request): string => {

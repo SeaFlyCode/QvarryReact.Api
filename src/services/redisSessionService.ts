@@ -1029,6 +1029,8 @@ export class RedisSessionService {
 
 export const redisSessionService = new RedisSessionService();
 
+export const getRedisClient = (): Redis | Cluster | null => redis;
+
 // Nettoyage à la fermeture
 process.on("SIGTERM", async () => {
   if (redis) {

@@ -168,6 +168,7 @@ interface ConnectionAttempt {
 const MAX_CONNECTIONS_PER_MINUTE = 10;
 const BLOCK_DURATION_MS = 5 * 60 * 1000; // 5 minutes
 const MAX_TRACKED_IPS = 10000; // CRIT-08: Limite du nombre d'IPs trackées pour éviter une fuite mémoire
+const MAX_CONCURRENT_CONNECTIONS_PER_IP = 10; // Limite de connexions WS simultanées par IP
 
 // ═══════════════════════════════════════════════════════════════════════════
 // REDIS INSTANCE POUR CACHE BLOCKING STATUS
@@ -253,6 +254,9 @@ class WebSocketService {
 
   // R-5: Map de rate limiting des connexions (encapsulée dans la classe)
   private readonly connectionAttempts = new Map<string, ConnectionAttempt>();
+
+  // Compteur de connexions WS simultanées par IP (flood protection)
+  private readonly activeConnectionsPerIp = new Map<string, number>();
 
   // R-5: Référence au timer de nettoyage périodique pour pouvoir le stopper proprement
   private connectionAttemptsCleanupInterval: ReturnType<
@@ -533,6 +537,29 @@ class WebSocketService {
 
     this.connectionAttempts.set(ip, attempt);
     return { allowed: true };
+  }
+
+  /**
+   * Gère le compteur de connexions simultanées par IP.
+   * Retourne false si la limite MAX_CONCURRENT_CONNECTIONS_PER_IP est déjà atteinte.
+   */
+  private trackConcurrentConnection(ip: string): boolean {
+    const current = this.activeConnectionsPerIp.get(ip) ?? 0;
+    if (current >= MAX_CONCURRENT_CONNECTIONS_PER_IP) {
+      return false;
+    }
+    this.activeConnectionsPerIp.set(ip, current + 1);
+    return true;
+  }
+
+  private releaseConcurrentConnection(ip: string): void {
+    const current = this.activeConnectionsPerIp.get(ip);
+    if (current === undefined) return;
+    if (current <= 1) {
+      this.activeConnectionsPerIp.delete(ip);
+    } else {
+      this.activeConnectionsPerIp.set(ip, current - 1);
+    }
   }
 
   /**
@@ -1469,6 +1496,16 @@ class WebSocketService {
       return;
     }
 
+    // Limite de connexions simultanées par IP (protection flood)
+    if (!this.trackConcurrentConnection(ip)) {
+      wsLogger.warn("Notifications - Connexion refusée (trop de connexions simultanées)", {
+        ip: anonymizeIp(ip),
+        limit: MAX_CONCURRENT_CONNECTIONS_PER_IP,
+      });
+      client.terminate();
+      return;
+    }
+
     // Heartbeat
     client.on("pong", () => {
       client.isAlive = true;
@@ -1608,6 +1645,9 @@ class WebSocketService {
 
         // Gérer la fermeture
         client.on("close", () => {
+          // Décrémenter le compteur de connexions simultanées
+          this.releaseConcurrentConnection(ip);
+
           // PERF: Cleanup activity tracking
           this.clientLastActivity.delete(client);
 
@@ -1669,6 +1709,16 @@ class WebSocketService {
         reason: rateLimitCheck.reason,
       });
       client.close(4029, rateLimitCheck.reason);
+      return;
+    }
+
+    // Limite de connexions simultanées par IP (protection flood)
+    if (!this.trackConcurrentConnection(ip)) {
+      wsLogger.warn("Messages - Connexion refusée (trop de connexions simultanées)", {
+        ip: anonymizeIp(ip),
+        limit: MAX_CONCURRENT_CONNECTIONS_PER_IP,
+      });
+      client.terminate();
       return;
     }
 
@@ -2253,6 +2303,9 @@ class WebSocketService {
 
         // Gérer la fermeture
         client.on("close", async () => {
+          // Décrémenter le compteur de connexions simultanées
+          this.releaseConcurrentConnection(ip);
+
           // PERF: Cleanup activity tracking
           this.clientLastActivity.delete(client);
 

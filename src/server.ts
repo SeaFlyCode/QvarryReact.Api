@@ -1196,6 +1196,17 @@ app.use("/api", generalLimiter);
       });
     });
 
+    server.headersTimeout = 10_000;
+    server.requestTimeout = 30_000;
+    server.keepAliveTimeout = 65_000;
+    server.timeout = 30_000;
+    serverLogger.info("[SECURITY] HTTP timeouts configurés", {
+      headersTimeout: server.headersTimeout,
+      requestTimeout: server.requestTimeout,
+      keepAliveTimeout: server.keepAliveTimeout,
+      timeout: server.timeout,
+    });
+
     // Initialiser le WebSocket
     webSocketService.initialize(server);
     serverLogger.info("WebSocket available", {

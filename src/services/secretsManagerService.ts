@@ -1,12 +1,8 @@
-// ═══════════════════════════════════════════════════════════════════════════
-// MED-005: SECRETS MANAGER SERVICE
-// ═══════════════════════════════════════════════════════════════════════════
-// Service de gestion centralisée des secrets
-// - Actuellement : Charge depuis .env (fallback pour transition)
-// - Future : Migration vers AWS Secrets Manager / HashiCorp Vault
-// - Fonctionnalités : Rotation automatique, audit de force, cache sécurisé
-// ═══════════════════════════════════════════════════════════════════════════
-
+import {
+  SecretsManagerClient,
+  GetSecretValueCommand,
+  PutSecretValueCommand,
+} from "@aws-sdk/client-secrets-manager";
 import { logger } from "./loggerService";
 
 const secretsLogger = logger.child({ service: "secrets-manager" });
@@ -18,14 +14,39 @@ interface Secret {
   category?: "jwt" | "encryption" | "database" | "api" | "other";
 }
 
+const CRITICAL_SECRETS: Array<{ name: string; category: Secret["category"] }> =
+  [
+    { name: "JWT_SECRET", category: "jwt" },
+    { name: "JWT_REFRESH_SECRET", category: "jwt" },
+    { name: "ENCRYPTION_KEY_MASTER", category: "encryption" },
+    { name: "ENCRYPTION_KEY_COMMUNICATION", category: "encryption" },
+    { name: "MASTER_ENCRYPTION_KEY", category: "encryption" },
+    { name: "EMAIL_HMAC_KEY", category: "encryption" },
+    { name: "IP_HASH_SECRET", category: "encryption" },
+    { name: "DB_CONN_STRING", category: "database" },
+    { name: "MONGODB_URI", category: "database" },
+    { name: "REDIS_PASSWORD", category: "database" },
+    { name: "VONAGE_API_SECRET", category: "api" },
+    { name: "VONAGE_SIGNATURE_SECRET", category: "api" },
+    { name: "TURNSTILE_SECRET_KEY", category: "api" },
+    { name: "SMTP_PASS", category: "api" },
+    { name: "AWS_SECRET_ACCESS_KEY", category: "api" },
+  ];
+
+const REQUIRED_SECRETS = [
+  "JWT_SECRET",
+  "ENCRYPTION_KEY_MASTER",
+  "ENCRYPTION_KEY_COMMUNICATION",
+  "DB_CONN_STRING",
+  "EMAIL_HMAC_KEY",
+];
+
 class SecretsManagerService {
   private secrets: Map<string, Secret> = new Map();
   private initialized: boolean = false;
+  private awsClient: SecretsManagerClient | null = null;
+  private awsSecretId: string | null = null;
 
-  /**
-   * Initialise le Secrets Manager
-   * À appeler au démarrage du serveur AVANT toute autre opération
-   */
   async initialize() {
     if (this.initialized) {
       secretsLogger.warn("Secrets Manager déjà initialisé");
@@ -35,13 +56,25 @@ class SecretsManagerService {
     try {
       secretsLogger.info("Initialisation du Secrets Manager...");
 
-      // MED-005: Pour l'instant, charger depuis .env (fallback)
-      // TODO: Remplacer par AWS Secrets Manager / Vault en production
-      this.loadFromEnv();
+      const awsSecretId = process.env.AWS_SECRETS_MANAGER_SECRET_ID;
+
+      if (awsSecretId) {
+        this.awsSecretId = awsSecretId;
+        this.awsClient = new SecretsManagerClient({
+          region: process.env.AWS_REGION ?? "eu-west-3",
+        });
+        secretsLogger.info("Mode AWS Secrets Manager activé", {
+          secretId: awsSecretId,
+        });
+        await this.reloadFromAwsSM();
+      } else {
+        this.loadFromEnv();
+      }
 
       this.initialized = true;
       secretsLogger.info("Secrets Manager initialisé avec succès", {
         secretsCount: this.secrets.size,
+        backend: awsSecretId ? "aws-secrets-manager" : "env",
       });
     } catch (error) {
       secretsLogger.error("Échec initialisation Secrets Manager", {
@@ -51,43 +84,64 @@ class SecretsManagerService {
     }
   }
 
-  /**
-   * Charge les secrets depuis les variables d'environnement
-   * Méthode de transition avant migration vers AWS/Vault
-   */
+  private async reloadFromAwsSM(): Promise<void> {
+    if (!this.awsClient || !this.awsSecretId) {
+      throw new Error("AWS Secrets Manager non configuré");
+    }
+
+    secretsLogger.info("Chargement des secrets depuis AWS Secrets Manager", {
+      secretId: this.awsSecretId,
+    });
+
+    const response = await this.awsClient.send(
+      new GetSecretValueCommand({ SecretId: this.awsSecretId }),
+    );
+
+    if (!response.SecretString) {
+      throw new Error(
+        "AWS Secrets Manager a retourné un secret binaire non supporté",
+      );
+    }
+
+    let parsed: Record<string, unknown>;
+    try {
+      parsed = JSON.parse(response.SecretString) as Record<string, unknown>;
+    } catch {
+      throw new Error(
+        "Le secret AWS Secrets Manager n'est pas un JSON valide",
+      );
+    }
+
+    this.secrets.clear();
+
+    const categoryMap = new Map<string, Secret["category"]>(
+      CRITICAL_SECRETS.map(({ name, category }) => [name, category]),
+    );
+
+    for (const [key, val] of Object.entries(parsed)) {
+      if (typeof val !== "string") continue;
+      this.secrets.set(key, {
+        name: key,
+        value: val,
+        lastRotated: new Date(),
+        category: categoryMap.get(key) ?? "other",
+      });
+    }
+
+    secretsLogger.info("Secrets rechargés depuis AWS Secrets Manager", {
+      total: this.secrets.size,
+    });
+
+    const missing = REQUIRED_SECRETS.filter(
+      (name) => !this.secrets.has(name) || !this.secrets.get(name),
+    );
+    if (missing.length > 0) {
+      throw new Error(`Secrets manquants au démarrage : ${missing.join(", ")}`);
+    }
+  }
+
   private loadFromEnv() {
-    // Liste des secrets critiques à gérer
-    const criticalSecrets: Array<{
-      name: string;
-      category: Secret["category"];
-    }> = [
-      // Secrets JWT
-      { name: "JWT_SECRET", category: "jwt" },
-      { name: "JWT_REFRESH_SECRET", category: "jwt" },
-
-      // Clés de chiffrement
-      { name: "ENCRYPTION_KEY_MASTER", category: "encryption" },
-      { name: "ENCRYPTION_KEY_COMMUNICATION", category: "encryption" },
-      { name: "MASTER_ENCRYPTION_KEY", category: "encryption" },
-      { name: "EMAIL_HMAC_KEY", category: "encryption" },
-      { name: "IP_HASH_SECRET", category: "encryption" },
-
-      // Base de données
-      { name: "DB_CONN_STRING", category: "database" },
-      { name: "MONGODB_URI", category: "database" },
-      { name: "REDIS_PASSWORD", category: "database" },
-
-      // API externes
-      { name: "VONAGE_API_SECRET", category: "api" },
-      { name: "VONAGE_SIGNATURE_SECRET", category: "api" },
-      { name: "TURNSTILE_SECRET_KEY", category: "api" },
-      { name: "SMTP_PASS", category: "api" },
-
-      // AWS (si utilisé)
-      { name: "AWS_SECRET_ACCESS_KEY", category: "api" },
-    ];
-
-    criticalSecrets.forEach(({ name, category }) => {
+    CRITICAL_SECRETS.forEach(({ name, category }) => {
       const value = process.env[name];
 
       if (!value) {
@@ -124,13 +178,6 @@ class SecretsManagerService {
         .length,
     });
 
-    const REQUIRED_SECRETS = [
-      "JWT_SECRET",
-      "ENCRYPTION_KEY_MASTER",
-      "ENCRYPTION_KEY_COMMUNICATION",
-      "DB_CONN_STRING",
-      "EMAIL_HMAC_KEY",
-    ];
     const missing = REQUIRED_SECRETS.filter(
       (name) => !this.secrets.has(name) || !this.secrets.get(name),
     );
@@ -139,12 +186,6 @@ class SecretsManagerService {
     }
   }
 
-  /**
-   * Récupère un secret par son nom
-   * @param name Nom du secret (ex: 'JWT_SECRET')
-   * @returns Valeur du secret
-   * @throws Error si le secret n'existe pas ou le service n'est pas initialisé
-   */
   getSecret(name: string): string {
     if (!this.initialized) {
       throw new Error(
@@ -163,22 +204,10 @@ class SecretsManagerService {
     return secret.value;
   }
 
-  /**
-   * Vérifie si un secret existe
-   * @param name Nom du secret
-   * @returns true si le secret existe
-   */
   hasSecret(name: string): boolean {
     return this.secrets.has(name);
   }
 
-  /**
-   * Récupère un secret avec fallback vers process.env
-   * Utile pour la transition progressive
-   * @param name Nom du secret
-   * @param fallbackToEnv Si true, utilise process.env si secret absent
-   * @returns Valeur du secret ou undefined
-   */
   getSecretSafe(
     name: string,
     fallbackToEnv: boolean = true,
@@ -203,35 +232,54 @@ class SecretsManagerService {
     return undefined;
   }
 
-  /**
-   * Rotation d'un secret (préparation pour AWS/Vault)
-   * @param name Nom du secret
-   * @param newValue Nouvelle valeur
-   */
   async rotateSecret(name: string, newValue: string): Promise<void> {
     const secret = this.secrets.get(name);
     if (!secret) {
       throw new Error(`Secret ${name} non trouvé pour rotation`);
     }
 
-    // TODO: MED-005 - Implémenter rotation dans AWS Secrets Manager / Vault
-    // Pour l'instant, mise à jour en mémoire uniquement
-    secret.value = newValue;
-    secret.lastRotated = new Date();
+    if (this.awsClient && this.awsSecretId) {
+      secretsLogger.info(`Rotation du secret ${name} dans AWS Secrets Manager`, {
+        secretId: this.awsSecretId,
+      });
 
-    secretsLogger.info(`Secret ${name} rotated successfully`, {
-      category: secret.category,
-      rotatedAt: secret.lastRotated,
-    });
+      const currentRaw = await this.awsClient.send(
+        new GetSecretValueCommand({ SecretId: this.awsSecretId }),
+      );
 
-    // TODO: Notifier les systèmes dépendants de la rotation
+      if (!currentRaw.SecretString) {
+        throw new Error("Impossible de lire le secret courant depuis AWS SM");
+      }
+
+      const currentPayload = JSON.parse(currentRaw.SecretString) as Record<
+        string,
+        string
+      >;
+      const updatedPayload = { ...currentPayload, [name]: newValue };
+
+      await this.awsClient.send(
+        new PutSecretValueCommand({
+          SecretId: this.awsSecretId,
+          SecretString: JSON.stringify(updatedPayload),
+        }),
+      );
+
+      secretsLogger.info(`Secret ${name} persisté dans AWS Secrets Manager`, {
+        category: secret.category,
+      });
+
+      await this.reloadFromAwsSM();
+    } else {
+      secret.value = newValue;
+      secret.lastRotated = new Date();
+
+      secretsLogger.info(`Secret ${name} rotated successfully (env mode)`, {
+        category: secret.category,
+        rotatedAt: secret.lastRotated,
+      });
+    }
   }
 
-  /**
-   * Audit de sécurité des secrets
-   * Vérifie la force des secrets selon les critères de sécurité
-   * @returns Rapport d'audit avec secrets faibles et forts
-   */
   auditSecrets(): { weak: string[]; strong: string[]; report: string } {
     const weak: string[] = [];
     const strong: string[] = [];
@@ -239,12 +287,6 @@ class SecretsManagerService {
     this.secrets.forEach((secret, name) => {
       const value = secret.value;
 
-      // Critères de force (niveau militaire/bancaire):
-      // - Longueur >= 32 caractères
-      // - Contient au moins une minuscule
-      // - Contient au moins une majuscule
-      // - Contient au moins un chiffre
-      // - Contient au moins un symbole
       const isStrong =
         value.length >= 32 &&
         /[a-z]/.test(value) &&
@@ -267,27 +309,23 @@ class SecretsManagerService {
     });
 
     const report = `
-🔐 AUDIT SECRETS MANAGER
+AUDIT SECRETS MANAGER
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-✅ Secrets forts    : ${strong.length}/${this.secrets.size}
-⚠️  Secrets faibles  : ${weak.length}/${this.secrets.size}
+Secrets forts    : ${strong.length}/${this.secrets.size}
+Secrets faibles  : ${weak.length}/${this.secrets.size}
 
-${weak.length > 0 ? `⚠️  SECRETS FAIBLES DÉTECTÉS:\n${weak.map((s) => `   - ${s}`).join("\n")}` : "✅ Tous les secrets respectent les critères de sécurité"}
+${weak.length > 0 ? `SECRETS FAIBLES DETECTES:\n${weak.map((s) => `   - ${s}`).join("\n")}` : "Tous les secrets respectent les criteres de securite"}
 
-📋 RECOMMANDATIONS:
-   - Longueur minimale: 32 caractères
+RECOMMANDATIONS:
+   - Longueur minimale: 32 caracteres
    - Doit contenir: minuscules, MAJUSCULES, chiffres, symboles
-   - Générer avec: openssl rand -base64 64
+   - Generer avec: openssl rand -base64 64
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
     `.trim();
 
     return { weak, strong, report };
   }
 
-  /**
-   * Liste tous les secrets disponibles (noms uniquement, pas de valeurs)
-   * @returns Liste des noms de secrets
-   */
   listSecrets(): Array<{
     name: string;
     category?: string;
@@ -300,9 +338,6 @@ ${weak.length > 0 ? `⚠️  SECRETS FAIBLES DÉTECTÉS:\n${weak.map((s) => `   
     }));
   }
 
-  /**
-   * Statistiques du Secrets Manager
-   */
   getStats() {
     const secrets = Array.from(this.secrets.values());
 
@@ -316,23 +351,21 @@ ${weak.length > 0 ? `⚠️  SECRETS FAIBLES DÉTECTÉS:\n${weak.map((s) => `   
         other: secrets.filter((s) => s.category === "other").length,
       },
       initialized: this.initialized,
+      backend: this.awsSecretId ? "aws-secrets-manager" : "env",
     };
   }
 
-  /**
-   * Réinitialise le service (pour tests uniquement)
-   * ⚠️ NE JAMAIS UTILISER EN PRODUCTION
-   */
   _resetForTesting() {
     if (process.env.NODE_ENV === "production") {
       throw new Error("Reset interdit en production");
     }
     this.secrets.clear();
     this.initialized = false;
+    this.awsClient = null;
+    this.awsSecretId = null;
     secretsLogger.warn("Secrets Manager réinitialisé (mode test)");
   }
 }
 
-// Export singleton
 export const secretsManager = new SecretsManagerService();
 export default secretsManager;

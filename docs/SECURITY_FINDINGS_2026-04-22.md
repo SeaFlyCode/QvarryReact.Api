@@ -3,7 +3,7 @@
 Audit niveau bancaire — 6 domaines couverts. 36 findings au total.  
 Format : [ ] = à corriger, [x] = corrigé.
 
-**Statut au 2026-04-22 :** 26 findings corrigés, 10 reportés post-MEP.
+**Statut au 2026-04-22 :** 36/36 findings corrigés.
 
 ---
 
@@ -196,13 +196,13 @@ Format : [ ] = à corriger, [x] = corrigé.
 
 ---
 
-### [ ] [H13] path-to-regexp CVE HIGH en production (via express@5)
+### [x] [H13] path-to-regexp CVE HIGH en production (via express@5)
 
 **Package :** `path-to-regexp@8.x` via `express@5.2.1`
 
-**Problème :** ReDoS via URLs forgées avec wildcards multiples.
+**Problème :** ReDoS via URLs forgées avec wildcards multiples (GHSA-j3q9-mxjg-w52f, GHSA-27v5-c462-wpq7). Range vulnérable : >=8.0.0 <8.4.0.
 
-**Statut :** Bloqué — dépend d'une release d'Express 5. Atténuation : rate limiter global en place. Surveiller https://github.com/expressjs/express/releases
+**Fix appliqué :** Override npm `"path-to-regexp": "^8.4.2"` ajouté dans `package.json`. Version forcée à 8.4.2 qui corrige les deux CVEs. `npm audit` : 0 finding restant.
 
 ---
 
@@ -340,11 +340,11 @@ Format : [ ] = à corriger, [x] = corrigé.
 
 ---
 
-### [ ] [F5] Secrets Manager sans backend externe — rotation en mémoire uniquement
+### [x] [F5] Secrets Manager sans backend externe — rotation en mémoire uniquement
 
-**Fichier :** `src/services/secretsManagerService.ts:197-213`
+**Fichier :** `src/services/secretsManagerService.ts`
 
-**Note :** Les secrets JWT ne changent jamais sans intervention manuelle. Intégration Vault/AWS SM à prévoir.
+**Fix appliqué :** Support AWS Secrets Manager opt-in via `AWS_SECRETS_MANAGER_SECRET_ID`. Quand défini : secrets chargés depuis AWS SM au démarrage (`GetSecretValueCommand`), `rotateSecret()` persiste via `PutSecretValueCommand` puis recharge en mémoire. Fallback `.env` inchangé si variable absente. Package `@aws-sdk/client-secrets-manager` ajouté.
 
 ---
 
@@ -363,10 +363,10 @@ Format : [ ] = à corriger, [x] = corrigé.
 | Sévérité | Total | Corrigés | Restants |
 |---|---|---|---|
 | CRITIQUE | 5 | 5 | 0 |
-| HAUT | 13 | 12 | 1 (H13 — bloqué dépendance upstream) |
+| HAUT | 13 | 13 | 0 |
 | MOYEN | 12 | 12 | 0 |
-| FAIBLE | 6 | 5 | 1 (F5 — Vault/AWS SM, infra externe) |
-| **Total** | **36** | **34** | **2** |
+| FAIBLE | 6 | 6 | 0 |
+| **Total** | **36** | **36** | **0** |
 
 ## Récapitulatif par fichier
 
@@ -390,10 +390,10 @@ Format : [ ] = à corriger, [x] = corrigé.
 | `src/services/userService.ts` | H11 ✅ |
 | `src/services/refreshTokenService.ts` | M3 ✅ |
 | `src/services/loggerService.ts` | M6 ✅ |
-| `src/services/secretsManagerService.ts` | M9 ✅, F5 ⬜ (Vault/AWS SM) |
+| `src/services/secretsManagerService.ts` | M9 ✅, F5 ✅ |
 | `src/server.ts` | M5 ✅, M11 ✅, F4 ✅ |
 | `src/routes/mobileSosRoutes.ts` | F2 ✅ |
 | `docker-compose.prod.yml` | F3 ✅ |
 | `.gitignore` | M8 ✅ |
 | `.env.example` | M10 ✅, F6 ✅ |
-| `package.json` (deps) | H12 ✅, H13 ⬜ (bloqué upstream) |
+| `package.json` (deps) | H12 ✅, H13 ✅ |
