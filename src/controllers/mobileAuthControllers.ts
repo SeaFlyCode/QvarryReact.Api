@@ -103,12 +103,6 @@ export async function handleMobileLogin(req: Request, res: Response) {
 
     if (!user || !isPasswordValid) {
       await recordFailedLogin(email);
-      // Debug log pour identifier le problème
-      mobileAuthLogger.info("[AUTH-DEBUG] Login failed", {
-        email: maskEmail(email),
-        userExists: !!user,
-        passwordValid: isPasswordValid,
-      });
       return res.status(401).json({
         error: "Email ou mot de passe incorrect.",
         code: "INVALID_CREDENTIALS",
@@ -609,6 +603,8 @@ const MOBILE_ME_EXCLUDED_FIELDS = [
   "email_verification_expires",
   "two_factor_secret",
   "two_factor_recovery_codes",
+  "ip_creation",
+  "ip_last_connection",
 ];
 
 /**
@@ -641,14 +637,13 @@ export async function handleMobileGetMe(req: Request, res: Response) {
     }
 
     // Déchiffrer les champs chiffrés
+    const { ip_creation: _ic, ip_last_connection: _ilc, ...userObj } = user.toObject();
     const decrypted = {
-      ...user.toObject(),
+      ...userObj,
       name: decrypt(user.name),
       surname: decrypt(user.surname),
       pseudo: user.pseudo ? decrypt(user.pseudo) : undefined,
       email: decrypt(user.email),
-      ip_creation: decrypt(user.ip_creation),
-      ip_last_connection: decrypt(user.ip_last_connection),
     };
 
     // Sanitize finale : supprimer les champs exclus restants

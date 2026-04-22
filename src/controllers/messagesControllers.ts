@@ -303,6 +303,10 @@ export async function markMessagesAsRead(req: Request, res: Response) {
     if (!messageIds || !Array.isArray(messageIds) || messageIds.length === 0) {
       return res.status(400).json({ error: "messageIds requis (tableau)" });
     }
+    const invalidIds = (messageIds as string[]).filter(id => !Types.ObjectId.isValid(id));
+    if (invalidIds.length > 0) {
+      return res.status(400).json({ error: "Un ou plusieurs IDs sont invalides." });
+    }
     if (!conversationId) {
       return res.status(400).json({ error: "conversationId requis" });
     }

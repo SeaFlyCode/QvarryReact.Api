@@ -123,6 +123,20 @@ class SecretsManagerService {
       api: Array.from(this.secrets.values()).filter((s) => s.category === "api")
         .length,
     });
+
+    const REQUIRED_SECRETS = [
+      "JWT_SECRET",
+      "ENCRYPTION_KEY_MASTER",
+      "ENCRYPTION_KEY_COMMUNICATION",
+      "DB_CONN_STRING",
+      "EMAIL_HMAC_KEY",
+    ];
+    const missing = REQUIRED_SECRETS.filter(
+      (name) => !this.secrets.has(name) || !this.secrets.get(name),
+    );
+    if (missing.length > 0) {
+      throw new Error(`Secrets manquants au démarrage : ${missing.join(", ")}`);
+    }
   }
 
   /**

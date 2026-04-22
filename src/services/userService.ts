@@ -411,11 +411,15 @@ export async function getUserByEmail(email: string): Promise<IUser | null> {
   const emailHashValue = hashEmail(email);
 
   // Recherche rapide par hash indexé
-  const user = await UserModel.findOne({ emailHash: emailHashValue });
+  const user = await UserModel.findOne({ emailHash: emailHashValue }).select(
+    "+password +password_history +reset_password_token +email_verification_token +email_verification_code +two_factor_secret +two_factor_recovery_codes",
+  );
   if (user) return user;
 
   // Fallback : scan pour les anciens utilisateurs sans emailHash (migration progressive)
-  const users = await UserModel.find({ emailHash: { $exists: false } });
+  const users = await UserModel.find({ emailHash: { $exists: false } }).select(
+    "+password +password_history +reset_password_token +email_verification_token +email_verification_code +two_factor_secret +two_factor_recovery_codes",
+  );
   for (const u of users) {
     const decryptedEmail = decrypt(u.email);
     if (decryptedEmail === email) {
@@ -432,7 +436,9 @@ export async function getUserByEmail(email: string): Promise<IUser | null> {
 export async function getUserById(userId: string): Promise<IUser | null> {
   if (!mongoose.Types.ObjectId.isValid(userId))
     throw new Error("L'ID fourni n'est pas valide.");
-  return UserModel.findById(userId);
+  return UserModel.findById(userId).select(
+    "+password +password_history +reset_password_token +email_verification_token +email_verification_code +two_factor_secret +two_factor_recovery_codes",
+  );
 }
 
 // Mise à jour d'un utilisateur par ID
@@ -442,6 +448,8 @@ export async function updateUserById(
 ): Promise<void> {
   if (!mongoose.Types.ObjectId.isValid(userId))
     throw new Error("L'ID fourni n'est pas valide.");
+  const FORBIDDEN_UPDATE_FIELDS = ['is_admin', 'is_blocked', 'is_admin_validated', 'password', 'password_history'];
+  FORBIDDEN_UPDATE_FIELDS.forEach(f => delete (updatedUser as Record<string, unknown>)[f]);
   const result = await UserModel.updateOne(
     { _id: userId },
     { $set: updatedUser },

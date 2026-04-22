@@ -288,7 +288,10 @@ class VonageService {
     let text = `🆘 ALERTE QVARRY - ${userName} n'a pas donné signe de vie après son exploration souterraine.`;
 
     const safeNote = sessionNote
-      ? sessionNote.replace(/[\x00-\x1F\x7F]/g, '').slice(0, 150)
+      ? sessionNote
+          .replace(/[\x00-\x1F\x7F​-‏‪-‮⁦-⁩﻿]/g, '')
+          .trim()
+          .slice(0, 140)
       : undefined;
     if (safeNote) {
       text += ` Note: "${safeNote}"`;

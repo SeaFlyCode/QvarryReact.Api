@@ -45,8 +45,7 @@ function generateRecoveryCodes(): string[] {
   for (let i = 0; i < RECOVERY_CODES_COUNT; i++) {
     const code = crypto
       .randomBytes(9)
-      .toString("base64")
-      .replace(/[^a-zA-Z0-9]/g, "")
+      .toString("base64url")
       .substring(0, 12)
       .toUpperCase();
     const formattedCode = `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}`;
@@ -131,7 +130,7 @@ export async function mobileSetupTwoFactor(
     }
 
     const user = await UserModel.findById(userId).select(
-      "email two_factor_enabled two_factor_secret",
+      "email two_factor_enabled +two_factor_secret",
     );
     if (!user) {
       return res.status(404).json({
@@ -229,7 +228,9 @@ export async function mobileVerifyAndEnableTwoFactor(
       });
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+two_factor_secret +two_factor_recovery_codes",
+    );
     if (!user) {
       return res.status(404).json({
         error: "Utilisateur non trouvé",
@@ -358,7 +359,9 @@ export async function mobileDisableTwoFactor(
       });
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+password +two_factor_secret +two_factor_recovery_codes",
+    );
     if (!user) {
       return res.status(404).json({
         error: "Utilisateur non trouvé",
@@ -474,105 +477,22 @@ export async function mobileDisableTwoFactor(
 // VÉRIFIER CODE 2FA (pendant le login) - RENVOIE LES TOKENS
 // ═══════════════════════════════════════════════════════════════════════════
 
-// Rate limiting spécifique par userId pour les tentatives 2FA
-const twoFactorAttempts = new Map<
-  string,
-  { count: number; firstAttempt: Date; blockedUntil?: Date }
->();
-
-// BUG-002: Nettoyage périodique de la Map twoFactorAttempts pour éviter la croissance non bornée
-const TWO_FACTOR_CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
-const TWO_FACTOR_MAX_ENTRIES = 10_000;
-
-function cleanupTwoFactorAttempts(): void {
-  const now = Date.now();
-  const thirtyMinutesMs = 30 * 60 * 1000;
-
-  for (const [key, entry] of twoFactorAttempts) {
-    // Supprimer les entrées dont le blocage a expiré ET qui sont anciennes
-    const blockedExpired =
-      entry.blockedUntil && entry.blockedUntil.getTime() < now;
-    const firstAttemptExpired =
-      now - entry.firstAttempt.getTime() > thirtyMinutesMs;
-
-    if (blockedExpired || firstAttemptExpired) {
-      twoFactorAttempts.delete(key);
-    }
-  }
-
-  // Si toujours trop d'entrées, supprimer les plus anciennes
-  if (twoFactorAttempts.size > TWO_FACTOR_MAX_ENTRIES) {
-    const entries = Array.from(twoFactorAttempts.entries()).sort(
-      (a, b) => a[1].firstAttempt.getTime() - b[1].firstAttempt.getTime(),
-    );
-
-    const toRemove = entries.length - TWO_FACTOR_MAX_ENTRIES;
-    for (let i = 0; i < toRemove; i++) {
-      twoFactorAttempts.delete(entries[i][0]);
-    }
-  }
-
-  if (twoFactorAttempts.size > 0) {
-    mobile2faLogger.info("Nettoyage 2FA", {
-      remainingEntries: twoFactorAttempts.size,
-    });
-  }
-}
-
-setInterval(cleanupTwoFactorAttempts, TWO_FACTOR_CLEANUP_INTERVAL_MS);
-mobile2faLogger.info("Nettoyage automatique 2FA démarré", {
-  intervalSeconds: TWO_FACTOR_CLEANUP_INTERVAL_MS / 1000,
-});
-
 /**
- * Vérifie les tentatives 2FA pour un userId donné
- * Bloque après 5 échecs pendant 30 minutes
+ * Vérifie les tentatives 2FA pour un userId donné via Redis.
+ * Bloque après 5 échecs pendant 30 minutes.
  */
 async function checkTwoFactorAttempts(
   userId: string,
 ): Promise<{ allowed: boolean; waitTime?: number }> {
-  const attempt = twoFactorAttempts.get(userId);
-  const now = new Date();
-
-  if (!attempt) return { allowed: true };
-
-  // Vérifier si bloqué
-  if (attempt.blockedUntil && attempt.blockedUntil > now) {
-    const waitMinutes = Math.ceil(
-      (attempt.blockedUntil.getTime() - now.getTime()) / 60000,
-    );
-    return { allowed: false, waitTime: waitMinutes };
-  }
-
-  // Réinitialiser si plus de 15 minutes depuis le premier échec
-  const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
-  if (attempt.firstAttempt < fifteenMinutesAgo) {
-    twoFactorAttempts.delete(userId);
-    return { allowed: true };
-  }
-
-  // Bloquer si trop de tentatives
-  if (attempt.count >= 5) {
-    attempt.blockedUntil = new Date(now.getTime() + 30 * 60 * 1000);
-    return { allowed: false, waitTime: 30 };
-  }
-
-  return { allowed: true };
+  return redisSessionService.checkTwoFactorAttempts(userId);
 }
 
-function recordTwoFactorFailure(userId: string): void {
-  const attempt = twoFactorAttempts.get(userId);
-  const now = new Date();
-
-  if (attempt) {
-    attempt.count++;
-  } else {
-    twoFactorAttempts.set(userId, { count: 1, firstAttempt: now });
-  }
+async function recordTwoFactorFailure(userId: string): Promise<void> {
+  await redisSessionService.recordTwoFactorFailure(userId);
 }
 
-function resetTwoFactorAttempts(userId: string): void {
-  twoFactorAttempts.delete(userId);
+async function resetTwoFactorAttempts(userId: string): Promise<void> {
+  await redisSessionService.resetTwoFactorAttempts(userId);
 }
 
 /**
@@ -704,18 +624,20 @@ export async function mobileVerifyTwoFactorLogin(
       });
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+two_factor_secret +two_factor_recovery_codes",
+    );
 
     // HIGH-002: Message générique + délai pour éviter énumération
     if (!user) {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      recordTwoFactorFailure(userId);
+      await recordTwoFactorFailure(userId);
       return res.status(400).json(GENERIC_2FA_ERROR);
     }
 
     if (!user.two_factor_enabled || !user.two_factor_secret) {
       await new Promise((resolve) => setTimeout(resolve, 500));
-      recordTwoFactorFailure(userId);
+      await recordTwoFactorFailure(userId);
       return res.status(400).json(GENERIC_2FA_ERROR);
     }
 
@@ -724,8 +646,9 @@ export async function mobileVerifyTwoFactorLogin(
     if (isRecoveryCode) {
       // MED-004: Limite spécifique pour les codes de récupération (max 3 échecs)
       const recoveryKey = `recovery_${userId}`;
-      const recoveryAttempt = twoFactorAttempts.get(recoveryKey);
-      if (recoveryAttempt && recoveryAttempt.count >= 3) {
+      const recoveryAttemptCheck =
+        await redisSessionService.checkTwoFactorAttempts(recoveryKey);
+      if (!recoveryAttemptCheck.allowed) {
         return res.status(429).json({
           error:
             "Trop de tentatives avec les codes de récupération. Veuillez utiliser un code TOTP.",
@@ -752,14 +675,7 @@ export async function mobileVerifyTwoFactorLogin(
 
       if (recoveryCodeIndex === -1) {
         // Enregistrer l'échec pour les codes de récupération
-        if (recoveryAttempt) {
-          recoveryAttempt.count++;
-        } else {
-          twoFactorAttempts.set(recoveryKey, {
-            count: 1,
-            firstAttempt: new Date(),
-          });
-        }
+        await redisSessionService.recordTwoFactorFailure(recoveryKey);
 
         await auditService.log({
           userId,
@@ -772,7 +688,7 @@ export async function mobileVerifyTwoFactorLogin(
             platform: mobileContext?.platform,
           },
         });
-        recordTwoFactorFailure(userId);
+        await recordTwoFactorFailure(userId);
         return res.status(400).json(GENERIC_2FA_ERROR);
       }
 
@@ -784,7 +700,7 @@ export async function mobileVerifyTwoFactorLogin(
       codeValid = true;
 
       // Réinitialiser le compteur de récupération
-      twoFactorAttempts.delete(recoveryKey);
+      await redisSessionService.resetTwoFactorAttempts(recoveryKey);
 
       await auditService.log({
         userId,
@@ -840,13 +756,13 @@ export async function mobileVerifyTwoFactorLogin(
             platform: mobileContext?.platform,
           },
         });
-        recordTwoFactorFailure(userId);
+        await recordTwoFactorFailure(userId);
         return res.status(400).json(GENERIC_2FA_ERROR);
       }
     }
 
     // Réinitialiser les compteurs après succès
-    resetTwoFactorAttempts(userId);
+    await resetTwoFactorAttempts(userId);
 
     // Code valide -> Générer les tokens et compléter la connexion
     // MED-001: Inclure deviceId dans le token
@@ -954,7 +870,9 @@ export async function mobileRegenerateRecoveryCodes(
       });
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+password +two_factor_recovery_codes",
+    );
     if (!user) {
       return res.status(404).json({
         error: "Utilisateur non trouvé",
@@ -1035,7 +953,7 @@ export async function mobileGetTwoFactorStatus(
 
     const user = await UserModel.findById(userId)
       .select(
-        "two_factor_enabled two_factor_confirmed_at two_factor_recovery_codes",
+        "two_factor_enabled two_factor_confirmed_at +two_factor_recovery_codes",
       )
       .lean();
     if (!user) {

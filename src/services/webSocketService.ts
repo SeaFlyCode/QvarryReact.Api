@@ -636,6 +636,20 @@ class WebSocketService {
   }
 
   /**
+   * PERF: Annule le timer debounce en attente et purge dirtyStates pour un userId.
+   * Appelé lors de la déconnexion du dernier client d'un user pour éviter qu'un
+   * timer orphelin ne tente de sauver un état sans client associé.
+   */
+  private cancelDebouncedSave(userId: string): void {
+    const timer = this.saveDebounceTimers.get(userId);
+    if (timer) {
+      clearTimeout(timer);
+      this.saveDebounceTimers.delete(userId);
+    }
+    this.dirtyStates.delete(userId);
+  }
+
+  /**
    * Helper: Trouve un client WebSocket par userId
    */
   private findClientByUserId(userId: string): AuthenticatedWebSocket | null {
@@ -1191,8 +1205,17 @@ class WebSocketService {
         }
 
         if (admin.apps.length === 0) {
+          if (NODE_ENV === "production") {
+            wsLogger.error(
+              "[SECURITY] Firebase non initialisé en production — WS refusé",
+              { pathname },
+            );
+            socket.write("HTTP/1.1 503 Service Unavailable\r\n\r\n");
+            socket.destroy();
+            return;
+          }
           wsLogger.warn(
-            "Firebase non initialisé — App Check WS ignoré",
+            "Firebase non initialisé — App Check WS ignoré (non-production)",
             { pathname },
           );
         } else {
@@ -1594,6 +1617,10 @@ class WebSocketService {
               userClients.delete(client);
               if (userClients.size === 0) {
                 this.clients.delete(client.userId);
+                // PERF: plus aucun client pour ce user → purger les timers orphelins
+                if (!this.findClientByUserId(client.userId)) {
+                  this.cancelDebouncedSave(client.userId);
+                }
               }
             }
             wsLogger.info("Notifications - Client déconnecté", {
@@ -2054,10 +2081,8 @@ class WebSocketService {
                 client.send(
                   JSON.stringify({
                     type: "error",
-                    details:
-                      err instanceof Error
-                        ? err.message
-                        : "Erreur envoi message",
+                    code: err instanceof Error && err.message.startsWith("NOT_") ? err.message : "OPERATION_FAILED",
+                    message: "Opération impossible",
                   }),
                 );
               }
@@ -2074,10 +2099,8 @@ class WebSocketService {
                 client.send(
                   JSON.stringify({
                     type: "error",
-                    details:
-                      err instanceof Error
-                        ? err.message
-                        : "Erreur récupération messages",
+                    code: err instanceof Error && err.message.startsWith("NOT_") ? err.message : "OPERATION_FAILED",
+                    message: "Opération impossible",
                   }),
                 );
               }
@@ -2096,10 +2119,8 @@ class WebSocketService {
                 client.send(
                   JSON.stringify({
                     type: "error",
-                    details:
-                      err instanceof Error
-                        ? err.message
-                        : "Erreur marquage message lu",
+                    code: err instanceof Error && err.message.startsWith("NOT_") ? err.message : "OPERATION_FAILED",
+                    message: "Opération impossible",
                   }),
                 );
               }
@@ -2118,8 +2139,8 @@ class WebSocketService {
                 client.send(
                   JSON.stringify({
                     type: "error",
-                    details:
-                      err instanceof Error ? err.message : "Erreur réponse",
+                    code: err instanceof Error && err.message.startsWith("NOT_") ? err.message : "OPERATION_FAILED",
+                    message: "Opération impossible",
                   }),
                 );
               }
@@ -2138,10 +2159,8 @@ class WebSocketService {
                 client.send(
                   JSON.stringify({
                     type: "error",
-                    details:
-                      err instanceof Error
-                        ? err.message
-                        : "Erreur modification message",
+                    code: err instanceof Error && err.message.startsWith("NOT_") ? err.message : "OPERATION_FAILED",
+                    message: "Opération impossible",
                   }),
                 );
               }
@@ -2156,10 +2175,8 @@ class WebSocketService {
                 client.send(
                   JSON.stringify({
                     type: "error",
-                    details:
-                      err instanceof Error
-                        ? err.message
-                        : "Erreur suppression message",
+                    code: err instanceof Error && err.message.startsWith("NOT_") ? err.message : "OPERATION_FAILED",
+                    message: "Opération impossible",
                   }),
                 );
               }
@@ -2240,22 +2257,31 @@ class WebSocketService {
           this.clientLastActivity.delete(client);
 
           // PHASE 4: Sauvegarder l'état avant déconnexion
-          if (client.userId && client.deviceId) {
-            await this.saveClientState(client);
-            wsLogger.info("Messages - État sauvegardé avant déconnexion", {
-              userId: client.userId,
-              deviceId: client.deviceId,
-            });
-          }
+          try {
+            if (client.userId && client.deviceId) {
+              await this.saveClientState(client);
+              wsLogger.info("Messages - État sauvegardé avant déconnexion", {
+                userId: client.userId,
+                deviceId: client.deviceId,
+              });
+            }
+          } catch (error) {
+            wsLogger.error("Messages - Échec sauvegarde état avant déconnexion", { error });
+          } finally {
+            if (client.userId) {
+              // Retirer le client de la conversation (avec index inversé)
+              this.removeClientFromConversation(client, conversationId);
 
-          if (client.userId) {
-            // Retirer le client de la conversation (avec index inversé)
-            this.removeClientFromConversation(client, conversationId);
+              // PERF: si plus aucun socket pour ce user, purger les timers orphelins
+              if (!this.findClientByUserId(client.userId)) {
+                this.cancelDebouncedSave(client.userId);
+              }
 
-            wsLogger.info("Messages - Client déconnecté", {
-              userId: client.userId,
-              conversationId,
-            });
+              wsLogger.info("Messages - Client déconnecté", {
+                userId: client.userId,
+                conversationId,
+              });
+            }
           }
         });
       } catch (error) {

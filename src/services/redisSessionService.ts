@@ -618,6 +618,8 @@ export class RedisSessionService {
   // ═══════════════════════════════════════════════════════════════════════
   private readonly LOGIN_ATTEMPTS_PREFIX = "qvarry:login_attempts:";
   private readonly LOGIN_ATTEMPTS_TTL = 24 * 60 * 60; // 24 heures
+  private readonly TWO_FACTOR_ATTEMPTS_PREFIX = "2fa_attempts:";
+  private readonly TWO_FACTOR_ATTEMPTS_TTL = 1800; // 30 min
 
   async getLoginAttempts(email: string): Promise<{
     attempts: number;
@@ -953,6 +955,69 @@ export class RedisSessionService {
           "Failed to set mobile rate limit in Redis, using memory fallback",
           { error: getErrorMessage(error), key },
         );
+      }
+    }
+  }
+  // ═══════════════════════════════════════════════════════════════════════
+  // RATE LIMITING 2FA (PERSISTÉ EN REDIS)
+  // ═══════════════════════════════════════════════════════════════════════
+
+  async checkTwoFactorAttempts(
+    userId: string,
+  ): Promise<{ allowed: boolean; waitTime?: number }> {
+    const blockedKey = `${this.TWO_FACTOR_ATTEMPTS_PREFIX}blocked:${userId}`;
+
+    if (redis) {
+      try {
+        const blockedTtl = await redis.ttl(blockedKey);
+        if (blockedTtl > 0) {
+          return { allowed: false, waitTime: Math.ceil(blockedTtl / 60) };
+        }
+        return { allowed: true };
+      } catch (error: unknown) {
+        redisLogger.error(
+          "Failed to check 2FA attempts in Redis, using memory",
+          { error: getErrorMessage(error) },
+        );
+      }
+    }
+    // fallback mémoire — toujours autorisé si Redis absent
+    return { allowed: true };
+  }
+
+  async recordTwoFactorFailure(userId: string): Promise<void> {
+    const key = `${this.TWO_FACTOR_ATTEMPTS_PREFIX}${userId}`;
+    const blockedKey = `${this.TWO_FACTOR_ATTEMPTS_PREFIX}blocked:${userId}`;
+
+    if (redis) {
+      try {
+        const count = await redis.incr(key);
+        if (count === 1) {
+          await redis.expire(key, 900); // fenêtre 15 min
+        }
+        if (count >= 5) {
+          await redis.setex(blockedKey, this.TWO_FACTOR_ATTEMPTS_TTL, "1"); // bloqué 30 min
+          await redis.del(key);
+        }
+      } catch (error: unknown) {
+        redisLogger.error("Failed to record 2FA failure in Redis", {
+          error: getErrorMessage(error),
+        });
+      }
+    }
+  }
+
+  async resetTwoFactorAttempts(userId: string): Promise<void> {
+    const key = `${this.TWO_FACTOR_ATTEMPTS_PREFIX}${userId}`;
+    const blockedKey = `${this.TWO_FACTOR_ATTEMPTS_PREFIX}blocked:${userId}`;
+
+    if (redis) {
+      try {
+        await redis.del(key, blockedKey);
+      } catch (error: unknown) {
+        redisLogger.error("Failed to reset 2FA attempts in Redis", {
+          error: getErrorMessage(error),
+        });
       }
     }
   }

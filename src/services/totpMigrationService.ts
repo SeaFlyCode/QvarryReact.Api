@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { TOTP, Secret } from "otpauth";
+import Redis, { Cluster } from "ioredis";
 import { logger } from "./loggerService";
 import UserModel from "../models/users";
 import { decrypt, encrypt } from "../utils/masterEncryptionUtils";
@@ -19,6 +20,44 @@ const migrationLogger = logger.child({ service: "totp-migration" });
 const APP_NAME = "Qvarry";
 const NEW_ALGORITHM = "SHA512"; // ✅ Maximum security
 const LEGACY_ALGORITHM = "SHA1"; // Pour compatibilité temporaire
+
+// ═══════════════════════════════════════════════════════════════════════════
+// CLIENT REDIS (anti-replay TOTP)
+// ═══════════════════════════════════════════════════════════════════════════
+
+let redisClient: Redis | Cluster | null = null;
+
+if (process.env.REDIS_ENABLED === "true") {
+  try {
+    if (process.env.USE_REDIS_CLUSTER === "true") {
+      const clusterNodes =
+        process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
+          const [host, port] = node.split(":");
+          return { host, port: parseInt(port) };
+        }) || [];
+      redisClient = new Cluster(clusterNodes, {
+        redisOptions: {
+          password: process.env.REDIS_PASSWORD,
+          tls: process.env.REDIS_TLS === "true" ? {} : undefined,
+        },
+      });
+    } else {
+      redisClient = new Redis({
+        host: process.env.REDIS_HOST || "localhost",
+        port: parseInt(process.env.REDIS_PORT || "6379"),
+        password: process.env.REDIS_PASSWORD,
+        db: parseInt(process.env.REDIS_DB || "0"),
+        lazyConnect: true,
+        tls: process.env.REDIS_TLS === "true" ? {} : undefined,
+      });
+    }
+  } catch (err) {
+    migrationLogger.error("Échec initialisation Redis (anti-replay TOTP)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    redisClient = null;
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // TYPES
@@ -108,25 +147,44 @@ export async function verifyTOTPCode(
     const isValid = totp.validate({ token: code, window: 1 }) !== null;
 
     if (isValid && currentAlgorithm === NEW_ALGORITHM) {
-      // Déjà migré et code valide
+      // Déjà migré et code valide — vérification anti-replay
+      // C3: Empêcher la réutilisation du même code TOTP dans la fenêtre de 90s
+      if (redisClient) {
+        const USED_TOTP_KEY = `totp:used:${userId}:${code}`;
+        const alreadyUsed = await redisClient.exists(USED_TOTP_KEY);
+        if (alreadyUsed) throw new Error("CODE_TOTP_DEJA_UTILISE");
+        await redisClient.set(USED_TOTP_KEY, "1", "EX", 90);
+      }
       return { isValid: true };
     }
 
     if (isValid && currentAlgorithm === LEGACY_ALGORITHM) {
-      // Code valide avec SHA1 → MIGRER VERS SHA512
+      // Code valide avec SHA1 — vérification anti-replay
+      // C3: Empêcher la réutilisation du même code TOTP dans la fenêtre de 90s
+      if (redisClient) {
+        const USED_TOTP_KEY = `totp:used:${userId}:${code}`;
+        const alreadyUsed = await redisClient.exists(USED_TOTP_KEY);
+        if (alreadyUsed) throw new Error("CODE_TOTP_DEJA_UTILISE");
+        await redisClient.set(USED_TOTP_KEY, "1", "EX", 90);
+      }
+
       migrationLogger.info("Auto-migration triggered (SHA1 → SHA512)", {
         userId,
         userEmail: userEmail.substring(0, 3) + "***",
       });
 
-      // Générer nouveau secret SHA512
-      const newTOTPData = generateTOTPSecret(userEmail);
-      const newEncryptedSecret = encrypt(newTOTPData.secret);
+      // SECURITY H4: Ne pas régénérer le secret automatiquement.
+      // L'utilisateur n'a pas scanné le nouveau QR code — son app TOTP
+      // continuera à générer des codes avec l'ancien secret.
+      // La migration SHA1→SHA512 ne doit être déclenchée que lors d'un
+      // re-setup explicite par l'utilisateur.
+      //
+      // const newTOTPData = generateTOTPSecret(userEmail);
+      // const newEncryptedSecret = encrypt(newTOTPData.secret);
+      // return { isValid: true, migrated: true, newEncryptedSecret };
 
       return {
         isValid: true,
-        migrated: true,
-        newEncryptedSecret,
       };
     }
   }
@@ -147,6 +205,13 @@ export async function verifyTOTPCode(
     totpSHA512.validate({ token: code, window: 1 }) !== null;
 
   if (isValidSHA512) {
+    // C3: Empêcher la réutilisation du même code TOTP dans la fenêtre de 90s
+    if (redisClient) {
+      const USED_TOTP_KEY = `totp:used:${userId}:${code}`;
+      const alreadyUsed = await redisClient.exists(USED_TOTP_KEY);
+      if (alreadyUsed) throw new Error("CODE_TOTP_DEJA_UTILISE");
+      await redisClient.set(USED_TOTP_KEY, "1", "EX", 90);
+    }
     return { isValid: true };
   }
 
@@ -165,20 +230,32 @@ export async function verifyTOTPCode(
   const isValidSHA1 = totpSHA1.validate({ token: code, window: 1 }) !== null;
 
   if (isValidSHA1) {
-    // ⚠️ Code valide avec SHA1 → MIGRATION IMMÉDIATE
-    migrationLogger.warn("Legacy SHA1 TOTP detected - migrating to SHA512", {
+    // C3: Empêcher la réutilisation du même code TOTP dans la fenêtre de 90s
+    if (redisClient) {
+      const USED_TOTP_KEY = `totp:used:${userId}:${code}`;
+      const alreadyUsed = await redisClient.exists(USED_TOTP_KEY);
+      if (alreadyUsed) throw new Error("CODE_TOTP_DEJA_UTILISE");
+      await redisClient.set(USED_TOTP_KEY, "1", "EX", 90);
+    }
+
+    // ⚠️ Code valide avec SHA1 — MIGRATION NON AUTOMATIQUE (H4)
+    migrationLogger.warn("Legacy SHA1 TOTP detected - user must re-setup to migrate", {
       userId,
       userEmail: userEmail.substring(0, 3) + "***",
     });
 
-    // Générer nouveau secret SHA512
-    const newTOTPData = generateTOTPSecret(userEmail);
-    const newEncryptedSecret = encrypt(newTOTPData.secret);
+    // SECURITY H4: Ne pas régénérer le secret automatiquement.
+    // L'utilisateur n'a pas scanné le nouveau QR code — son app TOTP
+    // continuera à générer des codes avec l'ancien secret.
+    // La migration SHA1→SHA512 ne doit être déclenchée que lors d'un
+    // re-setup explicite par l'utilisateur.
+    //
+    // const newTOTPData = generateTOTPSecret(userEmail);
+    // const newEncryptedSecret = encrypt(newTOTPData.secret);
+    // return { isValid: true, migrated: true, newEncryptedSecret };
 
     return {
       isValid: true,
-      migrated: true,
-      newEncryptedSecret,
     };
   }
 

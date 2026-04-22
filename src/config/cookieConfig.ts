@@ -16,8 +16,10 @@ const cookieLogger = logger.child({ service: "cookie-config" });
 
 const isProduction = process.env.NODE_ENV === "production";
 
-// COOKIE_SECURE: Respecte strictement la configuration .env
-const COOKIE_SECURE = process.env.COOKIE_SECURE === "true";
+// COOKIE_SECURE: Forcé à true en production, sinon respecte la configuration .env
+const COOKIE_SECURE = process.env.NODE_ENV === "production"
+  ? true
+  : process.env.COOKIE_SECURE === "true";
 
 // COOKIE_SAMESITE: Si non défini, utilise 'strict' en production, 'lax' sinon
 type SameSiteOption = "strict" | "lax" | "none";

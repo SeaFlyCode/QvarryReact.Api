@@ -284,6 +284,10 @@ export async function createGroupConversation(req: Request, res: Response) {
       return res.status(400).json({ error: "Nom et participantIds requis" });
     }
 
+    if (!Array.isArray(participantIds) || !participantIds.every((id: unknown) => typeof id === "string" && Types.ObjectId.isValid(id))) {
+      return res.status(400).json({ error: "participantIds contient des valeurs invalides." });
+    }
+
     // SEC: Vérifier que tous les participants sont des contacts acceptés du créateur
     const acceptedContacts = await ContactModel.find({
       userId: userId,
@@ -692,6 +696,10 @@ export async function addGroupMembers(req: Request, res: Response) {
       return res
         .status(400)
         .json({ error: "ID de conversation et userIds requis" });
+    }
+    const invalidIds = (userIds as string[]).filter(id => !Types.ObjectId.isValid(id));
+    if (invalidIds.length > 0) {
+      return res.status(400).json({ error: "Un ou plusieurs IDs sont invalides." });
     }
     const conversation = await Conversation.findById(id);
     if (!conversation || !conversation.isGroup) {

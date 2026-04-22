@@ -50,17 +50,13 @@ export async function handleForgotPassword(req: Request, res: Response) {
       });
     }
 
-    // Générer un token et un code de réinitialisation
-    const resetToken = crypto.randomBytes(32).toString("hex");
     // SEC-041: Code à 8 chiffres pour renforcer la résistance au brute-force
     const resetCode = generateVerificationCode(8);
     const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 heure
 
-    // Mettre à jour l'utilisateur
-    user.reset_password_token = resetToken;
+    // Stocker le hash bcrypt du code (jamais en clair) — token à usage unique
+    user.reset_password_token = await bcrypt.hash(resetCode, 10);
     user.reset_password_expires = resetExpires;
-    // Stocker le code temporairement (on réutilise le champ token pour stocker token:code)
-    user.reset_password_token = `${resetToken}:${resetCode}`;
     await user.save();
 
     // Récupérer les infos pour l'email
@@ -151,15 +147,16 @@ export async function handleResetPassword(req: Request, res: Response) {
       });
     }
 
-    // Vérifier le code (stocké comme token:code)
-    const [_storedToken, storedCode] = (user.reset_password_token || "").split(
-      ":",
-    );
-    const isCodeValid =
-      storedCode &&
-      code &&
-      storedCode.length === code.length &&
-      crypto.timingSafeEqual(Buffer.from(storedCode), Buffer.from(code));
+    // Vérifier le code — storé comme bcrypt hash
+    const storedHash = user.reset_password_token || "";
+    // Rejeter les anciens tokens au format "plaintextToken:code" (migration)
+    if (storedHash.includes(":") || !storedHash.startsWith("$2")) {
+      return res.status(400).json({
+        message: "Code invalide ou expiré. Veuillez en demander un nouveau.",
+        expired: true,
+      });
+    }
+    const isCodeValid = code && (await bcrypt.compare(code, storedHash));
     if (!isCodeValid) {
       return res.status(400).json({
         message: "Code invalide.",

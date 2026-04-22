@@ -69,8 +69,8 @@ const UserSchema: Schema<IUser> = new Schema({
   surname: { type: String, required: true, maxlength: 200, trim: true },
   pseudo: { type: String, required: false, maxlength: 50, trim: true },
   showPseudo: { type: Boolean, default: false },
-  password: { type: String, required: true, maxlength: 200 },
-  password_history: { type: [String], default: [] }, // REM-006: Historique des 5 derniers mots de passe
+  password: { type: String, required: true, maxlength: 200, select: false },
+  password_history: { type: [String], default: [], select: false }, // REM-006: Historique des 5 derniers mots de passe
   email: { type: String, required: true, maxlength: 500 },
   emailHash: { type: String },
   ip_creation: { type: String, required: true },
@@ -82,13 +82,13 @@ const UserSchema: Schema<IUser> = new Schema({
   blocked_at: { type: Date },
   blocked_reason: { type: String, default: "", maxlength: 500 },
   contact_code: { type: Number, default: 0 },
-  reset_password_token: { type: String, default: "" },
+  reset_password_token: { type: String, default: "", select: false },
   reset_password_expires: { type: Date },
   is_verified: { type: Boolean, default: false },
   is_auth: { type: Boolean, default: false },
   // Champs pour la vérification d'email
-  email_verification_token: { type: String, default: "" },
-  email_verification_code: { type: String, default: "" },
+  email_verification_token: { type: String, default: "", select: false },
+  email_verification_code: { type: String, default: "", select: false },
   email_verification_expires: { type: Date },
   // Champs pour la validation par un administrateur
   is_admin_validated: { type: Boolean, default: false },
@@ -104,7 +104,7 @@ const UserSchema: Schema<IUser> = new Schema({
   gdpr_marketing_consent_date: { type: Date },
   // 2FA/TOTP - Authentification à deux facteurs
   two_factor_enabled: { type: Boolean, default: false },
-  two_factor_secret: { type: String },
+  two_factor_secret: { type: String, select: false },
   two_factor_algorithm: {
     type: String,
     enum: ["sha1", "sha256", "sha512"],
@@ -112,7 +112,7 @@ const UserSchema: Schema<IUser> = new Schema({
     required: false,
   },
   two_factor_confirmed_at: { type: Date },
-  two_factor_recovery_codes: { type: [String], default: [] },
+  two_factor_recovery_codes: { type: [String], default: [], select: false },
   // Préférences de notifications
   login_notifications_enabled: { type: Boolean, default: true },
   // Gestion du stockage de photos
@@ -141,6 +141,31 @@ const UserSchema: Schema<IUser> = new Schema({
     default: [],
   },
 });
+
+// SEC: filtre défense en profondeur à la sérialisation — évite toute fuite
+// accidentelle de champs sensibles dans les réponses API, même si un controller
+// oublie d'utiliser sanitizeUserForResponse ou .select("-password").
+const SENSITIVE_USER_FIELDS = [
+  "password",
+  "password_history",
+  "reset_password_token",
+  "reset_password_expires",
+  "email_verification_token",
+  "email_verification_code",
+  "email_verification_expires",
+  "two_factor_secret",
+  "two_factor_recovery_codes",
+] as const;
+
+const stripSensitiveFields = (_doc: unknown, ret: any) => {
+  for (const field of SENSITIVE_USER_FIELDS) {
+    delete ret[field];
+  }
+  return ret;
+};
+
+UserSchema.set("toJSON", { transform: stripSensitiveFields });
+UserSchema.set("toObject", { transform: stripSensitiveFields });
 
 UserSchema.index({ emailHash: 1 });
 UserSchema.index({ is_admin_validated: 1, creation_date: -1 });

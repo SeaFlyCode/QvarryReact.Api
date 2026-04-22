@@ -23,6 +23,90 @@ const APP_NAME = process.env.APP_NAME || "Qvarry";
 const RECOVERY_CODES_COUNT = 10;
 
 // ─────────────────────────────────────────────────────────────────────────
+// RATE LIMITING 2FA PAR USERID (web)
+// ─────────────────────────────────────────────────────────────────────────
+const twoFactorAttempts = new Map<
+  string,
+  { count: number; firstAttempt: Date; blockedUntil?: Date }
+>();
+
+const TWO_FACTOR_CLEANUP_INTERVAL_MS = 15 * 60 * 1000; // 15 minutes
+const TWO_FACTOR_MAX_ENTRIES = 10_000;
+
+function cleanupTwoFactorAttempts(): void {
+  const now = Date.now();
+  const thirtyMinutesMs = 30 * 60 * 1000;
+
+  for (const [key, entry] of twoFactorAttempts) {
+    const blockedExpired =
+      entry.blockedUntil && entry.blockedUntil.getTime() < now;
+    const firstAttemptExpired =
+      now - entry.firstAttempt.getTime() > thirtyMinutesMs;
+
+    if (blockedExpired || firstAttemptExpired) {
+      twoFactorAttempts.delete(key);
+    }
+  }
+
+  if (twoFactorAttempts.size > TWO_FACTOR_MAX_ENTRIES) {
+    const entries = Array.from(twoFactorAttempts.entries()).sort(
+      (a, b) => a[1].firstAttempt.getTime() - b[1].firstAttempt.getTime(),
+    );
+    const toRemove = entries.length - TWO_FACTOR_MAX_ENTRIES;
+    for (let i = 0; i < toRemove; i++) {
+      twoFactorAttempts.delete(entries[i][0]);
+    }
+  }
+}
+
+setInterval(cleanupTwoFactorAttempts, TWO_FACTOR_CLEANUP_INTERVAL_MS);
+
+async function checkTwoFactorAttempts(
+  userId: string,
+): Promise<{ allowed: boolean; waitTime?: number }> {
+  const attempt = twoFactorAttempts.get(userId);
+  const now = new Date();
+
+  if (!attempt) return { allowed: true };
+
+  if (attempt.blockedUntil && attempt.blockedUntil > now) {
+    const waitMinutes = Math.ceil(
+      (attempt.blockedUntil.getTime() - now.getTime()) / 60000,
+    );
+    return { allowed: false, waitTime: waitMinutes };
+  }
+
+  // Réinitialiser si fenêtre de 15 min dépassée
+  const fifteenMinutesAgo = new Date(now.getTime() - 15 * 60 * 1000);
+  if (attempt.firstAttempt < fifteenMinutesAgo) {
+    twoFactorAttempts.delete(userId);
+    return { allowed: true };
+  }
+
+  if (attempt.count >= 5) {
+    attempt.blockedUntil = new Date(now.getTime() + 30 * 60 * 1000);
+    return { allowed: false, waitTime: 30 };
+  }
+
+  return { allowed: true };
+}
+
+function recordTwoFactorFailure(userId: string): void {
+  const attempt = twoFactorAttempts.get(userId);
+  const now = new Date();
+
+  if (attempt) {
+    attempt.count++;
+  } else {
+    twoFactorAttempts.set(userId, { count: 1, firstAttempt: now });
+  }
+}
+
+function resetTwoFactorAttempts(userId: string): void {
+  twoFactorAttempts.delete(userId);
+}
+
+// ─────────────────────────────────────────────────────────────────────────
 // GÉNÉRER LES CODES DE RÉCUPÉRATION
 // ─────────────────────────────────────────────────────────────────────────
 function generateRecoveryCodes(): string[] {
@@ -31,8 +115,7 @@ function generateRecoveryCodes(): string[] {
     // Format: XXXX-XXXX-XXXX (12 caractères alphanumériques)
     const code = crypto
       .randomBytes(9)
-      .toString("base64")
-      .replace(/[^a-zA-Z0-9]/g, "")
+      .toString("base64url")
       .substring(0, 12)
       .toUpperCase();
     const formattedCode = `${code.slice(0, 4)}-${code.slice(4, 8)}-${code.slice(8, 12)}`;
@@ -67,7 +150,7 @@ export async function setupTwoFactor(
     }
 
     const user = await UserModel.findById(userId).select(
-      "email two_factor_enabled two_factor_secret",
+      "email two_factor_enabled +two_factor_secret",
     );
     if (!user) {
       return res.status(404).json({ error: "Utilisateur non trouvé" });
@@ -149,7 +232,9 @@ export async function verifyAndEnableTwoFactor(
         .json({ error: "Code de vérification invalide (6 chiffres requis)" });
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+two_factor_secret +two_factor_recovery_codes",
+    );
     if (!user) {
       return res.status(404).json({ error: "Utilisateur non trouvé" });
     }
@@ -255,7 +340,9 @@ export async function disableTwoFactor(
       });
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+password +two_factor_secret +two_factor_recovery_codes",
+    );
     if (!user) {
       return res.status(404).json({ error: "Utilisateur non trouvé" });
     }
@@ -388,12 +475,26 @@ export async function verifyTwoFactorLogin(
         .json({ error: "Token temporaire invalide ou expiré" });
     }
 
-    const user = await UserModel.findById(userId);
+    // Vérifier le rate limiting par userId avant toute validation
+    const attemptCheck = await checkTwoFactorAttempts(userId);
+    if (!attemptCheck.allowed) {
+      return res.status(429).json({
+        error: `Trop de tentatives. Veuillez réessayer dans ${attemptCheck.waitTime} minute(s).`,
+        code: "TOO_MANY_ATTEMPTS",
+        waitTime: attemptCheck.waitTime,
+      });
+    }
+
+    const user = await UserModel.findById(userId).select(
+      "+two_factor_secret +two_factor_recovery_codes",
+    );
     if (!user) {
+      recordTwoFactorFailure(userId);
       return res.status(404).json({ error: "Utilisateur non trouvé" });
     }
 
     if (!user.two_factor_enabled || !user.two_factor_secret) {
+      recordTwoFactorFailure(userId);
       return res
         .status(400)
         .json({ error: "2FA non activée pour cet utilisateur" });
@@ -418,6 +519,7 @@ export async function verifyTwoFactorLogin(
       }
 
       if (recoveryCodeIndex === -1) {
+        recordTwoFactorFailure(userId);
         await auditService.log({
           userId,
           action: "2FA_LOGIN_FAILED",
@@ -473,6 +575,7 @@ export async function verifyTwoFactorLogin(
       }
 
       if (!isValid) {
+        recordTwoFactorFailure(userId);
         await auditService.log({
           userId,
           action: "2FA_LOGIN_FAILED",
@@ -484,6 +587,9 @@ export async function verifyTwoFactorLogin(
         return res.status(400).json({ error: "Code invalide" });
       }
     }
+
+    // Réinitialiser le compteur après succès
+    resetTwoFactorAttempts(userId);
 
     await auditService.log({
       userId,
@@ -527,7 +633,9 @@ export async function regenerateRecoveryCodes(
       return res.status(400).json({ error: "Mot de passe requis" });
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+password +two_factor_recovery_codes",
+    );
     if (!user) {
       return res.status(404).json({ error: "Utilisateur non trouvé" });
     }
@@ -592,7 +700,7 @@ export async function getTwoFactorStatus(
 
     const user = await UserModel.findById(userId)
       .select(
-        "two_factor_enabled two_factor_confirmed_at two_factor_recovery_codes",
+        "two_factor_enabled two_factor_confirmed_at +two_factor_recovery_codes",
       )
       .lean();
     if (!user) {

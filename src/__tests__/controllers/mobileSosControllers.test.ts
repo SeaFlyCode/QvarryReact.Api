@@ -21,6 +21,8 @@ import {
   handleSosGetContacts,
   handleSosUpdateContact,
   handleSosDeleteContact,
+  handleSosAddParticipant,
+  handleSosRemoveParticipant,
 } from "../../controllers/mobileSosControllers";
 import { mockRequest, mockResponse } from "../mocks";
 import { sosService } from "../../services/sosService";
@@ -744,6 +746,257 @@ describe("mobileSosControllers", () => {
         error: "Contact non trouvé.",
         code: "CONTACT_NOT_FOUND",
       });
+    });
+  });
+
+  describe("handleSosAddParticipant", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        body: {
+          targetUserId: "user-456",
+          sessionId: "session-123",
+        },
+        user: { id: "user-123" },
+      });
+      res = mockResponse();
+    });
+
+    it("devrait ajouter un participant avec succès", async () => {
+      const mockSession = {
+        _id: "session-123",
+        status: "ACTIVE",
+        participants: [
+          {
+            userId: "user-123",
+            status: "ACTIVE",
+            joinedAt: new Date(),
+            leftAt: null,
+          },
+          {
+            userId: "user-456",
+            status: "ACTIVE",
+            joinedAt: new Date(),
+            leftAt: null,
+          },
+        ],
+      };
+
+      (sosService.addParticipantToSession as jest.Mock).mockResolvedValue(
+        mockSession,
+      );
+
+      await handleSosAddParticipant(req as Request, res as Response);
+
+      expect(sosService.addParticipantToSession).toHaveBeenCalledWith(
+        "user-123",
+        "user-456",
+        "session-123",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            id: "session-123",
+            status: "ACTIVE",
+          }),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req.user = undefined;
+
+      await handleSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Authentification requise.",
+        code: "UNAUTHORIZED",
+      });
+      expect(sosService.addParticipantToSession).not.toHaveBeenCalled();
+    });
+
+    it("devrait rejeter si targetUserId manquant", async () => {
+      req.body.targetUserId = undefined;
+
+      await handleSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "ID de l'utilisateur à ajouter requis.",
+        code: "MISSING_TARGET_USER_ID",
+      });
+      expect(sosService.addParticipantToSession).not.toHaveBeenCalled();
+    });
+
+    it("devrait retourner 404 quand aucune session active", async () => {
+      (sosService.addParticipantToSession as jest.Mock).mockRejectedValue(
+        new Error("NO_ACTIVE_SESSION"),
+      );
+
+      await handleSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Aucune session SOS active trouvée pour ce créateur.",
+        code: "NO_ACTIVE_SESSION",
+      });
+    });
+
+    it("devrait retourner 409 si cible déjà participante", async () => {
+      (sosService.addParticipantToSession as jest.Mock).mockRejectedValue(
+        new Error("ALREADY_PARTICIPANT"),
+      );
+
+      await handleSosAddParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(409);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Cet utilisateur est déjà participant actif de la session.",
+        code: "ALREADY_PARTICIPANT",
+      });
+    });
+  });
+
+  describe("handleSosRemoveParticipant", () => {
+    let req: Partial<Request>;
+    let res: Partial<Response>;
+
+    beforeEach(() => {
+      req = mockRequest({
+        body: {
+          targetUserId: "user-456",
+          sessionId: "session-123",
+        },
+        user: { id: "user-123" },
+      });
+      res = mockResponse();
+    });
+
+    it("devrait retirer un participant avec succès", async () => {
+      const mockSession = {
+        _id: "session-123",
+        status: "ACTIVE",
+        resolvedAt: null,
+        resolvedBy: null,
+        participants: [
+          {
+            userId: "user-123",
+            status: "ACTIVE",
+            joinedAt: new Date(),
+            leftAt: null,
+          },
+          {
+            userId: "user-456",
+            status: "LEFT",
+            joinedAt: new Date(),
+            leftAt: new Date(),
+          },
+        ],
+      };
+
+      (sosService.removeParticipantFromSession as jest.Mock).mockResolvedValue(
+        mockSession,
+      );
+
+      await handleSosRemoveParticipant(req as Request, res as Response);
+
+      expect(sosService.removeParticipantFromSession).toHaveBeenCalledWith(
+        "user-123",
+        "user-456",
+        "session-123",
+      );
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            id: "session-123",
+            status: "ACTIVE",
+          }),
+        }),
+      );
+    });
+
+    it("devrait rejeter si non authentifié", async () => {
+      req.user = undefined;
+
+      await handleSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(401);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "Authentification requise.",
+        code: "UNAUTHORIZED",
+      });
+      expect(sosService.removeParticipantFromSession).not.toHaveBeenCalled();
+    });
+
+    it("devrait rejeter si targetUserId manquant", async () => {
+      req.body.targetUserId = undefined;
+
+      await handleSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith({
+        error: "ID de l'utilisateur à retirer requis.",
+        code: "MISSING_TARGET_USER_ID",
+      });
+      expect(sosService.removeParticipantFromSession).not.toHaveBeenCalled();
+    });
+
+    it("devrait retourner 404 si participant cible introuvable", async () => {
+      (
+        sosService.removeParticipantFromSession as jest.Mock
+      ).mockRejectedValue(new Error("PARTICIPANT_NOT_FOUND"));
+
+      await handleSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(404);
+      expect(res.json).toHaveBeenCalledWith({
+        error:
+          "Le participant cible est introuvable ou a déjà quitté la session.",
+        code: "PARTICIPANT_NOT_FOUND",
+      });
+    });
+
+    it("devrait exposer le status RESOLVED quand la session est auto-résolue", async () => {
+      const resolvedAt = new Date();
+      const mockSession = {
+        _id: "session-123",
+        status: "RESOLVED",
+        resolvedAt,
+        resolvedBy: "USER",
+        participants: [
+          {
+            userId: "user-123",
+            status: "LEFT",
+            joinedAt: new Date(),
+            leftAt: resolvedAt,
+          },
+        ],
+      };
+
+      (sosService.removeParticipantFromSession as jest.Mock).mockResolvedValue(
+        mockSession,
+      );
+
+      await handleSosRemoveParticipant(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(200);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          success: true,
+          session: expect.objectContaining({
+            status: "RESOLVED",
+            resolvedAt,
+            resolvedBy: "USER",
+          }),
+        }),
+      );
     });
   });
 });

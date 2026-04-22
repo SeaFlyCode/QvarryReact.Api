@@ -45,6 +45,12 @@ jest.mock("../../controllers/mobileSosControllers", () => ({
   handleSosDeleteContact: jest.fn((req: any, res: any) =>
     res.status(200).json({}),
   ),
+  handleSosAddParticipant: jest.fn((req: any, res: any) =>
+    res.status(200).json({}),
+  ),
+  handleSosRemoveParticipant: jest.fn((req: any, res: any) =>
+    res.status(200).json({}),
+  ),
 }));
 
 import router from "../../routes/mobileSosRoutes";
@@ -75,7 +81,7 @@ describe("mobileSosRoutes", () => {
 
   it("should have the correct number of routes", () => {
     const routes = getRoutes();
-    expect(routes).toHaveLength(13);
+    expect(routes).toHaveLength(15);
   });
 
   it("should register POST /activate for activating SOS", () => {

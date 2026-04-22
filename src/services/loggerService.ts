@@ -134,6 +134,12 @@ const PARTIAL_MASK_KEYS = [
   "ip_address",
   "deviceid",
   "device_id",
+  "phone",
+  "phonenumber",
+  "phone_number",
+  "mobile",
+  "telephone",
+  "tel",
 ];
 
 /**

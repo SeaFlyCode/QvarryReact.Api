@@ -11,6 +11,7 @@ import {
   verifyMobilePlatform,
   mobileSyncRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
+import { appCheckMiddleware } from "../middlewares/appCheckMiddleware";
 import {
   handleRegisterPushToken,
   handleDeletePushToken,
@@ -28,6 +29,7 @@ const router = express.Router();
 
 const mobilePushTokenMiddleware = [
   verifyMobilePlatform,
+  appCheckMiddleware,
   authMiddleware,
   mobileSyncRateLimitMiddleware,
 ];

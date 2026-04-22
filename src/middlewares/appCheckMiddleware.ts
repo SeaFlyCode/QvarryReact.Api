@@ -26,10 +26,19 @@ export async function appCheckMiddleware(
     return next();
   }
 
-  // Graceful degradation si Firebase n'est pas initialisé
+  // Fail-fast en production : Firebase non initialisé = config cassée → 503
+  // En staging/test : dégradation silencieuse pour ne pas bloquer les smoke tests
   if (admin.apps.length === 0) {
+    if (NODE_ENV === "production") {
+      appCheckLogger.error(
+        "[SECURITY] Firebase non initialisé en production — requête mobile rejetée",
+        { path: req.path, method: req.method },
+      );
+      res.status(503).json({ error: "Service indisponible" });
+      return;
+    }
     appCheckLogger.warn(
-      "Firebase non initialisé — App Check ignoré pour cette requête",
+      "Firebase non initialisé — App Check ignoré (non-production)",
       { path: req.path, method: req.method },
     );
     return next();

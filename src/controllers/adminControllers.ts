@@ -951,7 +951,9 @@ export async function resetUserPassword(req: Request, res: Response) {
       return res.status(400).json({ error: "ID utilisateur invalide" });
     }
 
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+reset_password_token",
+    );
     if (!user) {
       return res.status(404).json({ error: "Utilisateur non trouvé" });
     }

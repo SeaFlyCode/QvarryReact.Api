@@ -45,6 +45,8 @@ const AUTH_ME_EXCLUDED_FIELDS = [
   "email_verification_expires",
   "two_factor_secret",
   "two_factor_recovery_codes",
+  "ip_creation",
+  "ip_last_connection",
 ];
 
 const loginLogger = logger.child({ service: "auth-login" });
@@ -900,14 +902,13 @@ export async function handleAuthMe(req: Request, res: Response) {
     }
 
     // Déchiffrer les champs chiffrés
+    const { ip_creation: _ic, ip_last_connection: _ilc, ...userObj } = user.toObject();
     const decrypted = {
-      ...user.toObject(),
+      ...userObj,
       name: decrypt(user.name),
       surname: decrypt(user.surname),
       pseudo: user.pseudo ? decrypt(user.pseudo) : undefined,
       email: decrypt(user.email),
-      ip_creation: decrypt(user.ip_creation),
-      ip_last_connection: decrypt(user.ip_last_connection),
     };
 
     // Sanitize finale : supprimer les champs exclus restants

@@ -19,7 +19,7 @@ interface CreateRefreshTokenOptions {
 
 class RefreshTokenService {
   private readonly REFRESH_TOKEN_EXPIRY =
-    parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN || "48") * 60 * 60 * 1000; // 48h par défaut
+    parseInt(process.env.REFRESH_TOKEN_EXPIRES_IN || "24") * 60 * 60 * 1000; // 24h par défaut
   private readonly MAX_SESSIONS_PER_USER = 10;
 
   /**

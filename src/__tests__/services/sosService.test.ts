@@ -319,6 +319,30 @@ describe("SosService", () => {
       ).rejects.toThrow("NO_ACTIVE_SESSION");
     });
 
+    it("should throw NO_ACTIVE_SESSION on a RESOLVED session (safety-critical race)", async () => {
+      // Si le cron a résolu la session entre deux heartbeats (race), le
+      // findOne (qui filtre sur ACTIVE/EXPIRED/ESCALATING) retourne null.
+      // Le client doit recevoir une erreur claire au lieu d'un "succès" trompeur.
+      (SosSessionModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(null);
+
+      await expect(
+        sosService.heartbeat({
+          userId: mockUserId,
+          sessionId: mockSessionId,
+          lat: 48.8566,
+          lng: 2.3522,
+        }),
+      ).rejects.toThrow("NO_ACTIVE_SESSION");
+
+      expect(SosSessionModel.findOne).toHaveBeenCalledWith(
+        expect.objectContaining({
+          status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+        }),
+      );
+    });
+
     it("should reactivate participant from ESCALATING status", async () => {
       const mockSession = {
         _id: new mongoose.Types.ObjectId(mockSessionId),
@@ -1014,6 +1038,58 @@ describe("SosService", () => {
       expect(vonageService.isReady).toHaveBeenCalled();
       expect(vonageService.sendSosAlertToMultiple).toHaveBeenCalled();
     });
+
+    it("should NOT send SMS at stage 2 when Vonage is not configured (safety-critical)", async () => {
+      // SAFETY-CRITICAL : si Vonage n'est pas prêt au stage 2, on doit
+      // - ne PAS appeler sendSosAlertToMultiple
+      // - logger un événement SMS_FAILED
+      // - envoyer une alarme WebSocket d'erreur au user pour qu'il le sache
+      const stage0Time = new Date(Date.now() - 35 * 60 * 1000);
+      const mockSession = {
+        _id: new mongoose.Types.ObjectId(mockSessionId),
+        status: "ESCALATING",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "ESCALATING",
+            currentStage: 1,
+            stage0TriggeredAt: stage0Time,
+            stage1TriggeredAt: new Date(Date.now() - 20 * 60 * 1000),
+            lastHeartbeatAt: null,
+          },
+        ],
+        expiresAt: stage0Time,
+        useDefaultContacts: true,
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      (SosSessionModel.find as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue([mockSession]);
+      (UserModel.findById as jest.Mock) = jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          name: "Test",
+          surname: "User",
+        }),
+      });
+      (vonageService.sendSosAlertToMultiple as jest.Mock) = jest.fn();
+      (vonageService.isReady as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(false);
+
+      await sosService.processExpiredSessions();
+
+      expect(vonageService.isReady).toHaveBeenCalled();
+      expect(vonageService.sendSosAlertToMultiple).not.toHaveBeenCalled();
+      expect(webSocketService.sendNotificationToUser).toHaveBeenCalledWith(
+        mockUserId,
+        expect.objectContaining({
+          type: "sos_alarm",
+          stage: 2,
+          error: true,
+        }),
+      );
+    });
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -1218,6 +1294,47 @@ describe("SosService", () => {
       ).rejects.toThrow("NOT_AUTHORIZED_TO_REMOVE_PARTICIPANT");
 
       expect(mockSession.save).not.toHaveBeenCalled();
+    });
+
+    it("should auto-resolve the session when the last active participant is removed", async () => {
+      // Si le seul participant actif se retire, la session doit passer en
+      // RESOLVED avec resolvedBy="USER" — sinon elle reste orpheline et le
+      // cron continue d'escalader vers des contacts alors que personne n'est
+      // plus en danger.
+      const mockSession = {
+        _id: new mongoose.Types.ObjectId(mockSessionId),
+        userId: new mongoose.Types.ObjectId(mockUserId),
+        status: "ACTIVE",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(mockUserId),
+            status: "ACTIVE",
+          },
+        ],
+        save: jest.fn().mockResolvedValue({}),
+      };
+
+      (SosSessionModel.findOne as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockSession);
+      (SosContactModel.deleteMany as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue({ deletedCount: 0 });
+      (UserModel.findById as jest.Mock) = jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ name: "Test User" }),
+      });
+
+      await sosService.removeParticipantFromSession(
+        mockUserId,
+        mockUserId,
+        mockSessionId,
+      );
+
+      expect(mockSession.participants[0].status).toBe("LEFT");
+      expect(mockSession.status).toBe("RESOLVED");
+      expect((mockSession as any).resolvedBy).toBe("USER");
+      expect((mockSession as any).resolvedAt).toBeInstanceOf(Date);
+      expect(mockSession.save).toHaveBeenCalled();
     });
   });
 

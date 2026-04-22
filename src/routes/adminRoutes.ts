@@ -55,6 +55,10 @@ import {
   getGlobalStorageStats,
   cleanupOrphanFiles,
 } from "../controllers/adminStorageController";
+import {
+  getAppVersionConfig,
+  updateAppVersionConfig,
+} from "../controllers/adminAppVersionController";
 
 const router = Router();
 
@@ -194,5 +198,11 @@ router.patch(
 );
 router.get("/storage/stats", getGlobalStorageStats);
 router.post("/storage/cleanup", cleanupOrphanFiles);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// GESTION VERSION APP MOBILE
+// ═══════════════════════════════════════════════════════════════════════════
+router.get("/app-version", getAppVersionConfig);
+router.put("/app-version", updateAppVersionConfig);
 
 export default router;

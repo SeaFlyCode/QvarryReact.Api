@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import express from "express";
+import Redis, { Cluster } from "ioredis";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 import {
@@ -13,6 +14,7 @@ import {
   mobileRateLimitMiddleware,
 } from "../middlewares/mobileSecurityMiddleware";
 import { appCheckMiddleware } from "../middlewares/appCheckMiddleware";
+import { logger } from "../services/loggerService";
 import {
   handleSosActivate,
   handleSosHeartbeat,
@@ -45,17 +47,51 @@ const mobileSosMiddleware = [
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════
+// CLIENT REDIS LOCAL (rate limiting SOS)
+// ═══════════════════════════════════════════════════════════════════════════
+
+const sosRateLimitLogger = logger.child({ service: "sos-rate-limit" });
+
+let sosRedisClient: Redis | Cluster | null = null;
+
+if (process.env.REDIS_ENABLED === "true") {
+  try {
+    if (process.env.USE_REDIS_CLUSTER === "true") {
+      const clusterNodes =
+        process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
+          const [host, port] = node.split(":");
+          return { host, port: parseInt(port) };
+        }) || [];
+      sosRedisClient = new Cluster(clusterNodes, {
+        redisOptions: {
+          password: process.env.REDIS_PASSWORD,
+          tls: process.env.REDIS_TLS === "true" ? {} : undefined,
+        },
+      });
+    } else {
+      sosRedisClient = new Redis({
+        host: process.env.REDIS_HOST || "localhost",
+        port: parseInt(process.env.REDIS_PORT || "6379"),
+        password: process.env.REDIS_PASSWORD,
+        db: parseInt(process.env.REDIS_DB || "0"),
+        lazyConnect: true,
+        tls: process.env.REDIS_TLS === "true" ? {} : undefined,
+      });
+    }
+  } catch (err) {
+    sosRateLimitLogger.error("Échec initialisation Redis (rate limit SOS)", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+    sosRedisClient = null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITER SPÉCIFIQUE POUR OPÉRATIONS SOS CRITIQUES
 // ═══════════════════════════════════════════════════════════════════════════
 // Les opérations critiques (heartbeat, extend, deactivate, status) nécessitent
 // un rate limit plus élevé car le heartbeat est envoyé toutes les 60 secondes.
 // 30 requêtes / 15 min permet : 15 heartbeats + extensions + checks de statut
-
-interface SosRateLimitEntry {
-  count: number;
-  firstAttempt: Date;
-  blockedUntil?: Date;
-}
 
 const isProduction = process.env.NODE_ENV === "production";
 const DEV_MULTIPLIER = 10;
@@ -71,28 +107,6 @@ const SOS_CRITICAL_MAX_REQUESTS = isProduction
 const SOS_CRITICAL_WINDOW_MS = SOS_CRITICAL_WINDOW_MINUTES * 60 * 1000;
 const SOS_CRITICAL_BLOCK_DURATION_MS = SOS_CRITICAL_BLOCK_MINUTES * 60 * 1000;
 
-const sosCriticalRateLimitStore = new Map<string, SosRateLimitEntry>();
-
-// Nettoyage périodique des entrées expirées pour éviter un memory leak.
-// Une entrée est considérée expirée si :
-// - elle est bloquée et le blocage est terminé, OU
-// - sa fenêtre de temps est écoulée (et elle n'est pas bloquée)
-const sosCriticalRateLimitCleanup = setInterval(() => {
-  const now = new Date();
-  for (const [key, entry] of sosCriticalRateLimitStore.entries()) {
-    const windowExpired =
-      now.getTime() - entry.firstAttempt.getTime() > SOS_CRITICAL_WINDOW_MS;
-    const blockExpired =
-      entry.blockedUntil !== undefined && entry.blockedUntil <= now;
-    const notBlocked = entry.blockedUntil === undefined;
-
-    if ((notBlocked && windowExpired) || blockExpired) {
-      sosCriticalRateLimitStore.delete(key);
-    }
-  }
-}, 30 * 60 * 1000); // toutes les 30 minutes
-sosCriticalRateLimitCleanup.unref();
-
 /**
  * Génère un identifiant composite pour le rate limiting SOS (IP + Device)
  */
@@ -105,6 +119,7 @@ function getSosIdentifier(req: express.Request): string {
 /**
  * Rate limiter spécifique pour les opérations SOS critiques
  * Permet 30 requêtes / 15 min pour supporter le heartbeat (60s) + autres ops
+ * Utilise Redis (INCR/EXPIRE + clé de blocage) — fallback permissif si Redis absent
  */
 const sosCriticalRateLimiter = async (
   req: express.Request,
@@ -112,58 +127,52 @@ const sosCriticalRateLimiter = async (
   next: express.NextFunction,
 ) => {
   const identifier = getSosIdentifier(req);
-  const now = new Date();
+  const countKey = `sos_critical:${identifier}`;
+  const blockedKey = `sos_critical:blocked:${identifier}`;
 
-  const entry = sosCriticalRateLimitStore.get(identifier);
+  try {
+    if (sosRedisClient) {
+      // Vérifier blocage
+      const blockedTtl = await sosRedisClient.ttl(blockedKey);
+      if (blockedTtl > 0) {
+        const remainingMinutes = Math.ceil(blockedTtl / 60);
+        return res.status(429).json({
+          error: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
+          code: "SOS_RATE_LIMIT_EXCEEDED",
+          retryAfter: blockedTtl,
+        });
+      }
 
-  if (!entry) {
-    sosCriticalRateLimitStore.set(identifier, {
-      count: 1,
-      firstAttempt: now,
-    });
-    return next();
-  }
+      // Incrémenter compteur
+      const count = await sosRedisClient.incr(countKey);
+      if (count === 1) {
+        await sosRedisClient.expire(countKey, SOS_CRITICAL_WINDOW_MS / 1000);
+      }
 
-  // Vérifier si bloqué
-  if (entry.blockedUntil && entry.blockedUntil > now) {
-    const remainingMinutes = Math.ceil(
-      (entry.blockedUntil.getTime() - now.getTime()) / 60000,
-    );
-    return res.status(429).json({
-      error: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
-      code: "SOS_RATE_LIMIT_EXCEEDED",
-      retryAfter: remainingMinutes * 60,
-    });
-  }
+      if (count > SOS_CRITICAL_MAX_REQUESTS) {
+        await sosRedisClient.setex(
+          blockedKey,
+          SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+          "1",
+        );
+        await sosRedisClient.del(countKey);
+        return res.status(429).json({
+          error: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
+          code: "SOS_RATE_LIMIT_EXCEEDED",
+          retryAfter: SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+        });
+      }
 
-  // Réinitialiser la fenêtre si expirée
-  const timeSinceFirst = now.getTime() - entry.firstAttempt.getTime();
-  if (timeSinceFirst > SOS_CRITICAL_WINDOW_MS) {
-    sosCriticalRateLimitStore.set(identifier, {
-      count: 1,
-      firstAttempt: now,
-    });
-    return next();
-  }
-
-  // Incrémenter le compteur
-  entry.count++;
-
-  // Bloquer si limite dépassée
-  if (entry.count > SOS_CRITICAL_MAX_REQUESTS) {
-    entry.blockedUntil = new Date(
-      now.getTime() + SOS_CRITICAL_BLOCK_DURATION_MS,
-    );
-    sosCriticalRateLimitStore.set(identifier, entry);
-
-    return res.status(429).json({
-      error: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
-      code: "SOS_RATE_LIMIT_EXCEEDED",
-      retryAfter: SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+      return next();
+    }
+  } catch (error) {
+    // Si Redis indisponible, laisser passer (safety-critical feature)
+    sosRateLimitLogger.error("Erreur Redis rate limiter SOS critique", {
+      error: error instanceof Error ? error.message : String(error),
     });
   }
 
-  sosCriticalRateLimitStore.set(identifier, entry);
+  // Fallback : laisser passer si Redis absent ou en erreur
   next();
 };
 
@@ -179,6 +188,7 @@ const mobileSosCriticalMiddleware = [
 // authMiddleware a déjà été exécuté à ce stade (il précède ce middleware dans
 // mobileSosMiddleware), donc req.user?.id est disponible et inclus dans la clé
 // pour éviter qu'un attaquant contourne la limite en changeant simplement d'IP.
+// Utilise Redis (INCR/EXPIRE + clé de blocage) — fallback permissif si Redis absent
 const sosActivateRateLimiter = async (
   req: express.Request,
   res: express.Response,
@@ -188,53 +198,52 @@ const sosActivateRateLimiter = async (
   const deviceId = (req.headers["x-device-id"] as string) || "no-device";
   const userId = (req as any).user?.id || "no-user";
   const identifier = `sos_activate_${userId}_${ip}_${deviceId}`;
-  const now = new Date();
+  const countKey = `sos_critical:${identifier}`;
+  const blockedKey = `sos_critical:blocked:${identifier}`;
 
-  const entry = sosCriticalRateLimitStore.get(identifier);
+  try {
+    if (sosRedisClient) {
+      // Vérifier blocage
+      const blockedTtl = await sosRedisClient.ttl(blockedKey);
+      if (blockedTtl > 0) {
+        const remainingMinutes = Math.ceil(blockedTtl / 60);
+        return res.status(429).json({
+          error: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
+          code: "SOS_RATE_LIMIT_EXCEEDED",
+          retryAfter: blockedTtl,
+        });
+      }
 
-  if (!entry) {
-    sosCriticalRateLimitStore.set(identifier, {
-      count: 1,
-      firstAttempt: now,
+      // Incrémenter compteur
+      const count = await sosRedisClient.incr(countKey);
+      if (count === 1) {
+        await sosRedisClient.expire(countKey, SOS_CRITICAL_WINDOW_MS / 1000);
+      }
+
+      if (count > SOS_CRITICAL_MAX_REQUESTS) {
+        await sosRedisClient.setex(
+          blockedKey,
+          SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+          "1",
+        );
+        await sosRedisClient.del(countKey);
+        return res.status(429).json({
+          error: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
+          code: "SOS_RATE_LIMIT_EXCEEDED",
+          retryAfter: SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+        });
+      }
+
+      return next();
+    }
+  } catch (error) {
+    // Si Redis indisponible, laisser passer (safety-critical feature)
+    sosRateLimitLogger.error("Erreur Redis rate limiter activation SOS", {
+      error: error instanceof Error ? error.message : String(error),
     });
-    return next();
   }
 
-  if (entry.blockedUntil && entry.blockedUntil > now) {
-    const remainingMinutes = Math.ceil(
-      (entry.blockedUntil.getTime() - now.getTime()) / 60000,
-    );
-    return res.status(429).json({
-      error: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
-      code: "SOS_RATE_LIMIT_EXCEEDED",
-      retryAfter: remainingMinutes * 60,
-    });
-  }
-
-  const timeSinceFirst = now.getTime() - entry.firstAttempt.getTime();
-  if (timeSinceFirst > SOS_CRITICAL_WINDOW_MS) {
-    sosCriticalRateLimitStore.set(identifier, {
-      count: 1,
-      firstAttempt: now,
-    });
-    return next();
-  }
-
-  entry.count++;
-
-  if (entry.count > SOS_CRITICAL_MAX_REQUESTS) {
-    entry.blockedUntil = new Date(
-      now.getTime() + SOS_CRITICAL_BLOCK_DURATION_MS,
-    );
-    sosCriticalRateLimitStore.set(identifier, entry);
-    return res.status(429).json({
-      error: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
-      code: "SOS_RATE_LIMIT_EXCEEDED",
-      retryAfter: SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
-    });
-  }
-
-  sosCriticalRateLimitStore.set(identifier, entry);
+  // Fallback : laisser passer si Redis absent ou en erreur
   next();
 };
 

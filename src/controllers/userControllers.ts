@@ -331,7 +331,7 @@ export async function handleGetUserById(req: Request, res: Response) {
     }
 
     // Autoriser si: même utilisateur OU admin
-    if (requestingUser.id !== userId && !requestingUser.is_admin) {
+    if (requestingUser.id !== userId && !requestingUser.isAdmin) {
       return res.status(403).json({
         message: "Vous n'êtes pas autorisé à accéder à ce profil.",
       });
@@ -394,7 +394,7 @@ export async function handleDeleteUser(req: Request, res: Response) {
     }
 
     // Autoriser si: même utilisateur OU admin
-    if (requestingUser.id !== userId && !requestingUser.is_admin) {
+    if (requestingUser.id !== userId && !requestingUser.isAdmin) {
       return res.status(403).json({
         message: "Vous n'êtes pas autorisé à supprimer ce compte.",
       });
@@ -439,7 +439,7 @@ export async function handleUpdateUser(req: Request, res: Response) {
     }
 
     // Autoriser si: même utilisateur OU admin
-    if (requestingUser.id !== userId && !requestingUser.is_admin) {
+    if (requestingUser.id !== userId && !requestingUser.isAdmin) {
       return res.status(403).json({
         message: "Vous n'êtes pas autorisé à modifier ce compte.",
       });
@@ -455,7 +455,9 @@ export async function handleUpdateUser(req: Request, res: Response) {
     }
 
     // Récupérer l'utilisateur pour vérifier le mot de passe
-    const user = await UserModel.findById(userId);
+    const user = await UserModel.findById(userId).select(
+      "+password +password_history",
+    );
     if (!user) {
       return res.status(404).json({ message: "Utilisateur non trouvé." });
     }
@@ -627,7 +629,7 @@ export async function handleVerifyEmailByCode(req: Request, res: Response) {
     const users = await UserModel.find({
       email_verification_code: code,
       email_verification_expires: { $gt: new Date() },
-    });
+    }).select("+email_verification_token +email_verification_code");
 
     // Vérifier l'email décrypté
     let targetUser = null;

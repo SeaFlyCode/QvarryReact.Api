@@ -16,6 +16,8 @@ import { logger } from "../services/loggerService";
 import DeviceAttestationService from "../services/deviceAttestationService";
 import { redisSessionService } from "../services/redisSessionService";
 import { safeJsonParse } from "../utils/secureJsonParser";
+import { compareVersions, isValidSemver } from "../utils/versionUtils";
+import AppVersionModel from "../models/appVersion";
 
 const mobileSecLogger = logger.child({ service: "mobile-security" });
 
@@ -905,7 +907,6 @@ export function getMobileSecurityStats() {
     knownDevicesCount: knownDevices.size,
     blockedDevicesCount: blockedDevices.size,
     activeRateLimits: mobileRateLimitStore.size,
-    blockedDevices: Array.from(blockedDevices),
   };
 }
 
@@ -999,28 +1000,7 @@ export const mobileSecurityHeaders = (
 // LOW-003: VÉRIFICATION DE VERSION D'APPLICATION
 // ═══════════════════════════════════════════════════════════════════════════
 
-/**
- * Compare deux versions sémantiques (ex: "1.2.3")
- * Retourne: -1 si v1 < v2, 0 si égal, 1 si v1 > v2
- */
-function compareVersions(v1: string, v2: string): number {
-  const parts1 = v1.split(".").map(Number);
-  const parts2 = v2.split(".").map(Number);
-
-  for (let i = 0; i < Math.max(parts1.length, parts2.length); i++) {
-    const p1 = parts1[i] || 0;
-    const p2 = parts2[i] || 0;
-    if (p1 < p2) return -1;
-    if (p1 > p2) return 1;
-  }
-  return 0;
-}
-
-/**
- * Vérifie que l'application mobile est à jour
- * Refuse les requêtes des versions obsolètes
- */
-export const checkAppVersion = (
+export const checkAppVersion = async (
   req: Request,
   res: Response,
   next: NextFunction,
@@ -1028,8 +1008,6 @@ export const checkAppVersion = (
   const platform = (req.headers["x-platform"] as string)?.toLowerCase();
   const appVersion = req.headers["x-app-version"] as string;
 
-  // Si pas de version fournie, on laisse passer (rétrocompatibilité)
-  // mais on log un warning
   if (!appVersion) {
     if (process.env.NODE_ENV?.toLowerCase() === "production") {
       mobileSecLogger.warn("Requête sans version d'app", {
@@ -1039,24 +1017,71 @@ export const checkAppVersion = (
     return next();
   }
 
-  // Vérifier la version minimale selon la plateforme
-  const minVersion = MIN_APP_VERSION[platform];
-  if (minVersion && compareVersions(appVersion, minVersion) < 0) {
-    mobileSecLogger.warn("Version obsolète détectée", {
-      currentVersion: appVersion,
-      minVersion,
+  // Guard format : un appVersion non-semver provoquerait une exception dans
+  // compareVersions. On skip le check plutôt que de rejeter — ne pas bloquer
+  // un client mal configuré pour un header malformé (dégradation silencieuse).
+  if (!isValidSemver(appVersion)) {
+    mobileSecLogger.warn("Version d'app invalide ignorée", {
+      appVersion,
       platform,
+      ip: anonymizeIp(req.ip || ""),
     });
-    return res.status(426).json({
-      error: "Veuillez mettre à jour l'application pour continuer.",
-      code: "UPDATE_REQUIRED",
-      minVersion,
-      currentVersion: appVersion,
-      platform,
-    });
+    return next();
   }
 
-  next();
+  try {
+    const dbConfig = await AppVersionModel.findOne().lean();
+
+    let minVersion: string;
+    let forceUpdate: boolean;
+
+    if (dbConfig && platform && (platform === "ios" || platform === "android")) {
+      const platformConfig = dbConfig[platform];
+      minVersion = platformConfig.minVersion;
+      forceUpdate = platformConfig.forceUpdate;
+    } else {
+      minVersion = MIN_APP_VERSION[platform] ?? "";
+      forceUpdate = true;
+    }
+
+    if (minVersion && compareVersions(appVersion, minVersion) < 0) {
+      mobileSecLogger.warn("Version obsolète détectée", {
+        currentVersion: appVersion,
+        minVersion,
+        platform,
+        forceUpdate,
+      });
+
+      if (forceUpdate) {
+        return res.status(426).json({
+          error: "Veuillez mettre à jour l'application pour continuer.",
+          code: "UPDATE_REQUIRED",
+          minVersion,
+          currentVersion: appVersion,
+          platform,
+        });
+      }
+    }
+
+    return next();
+  } catch (error) {
+    mobileSecLogger.error("Error checking app version from DB, falling back to env vars", {
+      error: error instanceof Error ? error.message : String(error),
+    });
+
+    const minVersion = MIN_APP_VERSION[platform];
+    if (minVersion && compareVersions(appVersion, minVersion) < 0) {
+      return res.status(426).json({
+        error: "Veuillez mettre à jour l'application pour continuer.",
+        code: "UPDATE_REQUIRED",
+        minVersion,
+        currentVersion: appVersion,
+        platform,
+      });
+    }
+
+    return next();
+  }
 };
 
 // ═══════════════════════════════════════════════════════════════════════════

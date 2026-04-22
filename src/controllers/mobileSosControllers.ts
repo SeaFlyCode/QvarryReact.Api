@@ -6,6 +6,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 
 import { Request, Response } from "express";
+import { Types } from "mongoose";
 import { sosService } from "../services/sosService";
 import { getErrorMessage } from "../utils/errorUtils";
 import { logger } from "../services/loggerService";
@@ -363,6 +364,16 @@ export async function handleSosDeactivate(req: Request, res: Response) {
       });
     }
 
+    if (
+      error instanceof Error &&
+      error.message === "NOT_AUTHORIZED_TO_DEACTIVATE_ALL"
+    ) {
+      return res.status(403).json({
+        error: "Seul le créateur de la session peut la désactiver pour tous.",
+        code: "NOT_AUTHORIZED_TO_DEACTIVATE_ALL",
+      });
+    }
+
     mobileSosLogger.error("Erreur désactivation", {
       error: getErrorMessage(error),
     });
@@ -490,10 +501,10 @@ export async function handleSosStatus(req: Request, res: Response) {
             siteName: session.siteName,
             zone: session.zone,
             depth: session.depth,
-            // Coordonnées GPS (champs manquants côté client au boot → crash)
-            lastKnownLat: session.lastKnownLat ?? 0,
-            lastKnownLng: session.lastKnownLng ?? 0,
-            lastKnownAccuracy: session.lastKnownAccuracy ?? 0,
+            // Coordonnées GPS : retournées uniquement au créateur de la session
+            lastKnownLat: userId === session.userId.toString() ? (session.lastKnownLat ?? 0) : null,
+            lastKnownLng: userId === session.userId.toString() ? (session.lastKnownLng ?? 0) : null,
+            lastKnownAccuracy: userId === session.userId.toString() ? (session.lastKnownAccuracy ?? 0) : null,
             // Contacts (champs manquants côté client au boot → crash)
             contactIds: (session.sessionContactIds ?? []).map((c: any) =>
               typeof c === "string"
@@ -880,10 +891,17 @@ export async function handleSosAddParticipant(req: Request, res: Response) {
 
     const { targetUserId, sessionId } = req.body;
 
-    if (!targetUserId) {
+    if (!targetUserId || !Types.ObjectId.isValid(targetUserId)) {
       return res.status(400).json({
-        error: "ID de l'utilisateur à ajouter requis.",
-        code: "MISSING_TARGET_USER_ID",
+        error: "ID utilisateur invalide.",
+        code: "INVALID_USER_ID",
+      });
+    }
+
+    if (!sessionId || !Types.ObjectId.isValid(sessionId)) {
+      return res.status(400).json({
+        error: "ID session invalide.",
+        code: "INVALID_SESSION_ID",
       });
     }
 
@@ -975,10 +993,17 @@ export async function handleSosRemoveParticipant(req: Request, res: Response) {
 
     const { targetUserId, sessionId } = req.body;
 
-    if (!targetUserId) {
+    if (!targetUserId || !Types.ObjectId.isValid(targetUserId)) {
       return res.status(400).json({
-        error: "ID de l'utilisateur à retirer requis.",
-        code: "MISSING_TARGET_USER_ID",
+        error: "ID utilisateur invalide.",
+        code: "INVALID_USER_ID",
+      });
+    }
+
+    if (!sessionId || !Types.ObjectId.isValid(sessionId)) {
+      return res.status(400).json({
+        error: "ID session invalide.",
+        code: "INVALID_SESSION_ID",
       });
     }
 

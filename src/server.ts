@@ -86,6 +86,7 @@ import mobileSyncRoutes from "./routes/mobileSyncRoutes";
 import mobileTwoFactorRoutes from "./routes/mobileTwoFactorRoutes";
 import mobileSosRoutes from "./routes/mobileSosRoutes";
 import mobilePushTokenRoutes from "./routes/mobilePushTokenRoutes";
+import mobileAppVersionRoutes from "./routes/mobileAppVersionRoutes";
 import webhookRoutes from "./routes/webhookRoutes";
 import publicRoutes from "./routes/publicRoutes";
 import { maintenanceMiddleware } from "./middlewares/maintenanceMiddleware";
@@ -120,9 +121,10 @@ const NODE_ENV = process.env.NODE_ENV || "development";
 // CONF-005: Trust Proxy - Requis pour rate limiting derrière un proxy (nginx, cloudflare)
 // ═══════════════════════════════════════════════════════════════════════════
 if (NODE_ENV === "production") {
-  // 1 = faire confiance au premier proxy (nginx, cloudflare, etc.)
-  app.set("trust proxy", 1);
-  serverLogger.info("[SECURITY] Trust proxy activé (production)");
+  // Activer uniquement si un reverse proxy (Nginx, Cloudflare) est en front.
+  // Sans proxy, X-Forwarded-For est forgeable et contourne le rate limiting par IP.
+  app.set("trust proxy", false);
+  serverLogger.info("[SECURITY] Trust proxy désactivé (aucun proxy configuré)");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -272,8 +274,6 @@ app.get("/health", healthLimiter, (req, res) => {
     status: "healthy",
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
-    environment: NODE_ENV,
-    version: process.env.npm_package_version || "1.0.0",
   });
 });
 
@@ -400,8 +400,8 @@ app.use(
         connectSrc: [
           "'self'",
           clientUrl,
+          ...(NODE_ENV !== "production" ? ["ws:", "http:"] : []),
           "wss:", // WebSocket sécurisé (production)
-          "ws:", // WebSocket non sécurisé (développement)
         ],
         fontSrc: ["'self'", "data:"],
         objectSrc: ["'none'"],
@@ -504,64 +504,86 @@ app.use(cookieParser());
 // ═══════════════════════════════════════════════════════════════════════════
 
 // 🔴 STRICT - Routes d'authentification (très strictes - RISQUE ÉLEVÉ)
+// Appliqués sur les deux préfixes : /api/ (rétrocompat) et /api/v1/ (direct)
 app.use("/api/auth/login", strictAuthLimiter);
 app.use("/api/auth/register", strictAuthLimiter);
+app.use("/api/v1/auth/login", strictAuthLimiter);
+app.use("/api/v1/auth/register", strictAuthLimiter);
 
 // Routes de réinitialisation de mot de passe (RISQUE ÉLEVÉ)
 app.use("/api/auth/forgot-password", passwordResetLimiter);
 app.use("/api/auth/reset-password", passwordResetLimiter);
+app.use("/api/v1/auth/forgot-password", passwordResetLimiter);
+app.use("/api/v1/auth/reset-password", passwordResetLimiter);
 
 // Refresh token (RISQUE MOYEN - déjà authentifié mais peut être abusé)
 app.use("/api/auth/refresh", refreshTokenLimiter);
+app.use("/api/v1/auth/refresh", refreshTokenLimiter);
 
 // Vérification d'auth (RISQUE FAIBLE - mais route publique)
 app.use("/api/auth/check", authCheckLimiter);
+app.use("/api/v1/auth/check", authCheckLimiter);
 
 // Routes 2FA - TOUTES les routes 2FA doivent être limitées (RISQUE ÉLEVÉ - brute force TOTP)
 app.use("/api/2fa", twoFactorLimiter);
 app.use("/api/auth/complete-2fa-login", twoFactorLimiter);
+app.use("/api/v1/2fa", twoFactorLimiter);
+app.use("/api/v1/auth/complete-2fa-login", twoFactorLimiter);
 
 // Routes de création de compte et vérification d'email
 // registerLimiter uniquement pour POST (création de compte), pas GET/PUT
 app.post("/api/users", registerLimiter);
+app.post("/api/v1/users", registerLimiter);
 app.use("/api/users/verify-email", verifyEmailLimiter); // Protection brute force
+app.use("/api/v1/users/verify-email", verifyEmailLimiter);
 app.use("/api/users/resend-verification", resendEmailLimiter); // Anti-spam emails
+app.use("/api/v1/users/resend-verification", resendEmailLimiter);
 
 // 🟡 MODERATE - SEC-044: Rate limiter pour toutes les autres routes /api/users
-// Protection contre l'énumération des utilisateurs et l'accès abusif aux profils
 app.use("/api/users", moderateApiLimiter);
+app.use("/api/v1/users", moderateApiLimiter);
 
 // Routes de données à fort débit (lecture)
 app.use("/api/points", highTrafficLimiter);
+app.use("/api/v1/points", highTrafficLimiter);
 app.use("/api/fiches", highTrafficLimiter);
+app.use("/api/v1/fiches", highTrafficLimiter);
 app.use("/api/lists", highTrafficLimiter);
+app.use("/api/v1/lists", highTrafficLimiter);
 
 // Routes sociales (contacts, messages, partages)
 app.use("/api/contacts", socialLimiter);
+app.use("/api/v1/contacts", socialLimiter);
 app.use("/api/messages", socialLimiter);
+app.use("/api/v1/messages", socialLimiter);
 app.use("/api/share", socialLimiter);
+app.use("/api/v1/share", socialLimiter);
 app.use("/api/conversations", socialLimiter);
+app.use("/api/v1/conversations", socialLimiter);
 
 // 🟢 PERMISSIVE - Routes mobiles (fonctionnalités fréquentes)
-// Protection mobile pour auth (RISQUE ÉLEVÉ - pas de Turnstile)
-app.use("/api/mobile/auth", mobileAuthLimiter);
-app.use("/api/mobile/2fa", twoFactorLimiter); // 2FA mobile = même protection que web
-// Routes fonctionnelles mobiles (sync et push tokens)
-app.use("/api/mobile/sync", permissiveMobileLimiter); // Sync peut être fréquent
-app.use("/api/mobile/sos", mobileAuthLimiter); // SOS mode - protection mobile
-app.use("/api/mobile/push-tokens", permissiveMobileLimiter); // 🔧 FIX: Push tokens - limite permissive
+// Préfixe /api/v1/mobile/ uniquement (pas de rétrocompat pour les routes mobiles)
+app.use("/api/v1/mobile/auth", mobileAuthLimiter);
+app.use("/api/v1/mobile/2fa", twoFactorLimiter);
+app.use("/api/v1/mobile/sync", permissiveMobileLimiter);
+app.use("/api/v1/mobile/sos", mobileAuthLimiter);
+app.use("/api/v1/mobile/push-tokens", permissiveMobileLimiter);
 
 // Routes admin (RISQUE MOYEN - déjà protégées par authMiddleware + adminMiddleware)
 app.use("/api/admin", adminLimiter);
+app.use("/api/v1/admin", adminLimiter);
 
 // 🟡 MODERATE - Routes de sécurité (sessions, events - RISQUE MOYEN)
 app.use("/api/security", moderateApiLimiter);
+app.use("/api/v1/security", moderateApiLimiter);
 
 // Routes de maintenance
 app.use("/api/maintenance", maintenanceLimiter);
+app.use("/api/v1/maintenance", maintenanceLimiter);
 
 // Routes de notifications (SEC-AUDIT: limiter dédié 60 req/min)
 app.use("/api/notifications", notificationsLimiter);
+app.use("/api/v1/notifications", notificationsLimiter);
 
 // Rate limiter général pour toutes les autres routes /api (FALLBACK)
 app.use("/api", generalLimiter);
@@ -800,6 +822,8 @@ app.use("/api", generalLimiter);
     const { mobileSecurityHeaders, checkAppVersion } =
       await import("./middlewares/mobileSecurityMiddleware");
     app.use("/api/v1/mobile", mobileSecurityHeaders);
+    // La route de check version doit être montée AVANT checkAppVersion pour ne pas être bloquée
+    app.use("/api/v1/mobile/app-version", mobileAppVersionRoutes);
     app.use("/api/v1/mobile", checkAppVersion);
 
     // Routes d'authentification mobile (sans Turnstile, avec sécurité alternative)
@@ -889,9 +913,6 @@ app.use("/api", generalLimiter);
       }
     }
 
-    // Export pour utilisation dans les contrôleurs
-    (global as any).AppError = AppError;
-
     // Gestionnaire 404 - Route non trouvée
     app.use((req: express.Request, res: express.Response) => {
       serverLogger.warn("[404] Route non trouvée", {
@@ -901,8 +922,6 @@ app.use("/api", generalLimiter);
       res.status(404).json({
         error: "Route non trouvée",
         code: "ROUTE_NOT_FOUND",
-        path: req.path,
-        method: req.method,
       });
     });
 

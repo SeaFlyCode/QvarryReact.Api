@@ -113,15 +113,17 @@ export const authMiddleware = async (
 
     const decoded = jwt.verify(token, jwtSecret, {
       algorithms: ["HS256"],
+      issuer: "qvarry-api",
+      audience: ["qvarry-client", "qvarry-mobile"],
     }) as DecodedToken;
 
     // ─────────────────────────────────────────────────────────────────────
     // 5. DÉTECTION DU TYPE DE TOKEN (WEB VS MOBILE)
+    // C5: Basé uniquement sur le claim signé du token, pas sur le header
+    // x-platform (forgeable). Le header ne doit pas influencer les
+    // décisions de sécurité (vérification JTI, chemin de session).
     // ─────────────────────────────────────────────────────────────────────
-    const isMobileToken =
-      decoded.platform === "mobile" ||
-      req.headers["x-platform"]?.toString().toLowerCase() === "ios" ||
-      req.headers["x-platform"]?.toString().toLowerCase() === "android";
+    const isMobileToken = decoded.platform === "mobile";
 
     // 6. VÉRIFICATION DE LA SESSION
     // ─────────────────────────────────────────────────────────────────────
@@ -369,7 +371,7 @@ export const authMiddleware = async (
     if (isMobileToken) {
       (req as any).authType = "mobile";
       (req as any).mobileContext = {
-        platform: decoded.platform || req.headers["x-platform"],
+        platform: decoded.platform, // C5: valeur du token signé uniquement
         deviceId: req.headers["x-device-id"],
         tokenType: "mobile",
       };

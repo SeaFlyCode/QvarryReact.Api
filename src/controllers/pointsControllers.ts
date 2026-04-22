@@ -141,7 +141,10 @@ export async function handleCreatePoint(req: Request, res: Response) {
       if (!isNaN(lng) && !isNaN(lat)) {
         location = {
           type: "Point",
-          coordinates: [lng, lat],
+          coordinates: [
+            Math.round(lng * 1e6) / 1e6,
+            Math.round(lat * 1e6) / 1e6,
+          ],
         };
       } else {
         return res.status(400).json({
@@ -591,7 +594,10 @@ export async function handleUpdatePoint(req: Request, res: Response) {
       // Assertion de type pour éviter l'erreur TypeScript
       (point as any).location = {
         type: "Point",
-        coordinates: [parseFloat(longitude), parseFloat(latitude)],
+        coordinates: [
+          Math.round(parseFloat(longitude) * 1e6) / 1e6,
+          Math.round(parseFloat(latitude) * 1e6) / 1e6,
+        ],
       };
     }
 

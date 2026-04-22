@@ -959,6 +959,13 @@ class SosService {
     const user = await UserModel.findById(userObjectId).lean();
     const userName = user ? decrypt(user.name) : "Un utilisateur";
 
+    if (scope === "all") {
+      const isCreator = session.userId.toString() === userId;
+      if (!isCreator) {
+        throw new Error("NOT_AUTHORIZED_TO_DEACTIVATE_ALL");
+      }
+    }
+
     if (scope === "self") {
       // ─── SCOPE "SELF" : Quitter uniquement soi-même ───
 
@@ -1161,18 +1168,19 @@ class SosService {
     sessionId: string,
     confirmerId: string,
   ): Promise<ISosSession> {
-    // Allow confirmation during ACTIVE, EXPIRED (timer just expired) and ESCALATING stages
-    const session = await SosSessionModel.findOne({
+    const confirmerObjectId = new mongoose.Types.ObjectId(confirmerId);
+
+    // Vérifier que le confirmeur est un participant actif avant la mise à jour atomique
+    const candidate = await SosSessionModel.findOne({
       _id: new mongoose.Types.ObjectId(sessionId),
       status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-    });
+    }).lean();
 
-    if (!session) {
+    if (!candidate) {
       throw new Error("SESSION_NOT_FOUND_OR_NOT_ESCALATING");
     }
 
-    // Vérifier que le confirmeur est un participant actif de la session
-    const isActiveParticipant = session.participants.some(
+    const isActiveParticipant = candidate.participants.some(
       (p) => p.userId.toString() === confirmerId && p.status !== "LEFT",
     );
     if (!isActiveParticipant) {
@@ -1181,20 +1189,31 @@ class SosService {
 
     const now = new Date();
 
-    // Marquer tous les participants comme LEFT
-    session.participants.forEach((p) => {
-      if (p.status !== "LEFT") {
-        p.status = "LEFT";
-        p.leftAt = now;
-      }
-    });
+    // Mise à jour atomique : résoudre la session et marquer tous les participants comme LEFT
+    const session = await SosSessionModel.findOneAndUpdate(
+      {
+        _id: new mongoose.Types.ObjectId(sessionId),
+        status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+      },
+      {
+        $set: {
+          status: "RESOLVED",
+          resolvedAt: now,
+          resolvedBy: "CONTACT_CONFIRM",
+          resolvedByUserId: confirmerObjectId,
+          "participants.$[active].status": "LEFT",
+          "participants.$[active].leftAt": now,
+        },
+      },
+      {
+        new: true,
+        arrayFilters: [{ "active.status": { $ne: "LEFT" } }],
+      },
+    );
 
-    session.status = "RESOLVED";
-    session.resolvedAt = now;
-    session.resolvedBy = "CONTACT_CONFIRM";
-    session.resolvedByUserId = new mongoose.Types.ObjectId(confirmerId);
-
-    await session.save();
+    if (!session) {
+      throw new Error("SESSION_NOT_FOUND_OR_ALREADY_RESOLVED");
+    }
 
     // Notifier tous les participants que la session est confirmée safe
     for (const participant of session.participants) {
@@ -3594,87 +3613,105 @@ class SosService {
       (id) => new mongoose.Types.ObjectId(id),
     );
 
-    const existingSessions = await SosSessionModel.find({
-      status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
-      participants: {
-        $elemMatch: {
-          userId: { $in: participantObjectIds },
-          status: { $ne: "LEFT" },
-        },
-      },
-    }).lean();
+    const mongoSession = await mongoose.startSession();
+    mongoSession.startTransaction();
 
-    if (existingSessions.length > 0) {
-      throw new Error("SESSION_ALREADY_ACTIVE");
-    }
+    let session: InstanceType<typeof SosSessionModel>;
 
-    // Vérifier que les participants existent dans la base de données
-    if (participantIds && participantIds.length > 0) {
-      const participantUsers = await UserModel.find({
-        _id: {
-          $in: participantIds.map((id) => new mongoose.Types.ObjectId(id)),
+    try {
+      const existingSessions = await SosSessionModel.find({
+        status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
+        participants: {
+          $elemMatch: {
+            userId: { $in: participantObjectIds },
+            status: { $ne: "LEFT" },
+          },
         },
       })
-        .select("_id")
+        .session(mongoSession)
         .lean();
 
-      if (participantUsers.length !== participantIds.length) {
-        throw new Error("INVALID_PARTICIPANT_IDS");
+      if (existingSessions.length > 0) {
+        throw new Error("SESSION_ALREADY_ACTIVE");
       }
-    }
 
-    // Calculer la date d'expiration
-    const now = new Date();
-    const expiresAt = new Date(now.getTime() + expectedDuration * 60 * 1000);
+      // Vérifier que les participants existent dans la base de données
+      if (participantIds && participantIds.length > 0) {
+        const participantUsers = await UserModel.find({
+          _id: {
+            $in: participantIds.map((id) => new mongoose.Types.ObjectId(id)),
+          },
+        })
+          .select("_id")
+          .session(mongoSession)
+          .lean();
 
-    // Créer les participants
-    const participants: ISosParticipant[] = allParticipantIds.map(
-      (participantId) => ({
-        userId: new mongoose.Types.ObjectId(participantId),
-        joinedAt: now,
-        leftAt: null,
-        status: "ACTIVE" as SosParticipantStatus,
+        if (participantUsers.length !== participantIds.length) {
+          throw new Error("INVALID_PARTICIPANT_IDS");
+        }
+      }
+
+      // Calculer la date d'expiration
+      const now = new Date();
+      const expiresAt = new Date(now.getTime() + expectedDuration * 60 * 1000);
+
+      // Créer les participants
+      const participants: ISosParticipant[] = allParticipantIds.map(
+        (participantId) => ({
+          userId: new mongoose.Types.ObjectId(participantId),
+          joinedAt: now,
+          leftAt: null,
+          status: "ACTIVE" as SosParticipantStatus,
+          currentStage: -1,
+          stage0TriggeredAt: null,
+          stage1TriggeredAt: null,
+          stage2TriggeredAt: null,
+          lastHeartbeatAt: null,
+          lastKnownLat: lat,
+          lastKnownLng: lng,
+          lastKnownAccuracy: undefined,
+          consecutiveHeartbeats: 0,
+          firstReconnectionAt: null,
+          surfaceDetectionSent: false,
+          reconnectionDetectionSent: false,
+        }),
+      );
+
+      // Créer la session (l'admin force l'activation sans vérifier les contacts)
+      const newSession = new SosSessionModel({
+        userId: targetUserObjectId,
+        status: "ACTIVE",
         currentStage: -1,
-        stage0TriggeredAt: null,
-        stage1TriggeredAt: null,
-        stage2TriggeredAt: null,
-        lastHeartbeatAt: null,
+        activatedAt: now,
+        expectedDuration,
+        expiresAt,
         lastKnownLat: lat,
         lastKnownLng: lng,
         lastKnownAccuracy: undefined,
+        entryLat: lat,
+        entryLng: lng,
+        note: note || `Session créée par l'administrateur`,
+        siteName,
+        zone,
+        depth,
+        heartbeatCount: 0,
+        extensionCount: 0,
         consecutiveHeartbeats: 0,
-        firstReconnectionAt: null,
         surfaceDetectionSent: false,
         reconnectionDetectionSent: false,
-      }),
-    );
+        useDefaultContacts: true, // Utilisera les contacts par défaut si disponibles
+        participants,
+      });
+      await newSession.save({ session: mongoSession });
+      session = newSession;
 
-    // Créer la session (l'admin force l'activation sans vérifier les contacts)
-    const session = new SosSessionModel({
-      userId: targetUserObjectId,
-      status: "ACTIVE",
-      currentStage: -1,
-      activatedAt: now,
-      expectedDuration,
-      expiresAt,
-      lastKnownLat: lat,
-      lastKnownLng: lng,
-      lastKnownAccuracy: undefined,
-      entryLat: lat,
-      entryLng: lng,
-      note: note || `Session créée par l'administrateur`,
-      siteName,
-      zone,
-      depth,
-      heartbeatCount: 0,
-      extensionCount: 0,
-      consecutiveHeartbeats: 0,
-      surfaceDetectionSent: false,
-      reconnectionDetectionSent: false,
-      useDefaultContacts: true, // Utilisera les contacts par défaut si disponibles
-      participants,
-    });
-    await session.save();
+      await mongoSession.commitTransaction();
+    } catch (err) {
+      await mongoSession.abortTransaction();
+      throw err;
+    } finally {
+      mongoSession.endSession();
+    }
 
     // Récupérer le nom de l'admin pour les notifications
     const admin = await UserModel.findById(adminId).lean();
