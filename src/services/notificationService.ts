@@ -71,41 +71,37 @@ class NotificationService {
         return;
       }
 
-      // HIGH-001 FIX: Charger depuis fichier externe
-      const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
-
-      // Vérifier que le chemin est configuré
-      if (!serviceAccountPath) {
-        notifLogger.error(
-          "[FIREBASE] FIREBASE_SERVICE_ACCOUNT_PATH not configured",
-        );
-        notifLogger.warn(
-          "[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.",
-        );
-        return;
-      }
-
-      // Résoudre le chemin (relatif ou absolu)
       const path = require("path");
       const fs = require("fs");
-      const resolvedPath = path.isAbsolute(serviceAccountPath)
-        ? serviceAccountPath
-        : path.join(__dirname, "..", "..", serviceAccountPath);
 
-      // Vérifier que le fichier existe
-      if (!fs.existsSync(resolvedPath)) {
-        notifLogger.error("[FIREBASE] Service account file not found", {
-          path: resolvedPath,
-        });
-        notifLogger.warn(
-          "[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.",
-        );
+      let serviceAccount: Record<string, unknown>;
+
+      const inlineBase64 = process.env.FIREBASE_SERVICE_ACCOUNT;
+      const serviceAccountPath = process.env.FIREBASE_SERVICE_ACCOUNT_PATH;
+
+      if (inlineBase64) {
+        // Chargement depuis variable d'env base64 (production sans bind mount)
+        const decoded = Buffer.from(inlineBase64, "base64").toString("utf8");
+        serviceAccount = JSON.parse(decoded);
+        notifLogger.info("[FIREBASE] Service account chargé depuis FIREBASE_SERVICE_ACCOUNT (base64)");
+      } else if (serviceAccountPath) {
+        // Chargement depuis fichier
+        const resolvedPath = path.isAbsolute(serviceAccountPath)
+          ? serviceAccountPath
+          : path.join(__dirname, "..", "..", serviceAccountPath);
+
+        if (!fs.existsSync(resolvedPath)) {
+          notifLogger.error("[FIREBASE] Service account file not found", { path: resolvedPath });
+          notifLogger.warn("[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.");
+          return;
+        }
+
+        serviceAccount = JSON.parse(fs.readFileSync(resolvedPath, "utf8"));
+      } else {
+        notifLogger.error("[FIREBASE] FIREBASE_SERVICE_ACCOUNT ou FIREBASE_SERVICE_ACCOUNT_PATH non configuré");
+        notifLogger.warn("[SOS-WARNING] Firebase not configured - push notifications disabled. SOS alerts will only work via WebSocket.");
         return;
       }
-
-      // Charger et parser le JSON
-      const serviceAccountContent = fs.readFileSync(resolvedPath, "utf8");
-      const serviceAccount = JSON.parse(serviceAccountContent);
 
       // Initialiser Firebase Admin SDK
       firebaseAdmin.initializeApp({
@@ -115,10 +111,9 @@ class NotificationService {
       this.fcmInitialized = true;
 
       // Logger (sans exposer la clé privée)
-      notifLogger.info("[FIREBASE] Admin SDK initialized from file", {
+      notifLogger.info("[FIREBASE] Admin SDK initialized", {
         projectId: serviceAccount.project_id,
         clientEmail: serviceAccount.client_email,
-        path: resolvedPath,
       });
     } catch (error) {
       notifLogger.error("[FIREBASE] Failed to initialize", {

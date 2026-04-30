@@ -2,8 +2,8 @@
 // MIDDLEWARE FIREBASE APP CHECK
 // ═══════════════════════════════════════════════════════════════════════════
 // Vérifie le token Firebase App Check sur les routes mobiles sensibles.
-// En développement : bypass complet (le SDK mobile ne fournit pas de token).
-// En staging/production : vérifie le header X-Firebase-AppCheck.
+// Activable/désactivable via APP_CHECK_ENABLED (défaut : désactivé en
+// développement, activé partout ailleurs).
 // Graceful degradation si Firebase n'est pas initialisé (ex: tests).
 // ═══════════════════════════════════════════════════════════════════════════
 
@@ -16,13 +16,20 @@ const appCheckLogger = logger.child({ service: "app-check" });
 
 const NODE_ENV = process.env.NODE_ENV || "development";
 
+function isAppCheckEnabled(): boolean {
+  const raw = process.env.APP_CHECK_ENABLED;
+  if (raw === undefined || raw === "") {
+    return NODE_ENV !== "development";
+  }
+  return raw.toLowerCase() === "true";
+}
+
 export async function appCheckMiddleware(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
-  // Bypass complet en développement
-  if (NODE_ENV === "development") {
+  if (!isAppCheckEnabled()) {
     return next();
   }
 

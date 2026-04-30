@@ -176,54 +176,53 @@ const MAX_CONCURRENT_CONNECTIONS_PER_IP = 10; // Limite de connexions WS simulta
 let redisCache: Redis | Cluster | null = null;
 const REDIS_ENABLED = process.env.REDIS_ENABLED === "true";
 
-if (REDIS_ENABLED) {
-  (async () => {
-    try {
-      const USE_REDIS_CLUSTER = process.env.USE_REDIS_CLUSTER === "true";
+export async function initializeWebSocketRedisCache(): Promise<void> {
+  if (!REDIS_ENABLED) {
+    wsLogger.info(
+      "WebSocket Service - Redis cache disabled, using direct MongoDB queries for blocking status",
+    );
+    return;
+  }
 
-      if (USE_REDIS_CLUSTER) {
-        const clusterNodes =
-          process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
-            const [host, port] = node.split(":");
-            return { host, port: parseInt(port) };
-          }) || [];
+  try {
+    const USE_REDIS_CLUSTER = process.env.USE_REDIS_CLUSTER === "true";
 
-        redisCache = new Cluster(clusterNodes, {
-          redisOptions: {
-            password: process.env.REDIS_PASSWORD,
-            tls: process.env.REDIS_TLS === "true" ? {} : undefined,
-          },
-        });
-      } else {
-        // PERF: Utiliser le pool Redis partagé pour le cache
-        const RedisConnectionPool = (await import("../config/redisPool"))
-          .default;
-        redisCache = RedisConnectionPool.createClient(); // Clone du publisher
+    if (USE_REDIS_CLUSTER) {
+      const clusterNodes =
+        process.env.REDIS_CLUSTER_NODES?.split(",").map((node) => {
+          const [host, port] = node.split(":");
+          return { host, port: parseInt(port) };
+        }) || [];
 
-        wsLogger.info("[WS] Using shared Redis pool for cache", {
-          status: redisCache.status,
-        });
-      }
-
-      redisCache?.on("error", (error) => {
-        wsLogger.error("WebSocket Service - Redis cache error", {
-          error: error instanceof Error ? error.message : String(error),
-        });
-      });
-    } catch (error) {
-      wsLogger.error(
-        "WebSocket Service - Redis cache initialization failed, will fallback to direct MongoDB queries",
-        {
-          error: error instanceof Error ? error.message : String(error),
+      redisCache = new Cluster(clusterNodes, {
+        redisOptions: {
+          password: process.env.REDIS_PASSWORD,
+          tls: process.env.REDIS_TLS === "true" ? {} : undefined,
         },
-      );
-      redisCache = null;
+      });
+    } else {
+      const RedisConnectionPool = (await import("../config/redisPool")).default;
+      redisCache = RedisConnectionPool.createClient();
+
+      wsLogger.info("[WS] Using shared Redis pool for cache", {
+        status: redisCache.status,
+      });
     }
-  })();
-} else {
-  wsLogger.info(
-    "WebSocket Service - Redis cache disabled, using direct MongoDB queries for blocking status",
-  );
+
+    redisCache?.on("error", (error) => {
+      wsLogger.error("WebSocket Service - Redis cache error", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    });
+  } catch (error) {
+    wsLogger.error(
+      "WebSocket Service - Redis cache initialization failed, will fallback to direct MongoDB queries",
+      {
+        error: error instanceof Error ? error.message : String(error),
+      },
+    );
+    redisCache = null;
+  }
 }
 
 class WebSocketService {
@@ -1221,7 +1220,13 @@ class WebSocketService {
       }
 
       // App Check WebSocket : vérification du token passé en query param
-      if (NODE_ENV !== "development") {
+      // Activable via APP_CHECK_ENABLED (défaut : désactivé en dev, activé sinon)
+      const appCheckEnvRaw = process.env.APP_CHECK_ENABLED;
+      const appCheckEnabled =
+        appCheckEnvRaw === undefined || appCheckEnvRaw === ""
+          ? NODE_ENV !== "development"
+          : appCheckEnvRaw.toLowerCase() === "true";
+      if (appCheckEnabled) {
         const appCheckToken = parsedUrl.query.appcheck as string | undefined;
 
         if (!appCheckToken) {

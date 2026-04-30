@@ -77,8 +77,10 @@ WORKDIR /app
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 --ingroup nodejs appuser
 
-# Dossier de logs avec permissions pour appuser
-RUN mkdir -p /app/logs && chown -R appuser:nodejs /app/logs && chmod -R 770 /app/logs
+# Dossiers runtime avec permissions pour appuser
+RUN mkdir -p /app/logs /app/uploads/points && \
+    chown -R appuser:nodejs /app/logs /app/uploads && \
+    chmod -R 770 /app/logs /app/uploads
 
 # =============================================================================
 # API: Code obfusqué + dépendances de production
@@ -107,7 +109,8 @@ RUN find /app -name "*.ts" -type f -delete 2>/dev/null || true && \
 
 # Sécurité: Permissions restrictives mais accessibles par appuser
 RUN chown -R appuser:nodejs /app && \
-    chmod -R 550 /app
+    chmod -R 550 /app && \
+    chmod -R 770 /app/uploads /app/logs
 
 # Sécurité: Variables d'environnement de production
 ENV NODE_ENV=production \

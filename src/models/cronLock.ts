@@ -44,7 +44,6 @@ const cronLockSchema: Schema<ICronLock> = new Schema(
     expiresAt: {
       type: Date,
       required: true,
-      index: true,
     },
     lastHeartbeat: {
       type: Date,

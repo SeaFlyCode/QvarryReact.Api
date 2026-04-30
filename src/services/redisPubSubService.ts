@@ -84,15 +84,14 @@ class RedisPubSubService {
     if (!REDIS_ENABLED || !REDIS_PUBSUB_ENABLED) {
       pubSubLogger.warn(
         "Redis Pub/Sub disabled - WebSocket clustering will NOT work across multiple instances",
-        {
-          REDIS_ENABLED,
-          REDIS_PUBSUB_ENABLED,
-        },
+        { REDIS_ENABLED, REDIS_PUBSUB_ENABLED },
       );
-      return;
     }
+  }
 
-    this.initialize();
+  async initializeWithPool(): Promise<void> {
+    if (!REDIS_ENABLED || !REDIS_PUBSUB_ENABLED) return;
+    await this.initialize();
   }
 
   /**

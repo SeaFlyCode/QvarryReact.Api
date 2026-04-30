@@ -58,6 +58,9 @@
     "test:load:custom": "ts-node scripts/load-test-websocket.ts",
     "test:load:report": "artillery run artillery-websocket.yml --output load-test-report.json && artillery report load-test-report.json",
     "db:backup": "echo 'Backup script not configured'",
+    "docker:build": "docker build --platform linux/amd64 -t docker.matheovieilleville.fr/qvarry-api:latest -t docker.matheovieilleville.fr/qvarry-api:$(node -p \"require('./package.json').version\") .",
+    "docker:build:no-cache": "docker build --platform linux/amd64 --no-cache -t docker.matheovieilleville.fr/qvarry-api:latest .",
+    "docker:push": "docker push docker.matheovieilleville.fr/qvarry-api:latest && docker push docker.matheovieilleville.fr/qvarry-api:$(node -p \"require('./package.json').version\")",
     "docker:release": "npm run docker:build && npm run docker:push",
     "docker:run": "docker run -d -p 3000:3000 --env-file .env --name qvarry-api docker.matheovieilleville.fr/qvarry-api:latest",
     "docker:stop": "docker stop qvarry-api && docker rm qvarry-api",
@@ -84,7 +87,6 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
-    "@aws-sdk/client-secrets-manager": "^3.1035.0",
     "bcrypt": "^6.0.0",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",

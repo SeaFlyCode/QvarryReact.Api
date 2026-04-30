@@ -121,10 +121,10 @@ const NODE_ENV = process.env.NODE_ENV || "development";
 // CONF-005: Trust Proxy - Requis pour rate limiting derrière un proxy (nginx, cloudflare)
 // ═══════════════════════════════════════════════════════════════════════════
 if (NODE_ENV === "production") {
-  // Activer uniquement si un reverse proxy (Nginx, Cloudflare) est en front.
-  // Sans proxy, X-Forwarded-For est forgeable et contourne le rate limiting par IP.
-  app.set("trust proxy", false);
-  serverLogger.info("[SECURITY] Trust proxy désactivé (aucun proxy configuré)");
+  // trust proxy 1 = on fait confiance au premier hop (Traefik/Dokploy).
+  // Cela permet au rate limiter de lire la vraie IP cliente depuis X-Forwarded-For.
+  app.set("trust proxy", 1);
+  serverLogger.info("[SECURITY] Trust proxy activé (1 hop — Traefik/Dokploy)");
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -625,6 +625,22 @@ app.use("/api", generalLimiter);
         await initializeRedisWithPool();
         startStateCleanup();
         serverLogger.info("[WS-STATE] WebSocket State initialisé avec le pool");
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // PUBSUB: Initialiser après le pool Redis
+        // ═══════════════════════════════════════════════════════════════════════════
+        await redisPubSubService.initializeWithPool();
+        serverLogger.info("[PUBSUB] Redis Pub/Sub initialisé avec le pool", {
+          enabled: redisPubSubService.isEnabled(),
+        });
+
+        // ═══════════════════════════════════════════════════════════════════════════
+        // WS REDIS CACHE: Initialiser après le pool Redis
+        // ═══════════════════════════════════════════════════════════════════════════
+        const { initializeWebSocketRedisCache } =
+          await import("./services/webSocketService");
+        await initializeWebSocketRedisCache();
+        serverLogger.info("[WS-CACHE] WebSocket Redis cache initialisé avec le pool");
       } catch (error) {
         serverLogger.error("[REDIS-POOL] Échec de l'initialisation Redis", {
           error: error instanceof Error ? error.message : error,
