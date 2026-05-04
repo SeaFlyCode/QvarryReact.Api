@@ -1,14 +1,32 @@
 import { getErrorMessage } from "../utils/errorUtils";
 import { Request, Response } from "express";
 import mongoose from "mongoose";
+import { z } from "zod";
 import { memoryStorage } from "../services/memoryStorageService";
 import { validateFicheData } from "../services/validationService";
 import { syncService } from "../services/syncService";
 import { loadAndDecryptUserData } from "./auth/authHelpers";
 import { logger } from "../services/loggerService";
 import FicheModel from "../models/fiches";
+import {
+  ficheCreateSchema,
+  ficheUpdateSchema,
+} from "../schemas/ficheSchemas";
 
 const fichesLogger = logger.child({ service: "fiches" });
+
+function ficheZodErrorResponse(res: Response, error: z.ZodError) {
+  const issue = error.issues[0];
+  const path = issue?.path?.join(".") || "body";
+  return res.status(400).json({
+    error: `Champ invalide: ${path} — ${issue?.message ?? "valeur incorrecte"}`,
+    code: "INVALID_PAYLOAD",
+    details: error.issues.map((i) => ({
+      path: i.path.join("."),
+      message: i.message,
+    })),
+  });
+}
 
 /**
  * Gère la création d'une nouvelle fiche
@@ -55,6 +73,19 @@ export async function handleCreateFiche(req: Request, res: Response) {
       return res.status(401).json({
         message: "Utilisateur non authentifié",
       });
+    }
+
+    // Validation stricte des enums (alignée mobile)
+    const parsed = ficheCreateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      fichesLogger.warn("Payload Fiche refusé par Zod (create)", {
+        userId: req.user.id,
+        issues: parsed.error.issues.map((i) => ({
+          path: i.path.join("."),
+          code: i.code,
+        })),
+      });
+      return ficheZodErrorResponse(res, parsed.error);
     }
 
     const userId = req.user.id;
@@ -184,11 +215,25 @@ export async function handleUpdateFiche(req: Request, res: Response) {
       return res.status(401).json({ message: "Utilisateur non authentifié" });
     }
 
-    // Récupérer la fiche depuis la m��moire
+    // Récupérer la fiche depuis la mémoire
     const fiche = memoryStorage.getFicheById(userId, ficheId);
 
     if (!fiche) {
       return res.status(404).json({ message: "Fiche non trouvée." });
+    }
+
+    // Validation stricte des enums sur les champs envoyés (alignée mobile)
+    const parsedUpdate = ficheUpdateSchema.safeParse(updateData);
+    if (!parsedUpdate.success) {
+      fichesLogger.warn("Payload Fiche refusé par Zod (update)", {
+        userId,
+        ficheId,
+        issues: parsedUpdate.error.issues.map((i) => ({
+          path: i.path.join("."),
+          code: i.code,
+        })),
+      });
+      return ficheZodErrorResponse(res, parsedUpdate.error);
     }
 
     // SEC: Allowlist des champs modifiables pour éviter l'injection de champs arbitraires

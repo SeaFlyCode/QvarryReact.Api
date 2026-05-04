@@ -7,6 +7,10 @@ jest.mock("../../services/memoryStorageService");
 jest.mock("../../services/syncService");
 jest.mock("../../services/validationService");
 jest.mock("../../controllers/auth/authHelpers");
+jest.mock("../../models/fiches", () => ({
+  __esModule: true,
+  default: { findById: jest.fn() },
+}));
 
 import { Request, Response } from "express";
 import {
@@ -27,6 +31,7 @@ import { memoryStorage } from "../../services/memoryStorageService";
 import { syncService } from "../../services/syncService";
 import { validateFicheData } from "../../services/validationService";
 import { loadAndDecryptUserData } from "../../controllers/auth/authHelpers";
+import FicheModel from "../../models/fiches";
 import mongoose from "mongoose";
 
 describe("fichesControllers", () => {
@@ -35,6 +40,12 @@ describe("fichesControllers", () => {
 
   beforeEach(() => {
     jest.clearAllMocks();
+    // Round-trip Mongo round-trip mock — par défaut renvoie une fiche existante.
+    (FicheModel.findById as jest.Mock).mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue({ _id: "mocked" }),
+      }),
+    });
     req = mockRequest();
     res = mockResponse();
   });
@@ -48,21 +59,21 @@ describe("fichesControllers", () => {
       req.body = {
         name: "Grotte de Lascaux",
         ville: "Montignac",
-        type: "cavite",
-        etat: "ouvert",
-        accessibilite: "facile",
-        difficulte_acces: "facile",
-        risque_oxygene: "faible",
-        acces_souterrain: "non",
-        praticite_souterrain: "bonne",
-        etat_general: "bon",
+        type: "Grotte",
+        etat: "Ouvert",
+        accessibilite: "Accès libre",
+        difficulte_acces: "1",
+        risque_oxygene: "1",
+        acces_souterrain: "Ouvert",
+        praticite_souterrain: ["Sol dégagé"],
+        etat_general: "1",
         points_ids: [],
-        equipement_conseille: ["casque", "lampe"],
-        surface: ["calcaire"],
-        type_galeries: ["horizontale"],
+        equipement_conseille: ["Casque", "Éclairage (frontale)"],
+        surface: ["< 500 m²"],
+        type_galeries: ["Galeries hautes (> 2m)"],
         interets: "Peintures rupestres",
         commentaire: "Site historique",
-        center_cavite: [1.5, 45.0],
+        center_cavite: { type: "Point", coordinates: [1.5, 45.0] },
       };
 
       (validateFicheData as jest.Mock).mockReturnValue({ isValid: true });
@@ -123,13 +134,13 @@ describe("fichesControllers", () => {
       req.body = {
         name: "Grotte",
         ville: "Paris",
-        type: "cavite",
-        etat: "ouvert",
-        difficulte_acces: "facile",
-        risque_oxygene: "faible",
-        acces_souterrain: "non",
-        praticite_souterrain: "bonne",
-        etat_general: "bon",
+        type: "Grotte",
+        etat: "Ouvert",
+        difficulte_acces: "1",
+        risque_oxygene: "1",
+        acces_souterrain: "Ouvert",
+        praticite_souterrain: ["Sol dégagé"],
+        etat_general: "1",
       };
 
       (validateFicheData as jest.Mock).mockReturnValue({ isValid: true });
@@ -141,12 +152,10 @@ describe("fichesControllers", () => {
 
       await handleCreateFiche(req as Request, res as Response);
 
-      expect(res.status).toHaveBeenCalledWith(500);
+      expect(res.status).toHaveBeenCalledWith(503);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
-          message:
-            "La fiche a été créée en mémoire mais n'a pas pu être synchronisée avec la base de données",
-          syncFailed: true,
+          persisted: false,
         }),
       );
     });
