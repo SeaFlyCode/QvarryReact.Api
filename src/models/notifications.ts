@@ -6,7 +6,6 @@ export type NotificationType =
   | "contact_accepted" // Demande de contact acceptée
   | "message" // Nouveau message
   | "group_invite" // Invitation à un groupe
-  | "data_share" // Partage de données
   | "share_received" // Nouvelles données partagées reçues
   | "share_accepted" // Votre partage a été accepté
   | "share_declined" // Votre partage a été refusé
@@ -15,8 +14,6 @@ export type NotificationType =
   | "share_expired" // Un partage a expiré
   | "sos_alert" // Alerte SOS générique (stage 0)
   | "sos_stage1_alert" // Alerte SOS stage 1 (notification à tous les users)
-  | "sos_stage2_sms" // Notification interne de suivi SMS envoyé (stage 2)
-  | "sos_resolved" // Session SOS résolue
   | "contact_refused" // Demande de contact refusée
   | "group_member_added" // Ajouté à un groupe existant
   | "group_member_removed" // Retiré d'un groupe
@@ -28,7 +25,22 @@ export type NotificationType =
   | "sos_reconnection_detected" // Reconnexion stable détectée
   | "sos_sms_triggered" // SMS d'urgence envoyés (stage 2)
   | "login_new_device" // Connexion depuis un nouvel appareil
-  | "admin_notification"; // Notification admin générique
+  | "admin_notification" // Notification admin générique
+  // ─── Notifications admin dédiées ───────────────────────────────────────
+  | "admin_sos_unresolved" // P0 — SOS stage 2 sans confirmation safe après 30 min
+  | "admin_security_breach" // P0 — pic de logins échoués
+  | "admin_service_down" // P0 — FCM/Vonage/DB indispo > 2 min
+  | "admin_critical_audit" // P0 — action critique (suppression masse, modif privilèges)
+  | "admin_user_report" // P1 — signalement user (TODO: pas de système de report user en place ; brancher quand /reports sera créé via notifyAllAdmins('admin_user_report', ..., { dedupKey: 'report:{reportId}' }))
+  | "admin_abuse_pattern" // P1 — pattern abusif détecté
+  | "admin_quota_exceeded" // P1 — user dépasse quota
+  | "admin_verification_pending" // P1 — user à valider
+  | "admin_sos_failed_sms" // P1 — Vonage failed sur Stage 2
+  | "admin_sentry_high" // P2 — bug Sentry severity ≥ error
+  | "admin_cron_failed" // P2 — cron en échec
+  | "admin_metrics_anomaly" // P2 — métrique hors seuil
+  | "admin_daily_digest" // P3 — digest 9h
+  | "admin_weekly_report"; // P3 — rapport hebdo
 
 // Interface pour les notifications
 export interface INotification extends Document {
@@ -73,7 +85,6 @@ const notificationSchema: Schema<INotification> = new Schema(
         "contact_accepted",
         "message",
         "group_invite",
-        "data_share",
         "share_received",
         "share_accepted",
         "share_declined",
@@ -82,8 +93,6 @@ const notificationSchema: Schema<INotification> = new Schema(
         "share_expired",
         "sos_alert",
         "sos_stage1_alert",
-        "sos_stage2_sms",
-        "sos_resolved",
         "contact_refused",
         "group_member_added",
         "group_member_removed",
@@ -96,6 +105,20 @@ const notificationSchema: Schema<INotification> = new Schema(
         "sos_sms_triggered",
         "login_new_device",
         "admin_notification",
+        "admin_sos_unresolved",
+        "admin_security_breach",
+        "admin_service_down",
+        "admin_critical_audit",
+        "admin_user_report",
+        "admin_abuse_pattern",
+        "admin_quota_exceeded",
+        "admin_verification_pending",
+        "admin_sos_failed_sms",
+        "admin_sentry_high",
+        "admin_cron_failed",
+        "admin_metrics_anomaly",
+        "admin_daily_digest",
+        "admin_weekly_report",
       ],
       required: true,
     },

@@ -52,6 +52,10 @@ export interface IDataShare extends Document {
   notificationSent: boolean;
   readBy: IReadReceipt[];
 
+  // Notifications d'expiration (pour éviter les doublons par cron)
+  expiringSoonNotifiedAt?: Date;
+  expiredNotifiedAt?: Date;
+
   // Métadonnées supplémentaires
   isActive: boolean; // false si supprimé ou expiré
 }
@@ -159,6 +163,13 @@ const dataShareSchema: Schema<IDataShare> = new Schema(
         },
       },
     ],
+
+    expiringSoonNotifiedAt: {
+      type: Date,
+    },
+    expiredNotifiedAt: {
+      type: Date,
+    },
 
     isActive: {
       type: Boolean,

@@ -767,6 +767,33 @@ export async function addGroupMembers(req: Request, res: Response) {
       });
     }
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // WS broadcast — émet group_member_added DISTINCT pour chaque nouveau membre,
+    // en plus de l'event group_update (rétrocompat) déjà émis ailleurs.
+    // ═══════════════════════════════════════════════════════════════════════════
+    try {
+      const allParticipantIds = conversation.participants.map((p: any) =>
+        p.userId.toString(),
+      );
+      for (const uid of userIds) {
+        if (uid === userId) continue;
+        webSocketService.notifyGroupMemberAdded(
+          id,
+          allParticipantIds,
+          uid,
+          userId,
+        );
+      }
+      webSocketService.notifyGroupUpdate(id, allParticipantIds, "member_added", {
+        addedUserIds: (userIds as string[]).filter((uid) => uid !== userId),
+        addedBy: userId,
+      });
+    } catch (wsErr) {
+      convoLogger.error("Erreur broadcast WS ajout membres", {
+        error: wsErr instanceof Error ? wsErr.message : String(wsErr),
+      });
+    }
+
     res.json({ success: true, conversation: conversation.toObject() });
   } catch (err) {
     convoLogger.error("Erreur ajout membres groupe", {
@@ -860,6 +887,40 @@ export async function removeGroupMember(req: Request, res: Response) {
     const session = memoryStorage.getSession(memberId);
     if (session && session.conversations) {
       session.conversations.delete(id);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // WS broadcast — émet group_member_removed DISTINCT (en plus de
+    // notifyMemberRemoved ciblé sur le membre retiré + group_update rétrocompat)
+    // ═══════════════════════════════════════════════════════════════════════════
+    try {
+      const remainingParticipantIds = conversation.participants.map((p: any) =>
+        p.userId.toString(),
+      );
+      // Inclure le membre retiré pour qu'il reçoive aussi l'event distinct
+      // (au cas où des handlers WS notifications seraient toujours actifs).
+      const broadcastTargets = Array.from(
+        new Set([...remainingParticipantIds, memberId]),
+      );
+      webSocketService.notifyGroupMemberRemoved(
+        id,
+        broadcastTargets,
+        memberId,
+        userId,
+      );
+      webSocketService.notifyGroupUpdate(
+        id,
+        remainingParticipantIds,
+        "member_removed",
+        {
+          removedUserId: memberId,
+          removedBy: userId,
+        },
+      );
+    } catch (wsErr) {
+      convoLogger.error("Erreur broadcast WS retrait membre", {
+        error: wsErr instanceof Error ? wsErr.message : String(wsErr),
+      });
     }
 
     convoLogger.info("Membre retiré du groupe", {
@@ -1108,7 +1169,7 @@ export async function updateGroupName(req: Request, res: Response) {
     const participantIds = conversation.participants.map((p: any) =>
       p.userId.toString(),
     );
-    webSocketService.notifyGroupNameChanged(id, name, participantIds);
+    webSocketService.notifyGroupNameChanged(id, name, participantIds, userId);
 
     // Synchronisation mémoire pour tous les membres
     await updateMemoryForAllParticipants(

@@ -26,6 +26,16 @@ jest.mock("firebase-admin", () => mockFirebaseAdmin);
 // Mock other dependencies
 jest.mock("../../models/notifications");
 jest.mock("../../models/pendingNotification");
+jest.mock("../../models/users", () => ({
+  __esModule: true,
+  default: {
+    findById: jest.fn().mockReturnValue({
+      select: jest.fn().mockReturnValue({
+        lean: jest.fn().mockResolvedValue(null),
+      }),
+    }),
+  },
+}));
 jest.mock("../../services/pushTokenService");
 jest.mock("../../services/webSocketService", () => ({
   webSocketService: {

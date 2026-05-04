@@ -60,7 +60,7 @@ const config = {
   },
   // Limites par type de route (valeurs PRODUCTION)
   limits: {
-    global: 1000, // Filet de sécurité global
+    global: 200, // P3 backend #6b — réduit de 1000 → 200/min (catch-all moins permissif)
     health: 120, // Health checks Docker/K8s
     register: 5, // Création de compte (par heure)
     resendEmail: 3, // Renvoi d'emails (par heure)

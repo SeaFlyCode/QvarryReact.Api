@@ -121,7 +121,6 @@ ConversationSchema.index({ "archivedBy.userId": 1 });
 ConversationSchema.index({ "pinnedBy.userId": 1, "pinnedBy.order": 1 });
 ConversationSchema.index({ markedUnreadBy: 1 });
 ConversationSchema.index({ "blockedBy.userId": 1 });
-ConversationSchema.index({ "participants.userId": 1, deletedBy: 1 }); // Pour soft-delete filtering
 
 export default mongoose.model<IConversation>(
   "Conversation",

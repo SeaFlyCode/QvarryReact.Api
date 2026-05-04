@@ -13,8 +13,131 @@ import { createNotification } from "./notificationService";
 import { memoryStorage } from "./memoryStorageService";
 import User from "../models/users";
 import { logger } from "./loggerService";
+import { decrypt as decryptMaster } from "../utils/masterEncryptionUtils";
 
 const opsLogger = logger.child({ service: "message-operations" });
+
+const MENTION_REGEX = /@([\w-]+)/g;
+
+// ─── Détection de pattern abusif (admin_abuse_pattern) ─────────────────────
+const ABUSE_WINDOW_SECONDS = 60;
+const ABUSE_MSG_THRESHOLD = 30;
+const abuseMemory = new Map<string, { count: number; expiresAt: number }>();
+
+function inMemoryAbuseIncr(userId: string): number {
+  const now = Date.now();
+  const entry = abuseMemory.get(userId);
+  if (!entry || entry.expiresAt <= now) {
+    abuseMemory.set(userId, {
+      count: 1,
+      expiresAt: now + ABUSE_WINDOW_SECONDS * 1000,
+    });
+    return 1;
+  }
+  entry.count += 1;
+  return entry.count;
+}
+
+async function checkAbusePattern(userId: string): Promise<void> {
+  let count = 0;
+  try {
+    const RedisConnectionPool = (await import("../config/redisPool")).default;
+    const client = RedisConnectionPool.getPublisher();
+    const key = `abuse:msg:${userId}`;
+    count = await client.incr(key);
+    if (count === 1) {
+      await client.expire(key, ABUSE_WINDOW_SECONDS);
+    }
+  } catch {
+    count = inMemoryAbuseIncr(userId);
+  }
+
+  if (count <= ABUSE_MSG_THRESHOLD) return;
+
+  try {
+    const { notifyAllAdmins } = await import("./adminNotificationService");
+    await notifyAllAdmins(
+      "admin_abuse_pattern",
+      "⚠️ Pattern abusif détecté",
+      `User ${userId} envoie > ${ABUSE_MSG_THRESHOLD} msg/min (${count} en ${ABUSE_WINDOW_SECONDS}s).`,
+      {
+        userId,
+        count,
+        windowSeconds: ABUSE_WINDOW_SECONDS,
+        dedupKey: `abuse-msg:${userId}`,
+      },
+    );
+  } catch (err) {
+    opsLogger.warn("Échec notification admin_abuse_pattern", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+/**
+ * Extrait les pseudos mentionnés (@pseudo) d'un contenu texte.
+ * Limite simple : pseudos sans espaces, alphanumériques + tirets/underscores.
+ * Déduplique les pseudos.
+ */
+function extractMentionPseudos(content: string): string[] {
+  if (!content) return [];
+  const seen = new Set<string>();
+  for (const match of content.matchAll(MENTION_REGEX)) {
+    const pseudo = match[1];
+    if (pseudo) seen.add(pseudo);
+  }
+  return Array.from(seen);
+}
+
+/**
+ * Résout les pseudos mentionnés en ObjectIds parmi les participants
+ * d'une conversation. Compare le pseudo déchiffré (showPseudo activé)
+ * et fallback sur prénom déchiffré.
+ */
+async function resolveMentionedUserIds(
+  content: string,
+  participantIds: Types.ObjectId[],
+): Promise<Types.ObjectId[]> {
+  const pseudos = extractMentionPseudos(content);
+  if (pseudos.length === 0 || participantIds.length === 0) return [];
+
+  const users = await User.find({ _id: { $in: participantIds } })
+    .select("_id name pseudo showPseudo")
+    .lean();
+
+  const lowered = new Set(pseudos.map((p) => p.toLowerCase()));
+  const matched: Types.ObjectId[] = [];
+
+  for (const user of users) {
+    let candidate: string | null = null;
+    if (user.showPseudo && user.pseudo) {
+      try {
+        candidate = decryptMaster(user.pseudo);
+      } catch (err) {
+        opsLogger.debug("Échec déchiffrement pseudo lors de la résolution mention", {
+          userId: user._id.toString(),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (!candidate) {
+      try {
+        candidate = decryptMaster(user.name);
+      } catch (err) {
+        opsLogger.debug("Échec déchiffrement nom lors de la résolution mention", {
+          userId: user._id.toString(),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+    if (candidate && lowered.has(candidate.toLowerCase())) {
+      matched.push(user._id as Types.ObjectId);
+    }
+  }
+
+  return matched;
+}
 
 export async function getDisplayName(userId: string): Promise<string> {
   const { decrypt } = await import("../utils/masterEncryptionUtils");
@@ -25,13 +148,24 @@ export async function getDisplayName(userId: string): Promise<string> {
   if (user.showPseudo && user.pseudo) {
     try {
       return decrypt(user.pseudo);
-    } catch (_e) {}
+    } catch (e) {
+      // P3 backend #6e — log warn pour permettre de détecter une corruption
+      // de clé / données chiffrées au lieu d'avoir un fallback silencieux.
+      opsLogger.warn("Échec déchiffrement pseudo, fallback nom/prénom", {
+        userId,
+        error: e instanceof Error ? e.message : String(e),
+      });
+    }
   }
   try {
     const name = decrypt(user.name);
     const surname = decrypt(user.surname);
     return `${name} ${surname}`;
-  } catch (_e) {
+  } catch (e) {
+    opsLogger.warn("Échec déchiffrement nom/prénom, fallback générique", {
+      userId,
+      error: e instanceof Error ? e.message : String(e),
+    });
     return "Un utilisateur";
   }
 }
@@ -145,6 +279,26 @@ export async function createMessageOp(
     } catch (_e) {}
   }
 
+  // Détection des mentions @pseudo dans le contenu en clair, uniquement
+  // pour les groupes (cf. mute par-mention géré dans createNotification).
+  let mentionedUserIds: Types.ObjectId[] = [];
+  if (conversation.isGroup) {
+    try {
+      const otherParticipantIds = otherParticipants.map(
+        (p: any) => p.userId as Types.ObjectId,
+      );
+      mentionedUserIds = await resolveMentionedUserIds(
+        content,
+        otherParticipantIds,
+      );
+    } catch (err) {
+      opsLogger.warn("Échec résolution mentions, on continue sans mentions", {
+        conversationId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
   for (const participant of otherParticipants) {
     await createNotification(
       participant.userId as Types.ObjectId,
@@ -157,6 +311,7 @@ export async function createMessageOp(
         conversationId: new Types.ObjectId(conversationId),
         messageId: message._id as Types.ObjectId,
         senderId: new Types.ObjectId(userId),
+        ...(mentionedUserIds.length > 0 ? { mentionedUserIds } : {}),
       },
     );
   }
@@ -166,6 +321,9 @@ export async function createMessageOp(
     conversationId,
     senderId: userId,
   });
+
+  // Pattern abusif (best-effort, ne bloque pas la création)
+  void checkAbusePattern(userId);
 
   return {
     messageId: String(message._id),

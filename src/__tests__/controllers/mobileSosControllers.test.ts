@@ -88,28 +88,70 @@ describe("mobileSosControllers", () => {
       });
     });
 
-    it("devrait rejeter si durée manquante ou invalide", async () => {
+    it("devrait rejeter si durée manquante ou invalide (Zod)", async () => {
       req.body.expectedDuration = undefined;
 
       await handleSosActivate(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({
-        error: "Durée attendue requise (en minutes).",
-        code: "MISSING_DURATION",
-      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_PAYLOAD",
+          details: expect.arrayContaining([
+            expect.objectContaining({ path: "expectedDuration" }),
+          ]),
+        }),
+      );
     });
 
-    it("devrait rejeter si durée hors limites", async () => {
+    it("devrait rejeter si durée hors limites (Zod)", async () => {
       req.body.expectedDuration = 0;
 
       await handleSosActivate(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(400);
-      expect(res.json).toHaveBeenCalledWith({
-        error: "La durée doit être entre 1 minute et 8 heures.",
-        code: "INVALID_DURATION",
-      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_PAYLOAD",
+          details: expect.arrayContaining([
+            expect.objectContaining({ path: "expectedDuration" }),
+          ]),
+        }),
+      );
+    });
+
+    it("devrait rejeter une latitude hors bornes (Zod)", async () => {
+      req.body.expectedDuration = 60;
+      req.body.lat = 200;
+
+      await handleSosActivate(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_PAYLOAD",
+          details: expect.arrayContaining([
+            expect.objectContaining({ path: "lat" }),
+          ]),
+        }),
+      );
+    });
+
+    it("devrait rejeter une longitude hors bornes (Zod)", async () => {
+      req.body.expectedDuration = 60;
+      req.body.lng = -200;
+
+      await handleSosActivate(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_PAYLOAD",
+          details: expect.arrayContaining([
+            expect.objectContaining({ path: "lng" }),
+          ]),
+        }),
+      );
     });
 
     it("devrait gérer l'erreur session déjà active", async () => {
@@ -191,6 +233,23 @@ describe("mobileSosControllers", () => {
         error: "Erreur lors du heartbeat.",
         code: "INTERNAL_ERROR",
       });
+    });
+
+    it("devrait rejeter une latitude hors bornes au heartbeat (Zod)", async () => {
+      req.body.lat = 91;
+
+      await handleSosHeartbeat(req as Request, res as Response);
+
+      expect(res.status).toHaveBeenCalledWith(400);
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          code: "INVALID_PAYLOAD",
+          details: expect.arrayContaining([
+            expect.objectContaining({ path: "lat" }),
+          ]),
+        }),
+      );
+      expect(sosService.heartbeat).not.toHaveBeenCalled();
     });
   });
 

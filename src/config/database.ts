@@ -71,6 +71,22 @@ export async function connectToDatabase() {
         ssl: enableSSL,
         attempt,
       });
+
+      // Activer le slow-query log en production (cf. fix.md backend #3c).
+      // Toutes les requêtes > 100 ms partent dans `system.profile` et peuvent
+      // être grepées via `db.system.profile.find().sort({ ts: -1 })`.
+      if (isProduction && mongoose.connection.db) {
+        try {
+          const slowMs = parseInt(process.env.MONGO_SLOW_QUERY_MS ?? "100", 10);
+          await mongoose.connection.db.command({ profile: 1, slowms: slowMs });
+          dbLogger.info("MongoDB slow query profiling activé", { slowMs });
+        } catch (profileErr) {
+          dbLogger.warn("Impossible d'activer le slow query profiling", {
+            error: getErrorMessage(profileErr),
+          });
+        }
+      }
+
       return; // Succès, on sort de la fonction
     } catch (error) {
       lastError = error;

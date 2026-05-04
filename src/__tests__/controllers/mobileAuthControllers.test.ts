@@ -204,7 +204,10 @@ describe("mobileAuthControllers", () => {
         error: "Email ou mot de passe incorrect.",
         code: "INVALID_CREDENTIALS",
       });
-      expect(recordFailedLogin).toHaveBeenCalledWith("test@example.com");
+      expect(recordFailedLogin).toHaveBeenCalledWith(
+        "test@example.com",
+        expect.anything(),
+      );
     });
 
     it("devrait rejeter si compte bloqué", async () => {

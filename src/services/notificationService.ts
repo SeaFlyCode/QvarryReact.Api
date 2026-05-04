@@ -13,8 +13,125 @@ import {
 import { webSocketService } from "./webSocketService"; // Correction de l'import nommé
 import dataArchiveService from "./dataArchiveService";
 import { logger } from "./loggerService";
+import {
+  mapNotificationTypeForFCM,
+  getNotificationLevel,
+  getActionCategoryForType,
+} from "./notificationMapper";
+import UserModel from "../models/users";
+import {
+  shouldSkipPush,
+  type NotificationPreferences,
+} from "./notificationPreferencesService";
+import RedisConnectionPool from "../config/redisPool";
+import type Redis from "ioredis";
+import type { Cluster } from "ioredis";
 
 const notifLogger = logger.child({ service: "notification" });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// USER-LEVEL RATE LIMITING (P2 push uniquement — P0/P1 jamais throttled)
+// ═══════════════════════════════════════════════════════════════════════════
+// Par utilisateur × type, max 10 push FCM par heure. Au-delà → BDD + WS, pas
+// de push. Entre 5 et 10 → log warn (préparation agrégation).
+// P3 ne passe jamais par le push (return early plus haut), donc le rate-limit
+// ne s'applique pas. P0/P1 sont volontairement exclus (sécurité, comm directe).
+// Storage : Redis (clé `notif:rl:{userId}:{type}`, INCR + EX 3600). Fallback
+// in-memory si Redis indisponible (pattern adminNotificationService).
+// ═══════════════════════════════════════════════════════════════════════════
+
+const NOTIF_RL_WINDOW_SECONDS = 3600; // 1h
+const NOTIF_RL_LIMIT = 10; // max push/h
+const NOTIF_RL_AGGREGATE_HINT = 5; // log warn au-dessus
+
+interface NotifRateLimitStore {
+  incr(key: string, ttlSeconds: number): Promise<number>;
+}
+
+class RedisNotifRateLimitStore implements NotifRateLimitStore {
+  constructor(private client: Redis | Cluster) {}
+
+  async incr(key: string, ttlSeconds: number): Promise<number> {
+    // INCR puis EXPIRE seulement si compteur == 1 (première occurrence dans
+    // la fenêtre). Ces deux commandes ne sont pas strictement atomiques mais
+    // la fenêtre de race est négligeable côté rate-limit notification.
+    const count = await this.client.incr(key);
+    if (count === 1) {
+      await this.client.expire(key, ttlSeconds);
+    }
+    return count;
+  }
+}
+
+class InMemoryNotifRateLimitStore implements NotifRateLimitStore {
+  private map = new Map<string, { count: number; expiresAt: number }>();
+
+  async incr(key: string, ttlSeconds: number): Promise<number> {
+    const now = Date.now();
+    const entry = this.map.get(key);
+    if (!entry || entry.expiresAt <= now) {
+      this.map.set(key, { count: 1, expiresAt: now + ttlSeconds * 1000 });
+      return 1;
+    }
+    entry.count += 1;
+    return entry.count;
+  }
+}
+
+let notifRateLimitStore: NotifRateLimitStore | null = null;
+
+function getNotifRateLimitStore(): NotifRateLimitStore {
+  if (notifRateLimitStore) return notifRateLimitStore;
+  try {
+    const client = RedisConnectionPool.getPublisher();
+    notifRateLimitStore = new RedisNotifRateLimitStore(client);
+    notifLogger.debug("[notif-rl] Rate limit store: Redis");
+  } catch {
+    notifRateLimitStore = new InMemoryNotifRateLimitStore();
+    notifLogger.warn(
+      "[notif-rl] Redis indisponible — fallback rate limit in-memory (non partagé entre instances)",
+    );
+  }
+  return notifRateLimitStore;
+}
+
+/**
+ * Vérifie si le push doit être throttlé pour ce user × type.
+ * - Renvoie `{ throttled: true }` si compteur > NOTIF_RL_LIMIT (skip push).
+ * - Sinon `{ throttled: false, count }`. Logge un warn si count entre
+ *   NOTIF_RL_AGGREGATE_HINT et NOTIF_RL_LIMIT (préparation agrégation).
+ *
+ * Fail-open : si le store erreur → on n'applique pas de throttle, on log.
+ */
+async function checkUserPushRateLimit(
+  userId: string,
+  type: NotificationType,
+): Promise<{ throttled: boolean; count: number }> {
+  const key = `notif:rl:${userId}:${type}`;
+  try {
+    const count = await getNotifRateLimitStore().incr(
+      key,
+      NOTIF_RL_WINDOW_SECONDS,
+    );
+    if (count > NOTIF_RL_LIMIT) {
+      return { throttled: true, count };
+    }
+    if (count >= NOTIF_RL_AGGREGATE_HINT && count <= NOTIF_RL_LIMIT) {
+      notifLogger.warn(
+        "[notif-rl] Notification approche du seuil — agrégation à prévoir",
+        { userId, type, count, limit: NOTIF_RL_LIMIT },
+      );
+    }
+    return { throttled: false, count };
+  } catch (err) {
+    notifLogger.warn("[notif-rl] Rate limit store erreur — fail-open", {
+      userId,
+      type,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    return { throttled: false, count: 0 };
+  }
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // FIREBASE ADMIN SDK - Import conditionnel
@@ -354,21 +471,23 @@ class NotificationService {
             webSocketService &&
             typeof webSocketService.sendNotificationToUser === "function"
           ) {
-            webSocketService.sendNotificationToUser(userIdStr, {
+            const delivered = webSocketService.sendNotificationToUser(userIdStr, {
               type: "notification",
               notificationType: notification.type,
               title: notification.title,
               message: notification.message,
               ...notification.data,
             });
-            wsSuccess = true;
-            notifLogger.info("Notification retry réussie via WebSocket", {
-              userId: userIdStr,
-              attempts: notification.attempts + 1,
-            });
-            // Supprimer la notification de la file d'attente
-            await PendingNotificationModel.deleteOne({ _id: notification._id });
-            continue;
+            if (delivered === true) {
+              wsSuccess = true;
+              notifLogger.info("Notification retry réussie via WebSocket", {
+                userId: userIdStr,
+                attempts: notification.attempts + 1,
+              });
+              // Supprimer la notification de la file d'attente
+              await PendingNotificationModel.deleteOne({ _id: notification._id });
+              continue;
+            }
           }
         } catch (error) {
           notifLogger.debug("Retry WebSocket échoué", {
@@ -466,6 +585,7 @@ class NotificationService {
     data?: Record<string, any>,
   ): Promise<void> {
     const userIdStr = typeof userId === "string" ? userId : userId.toString();
+    const level = getNotificationLevel(type);
     const isSosNotification =
       type.toLowerCase().includes("sos") ||
       title.toLowerCase().includes("sos") ||
@@ -480,15 +600,19 @@ class NotificationService {
         webSocketService &&
         typeof webSocketService.sendNotificationToUser === "function"
       ) {
-        webSocketService.sendNotificationToUser(userIdStr, {
+        const delivered = webSocketService.sendNotificationToUser(userIdStr, {
           type: "notification",
           notificationType: type,
           title,
           message,
           ...data,
         });
-        wsSuccess = true;
-        deliveryMethod = "websocket";
+        // delivered = true uniquement si au moins un client WebSocket OPEN a reçu.
+        // Si l'utilisateur est offline, on continue sur le fallback push.
+        if (delivered === true) {
+          wsSuccess = true;
+          deliveryMethod = "websocket";
+        }
       }
     } catch (error) {
       notifLogger.warn("Échec d'envoi via WebSocket", {
@@ -497,14 +621,100 @@ class NotificationService {
       });
     }
 
+    // P3 : in-app only, pas de push FCM ni de retry queue
+    if (level === "P3") {
+      if (!wsSuccess) {
+        notifLogger.debug("Notification P3 non délivrée via WS (offline) — pas de push", {
+          userId: userIdStr,
+          type,
+        });
+      }
+      notifLogger.info("Notification envoyée", {
+        userId: userIdStr,
+        type,
+        level,
+        isSosNotification,
+        deliveryMethod,
+      });
+      return;
+    }
+
     // Tentative 2 : Push notification (si WS échoue OU si SOS)
     if (!wsSuccess || isSosNotification) {
+      // Respect des préférences de notifications utilisateur
+      // (skip push uniquement, pas la BDD ni le WS).
+      let prefs: NotificationPreferences | null = null;
+      try {
+        const userDoc = await UserModel.findById(userIdStr)
+          .select("notificationPreferences")
+          .lean();
+        if (userDoc?.notificationPreferences) {
+          prefs = userDoc.notificationPreferences as NotificationPreferences;
+        }
+      } catch (error) {
+        notifLogger.warn("Échec lecture notificationPreferences", {
+          userId: userIdStr,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      }
+
+      const skipDecision = shouldSkipPush(type, level, prefs);
+      if (skipDecision.skip) {
+        notifLogger.info("Push skipé (préférences utilisateur)", {
+          userId: userIdStr,
+          type,
+          level,
+          reason: skipDecision.reason,
+        });
+        notifLogger.info("Notification envoyée", {
+          userId: userIdStr,
+          type,
+          level,
+          isSosNotification,
+          deliveryMethod: wsSuccess
+            ? "websocket_push_skipped"
+            : "db_only_push_skipped",
+        });
+        return;
+      }
+
+      // ─── Rate limit utilisateur (P2 uniquement) ─────────────────────────
+      // P0/P1 ne sont JAMAIS throttlés (sécurité, communication directe).
+      // P3 a déjà return plus haut (in-app only, jamais de push FCM).
+      // P2 : > 10/h pour ce user×type → BDD + WS conservés, push skip.
+      if (level === "P2") {
+        const rl = await checkUserPushRateLimit(userIdStr, type);
+        if (rl.throttled) {
+          notifLogger.info("Notification rate-limited", {
+            userId: userIdStr,
+            type,
+            count: rl.count,
+            limit: NOTIF_RL_LIMIT,
+          });
+          notifLogger.info("Notification envoyée", {
+            userId: userIdStr,
+            type,
+            level,
+            isSosNotification,
+            deliveryMethod: wsSuccess
+              ? "websocket_push_rate_limited"
+              : "db_only_push_rate_limited",
+          });
+          return;
+        }
+      }
+
+      const actionCategory = getActionCategoryForType(type);
+
       const pushResult = await this.sendPushNotification(
         userId,
         title,
         message,
         {
-          type,
+          type: mapNotificationTypeForFCM(type),
+          notificationType: type,
+          priority: level,
+          ...(actionCategory ? { actionCategory } : {}),
           ...Object.entries(data || {}).reduce(
             (acc, [key, value]) => {
               acc[key] =
@@ -537,6 +747,7 @@ class NotificationService {
     notifLogger.info("Notification envoyée", {
       userId: userIdStr,
       type,
+      level,
       isSosNotification,
       deliveryMethod,
     });
@@ -558,6 +769,7 @@ class NotificationService {
     title: string,
     body: string,
     data: Record<string, string>,
+    notificationType?: NotificationType,
   ): Promise<{ sent: number; failed: number }> {
     if (!this.fcmInitialized || !firebaseAdmin) {
       notifLogger.warn(
@@ -570,6 +782,16 @@ class NotificationService {
     if (userIds.length === 0) {
       return { sent: 0, failed: 0 };
     }
+
+    // Si un type métier est fourni, appliquer le mapping mobile-friendly
+    const enrichedData: Record<string, string> = notificationType
+      ? {
+          ...data,
+          type: mapNotificationTypeForFCM(notificationType),
+          notificationType,
+          priority: getNotificationLevel(notificationType),
+        }
+      : data;
 
     try {
       // Récupérer tous les tokens en une seule requête MongoDB (batch)
@@ -600,7 +822,7 @@ class NotificationService {
           messages.push({
             token: tokenDoc.token,
             notification: { title, body },
-            data: { ...data, userId },
+            data: { ...enrichedData, userId },
             ...(tokenDoc.platform === "android"
               ? {
                   android: {

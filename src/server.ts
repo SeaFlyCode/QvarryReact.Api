@@ -25,6 +25,22 @@ if (fs.existsSync(rootEnvLocalPath)) {
 dotenv.config({ path: envFile });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// Validation des variables d'environnement APRÈS dotenv et AVANT tout autre
+// import — cf. fix.md backend #5. En cas d'absence d'une variable critique
+// (JWT_SECRET, DB_CONN_STRING, etc.), le serveur refuse de démarrer.
+// ═══════════════════════════════════════════════════════════════════════════
+import { assertValidEnv } from "./config/validateEnv";
+assertValidEnv();
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Sentry doit être initialisé avant tout autre import qui peut throw, pour
+// que les exceptions lors du boot soient capturées (cf. fix.md backend #3a).
+// No-op si SENTRY_DSN n'est pas défini.
+// ═══════════════════════════════════════════════════════════════════════════
+import { initSentry, captureException } from "./config/sentry";
+initSentry();
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Importer le logger APRÈS dotenv pour accéder à NODE_ENV
 // ═══════════════════════════════════════════════════════════════════════════
 import { logger, httpLogStream } from "./services/loggerService";
@@ -85,10 +101,12 @@ import mobileAuthRoutes from "./routes/mobileAuthRoutes";
 import mobileSyncRoutes from "./routes/mobileSyncRoutes";
 import mobileTwoFactorRoutes from "./routes/mobileTwoFactorRoutes";
 import mobileSosRoutes from "./routes/mobileSosRoutes";
+import sosRoutes from "./routes/sosRoutes";
 import mobilePushTokenRoutes from "./routes/mobilePushTokenRoutes";
 import mobileAppVersionRoutes from "./routes/mobileAppVersionRoutes";
 import webhookRoutes from "./routes/webhookRoutes";
 import publicRoutes from "./routes/publicRoutes";
+import quickActionRoutes from "./routes/quickActionRoutes";
 import { maintenanceMiddleware } from "./middlewares/maintenanceMiddleware";
 import cookieParser from "cookie-parser";
 // MED-004: Import CSRF middleware
@@ -102,6 +120,13 @@ import {
   startPushTokenCleanupJob,
   startNotificationCleanupJob,
   startRefreshTokenCleanupJob,
+  startPendingEmailRetryJob,
+  startExpiringSharesNotifyJob,
+  startExpiredSharesNotifyJob,
+  startAdminDailyDigestJob,
+  startAdminWeeklyDigestJob,
+  startAdminSosUnresolvedCheckJob,
+  startAdminMetricsAnomalyCheckJob,
 } from "./services/cronJobs";
 import {
   startSosEscalationJob,
@@ -140,6 +165,10 @@ app.use(globalRateLimiter);
 
 // Correlation ID pour tracer les requêtes
 app.use(correlationMiddleware);
+
+// Métriques Prometheus — durée + status par route (cf. fix.md backend #3b).
+import { metricsMiddleware, metricsHandler } from "./config/metrics";
+app.use(metricsMiddleware());
 
 // MEDIUM-8: Compteur de requêtes pour le endpoint /metrics
 // Note: Pas de race condition réelle en Node.js car le event loop est single-threaded
@@ -275,6 +304,26 @@ app.get("/health", healthLimiter, (req, res) => {
     timestamp: new Date().toISOString(),
     uptime: process.uptime(),
   });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// METRICS - Endpoint Prometheus (cf. fix.md backend #3b)
+// ═══════════════════════════════════════════════════════════════════════════
+// Protection : token simple via env var. À durcir avec ACL IP en infra
+// (firewall / reverse-proxy) plutôt qu'au niveau application.
+// ═══════════════════════════════════════════════════════════════════════════
+
+app.get("/metrics", healthLimiter, (req, res, next) => {
+  const expected = process.env.METRICS_TOKEN;
+  if (!expected) {
+    // Si pas de token configuré, on n'expose pas les métriques.
+    return res.status(404).end();
+  }
+  const provided = req.headers["x-metrics-token"];
+  if (provided !== expected) {
+    return res.status(401).end();
+  }
+  return metricsHandler(req, res).catch(next);
 });
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -569,6 +618,9 @@ app.use("/api/v1/mobile/sync", permissiveMobileLimiter);
 app.use("/api/v1/mobile/sos", mobileAuthLimiter);
 app.use("/api/v1/mobile/push-tokens", permissiveMobileLimiter);
 
+// Routes SOS pour le web (alias vers les controllers mobile, sans App Check)
+app.use("/api/v1/sos", moderateApiLimiter);
+
 // Routes admin (RISQUE MOYEN - déjà protégées par authMiddleware + adminMiddleware)
 app.use("/api/admin", adminLimiter);
 app.use("/api/v1/admin", adminLimiter);
@@ -732,6 +784,13 @@ app.use("/api", generalLimiter);
     startPushTokenCleanupJob();
     startNotificationCleanupJob();
     startRefreshTokenCleanupJob();
+    startPendingEmailRetryJob();
+    startExpiringSharesNotifyJob();
+    startExpiredSharesNotifyJob();
+    startAdminDailyDigestJob();
+    startAdminWeeklyDigestJob();
+    startAdminSosUnresolvedCheckJob();
+    startAdminMetricsAnomalyCheckJob();
 
     // Démarrer les services SOS Mode
     vonageService.initialize();
@@ -765,6 +824,12 @@ app.use("/api", generalLimiter);
 
     startSosEscalationJob();
     startSosCleanupJob();
+
+    // Service down monitor (Mongo + Redis disconnect > 2 min → notif admin)
+    const { startServiceDownMonitor } = await import(
+      "./services/serviceDownMonitor"
+    );
+    startServiceDownMonitor();
 
     // ═══════════════════════════════════════════════════════════════════════════
     // HIGH-1 FIX: Route /metrics protégée par authMiddleware + adminMiddleware
@@ -854,6 +919,9 @@ app.use("/api", generalLimiter);
     // Routes SOS Mode mobile (alertes d'urgence)
     app.use("/api/v1/mobile/sos", mobileSosRoutes);
 
+    // Routes SOS Web (alias - réutilisent les controllers mobile sans App Check)
+    app.use("/api/v1/sos", sosRoutes);
+
     // Routes Push Tokens mobile (enregistrement/suppression tokens FCM)
     app.use("/api/v1/mobile/push-tokens", mobilePushTokenRoutes);
 
@@ -895,6 +963,7 @@ app.use("/api", generalLimiter);
     app.use("/api/v1/contacts", csrfProtectionWeb);
     app.use("/api/v1/data-share", csrfProtectionWeb);
     app.use("/api/v1/notifications", csrfProtectionWeb);
+    app.use("/api/v1/sos", csrfProtectionWeb);
 
     app.use("/api/v1/fiches", fichesRoutes);
     app.use("/api/v1/users", userRoutes);
@@ -906,6 +975,9 @@ app.use("/api", generalLimiter);
     app.use("/api/v1/share", dataShareRoutes);
     app.use("/api/v1/notifications", notificationsRoutes);
     app.use("/api/v1/security", securityRoutes);
+    // Quick actions depuis les notifications mobiles (UNNotificationCategory iOS,
+    // Notifee actions Android). Idempotents, auth JWT standard.
+    app.use("/api/v1/quick-actions", quickActionRoutes);
 
     // ═══════════════════════════════════════════════════════════════════════════
     // GESTIONNAIRE D'ERREURS GLOBAL
@@ -1011,6 +1083,9 @@ app.use("/api", generalLimiter);
         errorName: reason?.name,
       });
 
+      // Sentry — cf. fix.md backend #3a.
+      captureException(reason, { source: "unhandledRejection" });
+
       import("./services/auditService").then(({ auditService }) => {
         auditService.log({
           action: "UNHANDLED_REJECTION",
@@ -1029,6 +1104,9 @@ app.use("/api", generalLimiter);
         error: getErrorMessage(error),
         errorName: error.name,
       });
+
+      // Sentry — cf. fix.md backend #3a.
+      captureException(error, { source: "uncaughtException" });
 
       import("./services/auditService")
         .then(({ auditService }) => {

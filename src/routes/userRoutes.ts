@@ -8,6 +8,9 @@ import {
   handleUpdateUser,
   handleVerifyEmailByCode,
   handleResendVerificationEmail,
+  handleGetNotificationPreferences,
+  handleUpdateNotificationPreferences,
+  handleUpdateMyLocation,
 } from "../controllers/userControllers";
 import { verifyTurnstile } from "../middlewares/turnstileMiddleware";
 import { authMiddleware } from "../middlewares/authMiddleware";
@@ -28,6 +31,23 @@ router.post("/resend-verification", handleResendVerificationEmail);
 // Profil de l'utilisateur connecté - AVANT /:id pour que "me" ne soit pas capturé par le param
 // PROTÉGÉE - Nécessite authentification
 router.get("/me", authMiddleware, handleGetMe);
+
+// Préférences de notifications de l'utilisateur connecté
+// PROTÉGÉES - AVANT /:id pour éviter conflit
+router.get(
+  "/me/notification-preferences",
+  authMiddleware,
+  handleGetNotificationPreferences,
+);
+router.patch(
+  "/me/notification-preferences",
+  authMiddleware,
+  handleUpdateNotificationPreferences,
+);
+
+// Heartbeat de localisation — alimente le filtre géo broadcast SOS Stage 1
+// PROTÉGÉ - AVANT /:id pour éviter conflit
+router.patch("/me/location", authMiddleware, handleUpdateMyLocation);
 
 // Liste des utilisateurs - ADMIN UNIQUEMENT (SEC-032)
 router.get("/", authMiddleware, adminMiddleware, handleGetAllUsers);

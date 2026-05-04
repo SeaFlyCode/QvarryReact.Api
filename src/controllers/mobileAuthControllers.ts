@@ -102,7 +102,9 @@ export async function handleMobileLogin(req: Request, res: Response) {
     const isPasswordValid = await bcrypt.compare(password, passwordToCompare);
 
     if (!user || !isPasswordValid) {
-      await recordFailedLogin(email);
+      const failIp =
+        req.ip || req.connection.remoteAddress || undefined;
+      await recordFailedLogin(email, failIp);
       return res.status(401).json({
         error: "Email ou mot de passe incorrect.",
         code: "INVALID_CREDENTIALS",

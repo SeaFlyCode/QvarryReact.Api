@@ -7,11 +7,75 @@
 
 import { Request, Response } from "express";
 import { Types } from "mongoose";
+import { z } from "zod";
 import { sosService } from "../services/sosService";
 import { getErrorMessage } from "../utils/errorUtils";
 import { logger } from "../services/loggerService";
 
 const mobileSosLogger = logger.child({ service: "mobile-sos" });
+
+// ═══════════════════════════════════════════════════════════════════════════
+// SCHÉMAS ZOD PARTAGÉS POUR LES PAYLOADS SOS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const sosCoordsSchema = z.object({
+  lat: z.number().min(-90).max(90).optional(),
+  lng: z.number().min(-180).max(180).optional(),
+  accuracy: z.number().min(0).optional(),
+});
+
+const sessionContactsSchema = z
+  .object({
+    permanentContactIds: z.array(z.string()).optional(),
+    additionalContacts: z
+      .array(
+        z.object({
+          name: z.string().min(1).max(100),
+          phone: z.string().min(1).max(50),
+          relationship: z.string().max(100).optional(),
+        }),
+      )
+      .optional(),
+  })
+  .optional();
+
+// Schéma d'activation : durée stricte + coordonnées GPS bornées.
+// Le client mobile envoie parfois lastKnownLat/Lng/Accuracy : on accepte les
+// deux formes en passthrough et on résout dans le handler.
+const sosActivateSchema = z
+  .object({
+    expectedDuration: z.number().int().min(1).max(480),
+    note: z.string().max(500).optional(),
+    siteName: z.string().max(200).optional(),
+    zone: z.string().max(200).optional(),
+    depth: z.number().min(0).max(10000).optional(),
+    lat: z.number().min(-90).max(90).optional(),
+    lng: z.number().min(-180).max(180).optional(),
+    accuracy: z.number().min(0).optional(),
+    lastKnownLat: z.number().min(-90).max(90).optional(),
+    lastKnownLng: z.number().min(-180).max(180).optional(),
+    lastKnownAccuracy: z.number().min(0).optional(),
+    sessionContacts: sessionContactsSchema,
+    participantIds: z.array(z.string()).optional(),
+  })
+  .passthrough();
+
+const sosHeartbeatSchema = sosCoordsSchema.extend({
+  sessionId: z.string().optional(),
+});
+
+function zodErrorResponse(res: Response, error: z.ZodError) {
+  const issue = error.issues[0];
+  const path = issue?.path?.join(".") || "body";
+  return res.status(400).json({
+    error: `Champ invalide: ${path} — ${issue?.message ?? "valeur incorrecte"}`,
+    code: "INVALID_PAYLOAD",
+    details: error.issues.map((i) => ({
+      path: i.path.join("."),
+      message: i.message,
+    })),
+  });
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // HANDLER: ACTIVER UNE SESSION SOS
@@ -30,10 +94,14 @@ export async function handleSosActivate(req: Request, res: Response) {
       });
     }
 
+    const parsed = sosActivateSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return zodErrorResponse(res, parsed.error);
+    }
+
     const {
       expectedDuration,
       note,
-      // Le client mobile envoie lastKnownLat/Lng/Accuracy — on accepte les deux formes
       lat,
       lastKnownLat,
       lng,
@@ -45,28 +113,11 @@ export async function handleSosActivate(req: Request, res: Response) {
       depth,
       sessionContacts,
       participantIds,
-    } = req.body;
+    } = parsed.data;
 
     const resolvedLat = lat ?? lastKnownLat;
     const resolvedLng = lng ?? lastKnownLng;
     const resolvedAccuracy = accuracy ?? lastKnownAccuracy;
-
-    // Validation
-    if (!expectedDuration || typeof expectedDuration !== "number") {
-      return res.status(400).json({
-        error: "Durée attendue requise (en minutes).",
-        code: "MISSING_DURATION",
-      });
-    }
-
-    // Durée minimale : 1 minute
-    const minDuration = 1;
-    if (expectedDuration < minDuration || expectedDuration > 480) {
-      return res.status(400).json({
-        error: "La durée doit être entre 1 minute et 8 heures.",
-        code: "INVALID_DURATION",
-      });
-    }
 
     const session = await sosService.activateSession({
       userId,
@@ -172,7 +223,11 @@ export async function handleSosHeartbeat(req: Request, res: Response) {
       });
     }
 
-    const { sessionId, lat, lng, accuracy } = req.body;
+    const parsed = sosHeartbeatSchema.safeParse(req.body ?? {});
+    if (!parsed.success) {
+      return zodErrorResponse(res, parsed.error);
+    }
+    const { sessionId, lat, lng, accuracy } = parsed.data;
 
     const session = await sosService.heartbeat({
       userId,

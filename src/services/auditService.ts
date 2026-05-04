@@ -20,6 +20,22 @@ const getSecurityAlertService = async () => {
   return securityAlertService;
 };
 
+// Import dynamique pour casser le cycle adminNotificationService -> auditService
+type NotifyAllAdminsFn = (
+  type: "admin_critical_audit",
+  title: string,
+  message: string,
+  data?: Record<string, any>,
+) => Promise<{ notified: number; throttled: number }>;
+let notifyAllAdminsFn: NotifyAllAdminsFn | null = null;
+const getNotifyAllAdmins = async (): Promise<NotifyAllAdminsFn> => {
+  if (!notifyAllAdminsFn) {
+    const module = await import("./adminNotificationService");
+    notifyAllAdminsFn = module.notifyAllAdmins as NotifyAllAdminsFn;
+  }
+  return notifyAllAdminsFn;
+};
+
 interface AuditOptions {
   userId?: string | mongoose.Types.ObjectId;
   action: string;
@@ -153,6 +169,37 @@ class AuditService {
                   ? alertError.message
                   : String(alertError),
               // HIGH-001: stack trace supprimé pour sécurité,
+            },
+          );
+        }
+      }
+
+      // Notification admin (P0) sur les audits critiques
+      if (options.level === "critical") {
+        try {
+          const notifyAllAdmins = await getNotifyAllAdmins();
+          await notifyAllAdmins(
+            "admin_critical_audit",
+            "🚨 Audit critique",
+            `Action critique : ${options.action}${
+              options.userId ? ` (user ${options.userId.toString()})` : ""
+            }`,
+            {
+              action: options.action,
+              userId: options.userId?.toString(),
+              dedupKey: `audit-critical:${options.action}:${
+                options.userId?.toString() ?? "system"
+              }`,
+            },
+          );
+        } catch (notifyErr) {
+          auditLogger.warn(
+            "Échec de la notification admin pour audit critique",
+            {
+              error:
+                notifyErr instanceof Error
+                  ? notifyErr.message
+                  : String(notifyErr),
             },
           );
         }

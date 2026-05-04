@@ -47,6 +47,18 @@ export interface IUserBase {
   two_factor_recovery_codes?: string[]; // Codes de récupération hashés
   // Préférences de notifications
   login_notifications_enabled?: boolean; // Si true, envoie un email à chaque connexion (défaut: true)
+  notificationPreferences?: {
+    messages: boolean; // P1 — message, group_invite
+    contacts: boolean; // P1 — contact_request, contact_accepted, contact_refused
+    shares: boolean; // P2 — share_*
+    groups: boolean; // P2 — group_member_*, group_deleted
+    community_sos: boolean; // P0 — sos_stage1_alert broadcast (peut être désactivé)
+    quietHours: {
+      enabled: boolean;
+      start: string; // 'HH:MM' UTC
+      end: string; // 'HH:MM' UTC
+    };
+  };
   // Gestion du stockage de photos
   storage_quota: number; // Quota de stockage en octets (défaut: 2 Go)
   storage_used: number; // Espace de stockage utilisé en octets
@@ -59,6 +71,13 @@ export interface IUserBase {
     last_seen: Date;
     trusted: boolean;
   }>;
+  // Dernière position connue (utilisée pour le filtre géographique des
+  // broadcasts SOS Stage 1, etc.). GeoJSON Point [lng, lat] + index 2dsphere.
+  lastKnownLocation?: {
+    type: "Point";
+    coordinates: [number, number]; // [lng, lat]
+    updatedAt?: Date;
+  };
 }
 
 // Interface for User Document (includes mongoose Document properties)
@@ -115,6 +134,37 @@ const UserSchema: Schema<IUser> = new Schema({
   two_factor_recovery_codes: { type: [String], default: [], select: false },
   // Préférences de notifications
   login_notifications_enabled: { type: Boolean, default: true },
+  notificationPreferences: {
+    type: new Schema(
+      {
+        messages: { type: Boolean, default: true },
+        contacts: { type: Boolean, default: true },
+        shares: { type: Boolean, default: true },
+        groups: { type: Boolean, default: true },
+        community_sos: { type: Boolean, default: true },
+        quietHours: {
+          type: new Schema(
+            {
+              enabled: { type: Boolean, default: false },
+              start: { type: String, default: "22:00" },
+              end: { type: String, default: "07:00" },
+            },
+            { _id: false },
+          ),
+          default: () => ({ enabled: false, start: "22:00", end: "07:00" }),
+        },
+      },
+      { _id: false },
+    ),
+    default: () => ({
+      messages: true,
+      contacts: true,
+      shares: true,
+      groups: true,
+      community_sos: true,
+      quietHours: { enabled: false, start: "22:00", end: "07:00" },
+    }),
+  },
   // Gestion du stockage de photos
   storage_quota: {
     type: Number,
@@ -139,6 +189,37 @@ const UserSchema: Schema<IUser> = new Schema({
       },
     ],
     default: [],
+  },
+  // Dernière position connue — GeoJSON Point [lng, lat]
+  // Indexée 2dsphere pour les requêtes $geoWithin / $centerSphere.
+  lastKnownLocation: {
+    type: new Schema(
+      {
+        type: {
+          type: String,
+          enum: ["Point"],
+          required: true,
+          default: "Point",
+        },
+        coordinates: {
+          type: [Number],
+          required: true,
+          validate: {
+            validator: (v: number[]) =>
+              Array.isArray(v) &&
+              v.length === 2 &&
+              v[0] >= -180 &&
+              v[0] <= 180 &&
+              v[1] >= -90 &&
+              v[1] <= 90,
+            message: "coordinates must be [lng, lat] dans les bornes valides",
+          },
+        },
+        updatedAt: { type: Date, default: Date.now },
+      },
+      { _id: false },
+    ),
+    required: false,
   },
 });
 
@@ -176,6 +257,7 @@ UserSchema.index({ storage_used: 1 }); // Index pour tri par espace utilisé
 UserSchema.index({ last_connection: -1 }); // Pour stats admin
 UserSchema.index({ is_verified: 1 }); // Filtres de recherche
 UserSchema.index({ is_verified: 1, is_admin_validated: 1 }); // Compound pour registration flow
+UserSchema.index({ lastKnownLocation: "2dsphere" }); // Geo queries (SOS Stage 1 broadcast)
 
 export const UserModel: Model<IUser> =
   mongoose.models.User || mongoose.model<IUser>("User", UserSchema);

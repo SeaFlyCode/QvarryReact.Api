@@ -30,15 +30,48 @@ export async function handleCreateList(req: Request, res: Response) {
       icon: icon || "default-icon", // Icône par défaut
     });
 
-    memoryStorage.storeList(userId, listMemory as any);
+    // Stocker la liste en mémoire (cf. fix.md backend #1).
+    const stored = memoryStorage.storeList(userId, listMemory as any);
+    if (!stored) {
+      listsLogger.error("Échec du stockage en mémoire de la liste", {
+        userId,
+        listId: listMemory._id.toString(),
+      });
+      return res.status(503).json({
+        error: "Impossible de stocker la liste, veuillez réessayer.",
+        persisted: false,
+      });
+    }
 
     // Forcer la synchronisation de la mémoire vers la BDD et attendre le résultat
     const syncResult = await syncService.syncNow(userId);
 
     if (!syncResult.success) {
-      return res
-        .status(500)
-        .json({ error: "Échec de la synchronisation avec la base de données" });
+      // Rollback : retirer la liste de la mémoire pour éviter un état zombie.
+      memoryStorage.deleteList(userId, listMemory._id.toString());
+      listsLogger.error("Sync Mongo échouée, rollback de la liste en mémoire", {
+        userId,
+        listId: listMemory._id.toString(),
+        error: syncResult.error,
+      });
+      return res.status(503).json({
+        error: "La liste n'a pas pu être enregistrée durablement. Veuillez réessayer.",
+        persisted: false,
+      });
+    }
+
+    // Round-trip : confirmer que la liste est bien en Mongo.
+    const listInDb = await ListModel.findById(listMemory._id).select("_id").lean();
+    if (!listInDb) {
+      memoryStorage.deleteList(userId, listMemory._id.toString());
+      listsLogger.error(
+        "Sync OK mais liste absente de Mongo après round-trip, rollback",
+        { userId, listId: listMemory._id.toString() },
+      );
+      return res.status(503).json({
+        error: "La persistance de la liste n'a pas pu être confirmée. Veuillez réessayer.",
+        persisted: false,
+      });
     }
 
     listsLogger.info("Liste créée avec succès", {
@@ -47,7 +80,11 @@ export async function handleCreateList(req: Request, res: Response) {
       action: "create_list",
     });
 
-    res.status(201).json({ message: "Liste créée avec succès" });
+    res.status(201).json({
+      message: "Liste créée avec succès",
+      listId: listMemory._id,
+      persisted: true,
+    });
   } catch (error: unknown) {
     listsLogger.error("Erreur création liste", {
       error: getErrorMessage(error),
@@ -157,6 +194,9 @@ export async function handleDeleteList(req: Request, res: Response) {
       });
     }
 
+    // Snapshot avant suppression pour rollback éventuel (cf. fix.md backend #1).
+    const listSnapshot = memoryStorage.getListById(userId, listId);
+
     const deleted = memoryStorage.deleteList(userId, listId);
 
     if (!deleted) {
@@ -167,9 +207,35 @@ export async function handleDeleteList(req: Request, res: Response) {
     const syncResult = await syncService.syncNow(userId);
 
     if (!syncResult.success) {
-      return res
-        .status(500)
-        .json({ error: "Échec de la synchronisation avec la base de données" });
+      // Rollback : remettre la liste en mémoire pour éviter un état zombie.
+      if (listSnapshot) {
+        memoryStorage.storeList(userId, listSnapshot as any);
+      }
+      listsLogger.error("Sync Mongo échouée, rollback de la suppression de liste", {
+        userId,
+        listId,
+        error: syncResult.error,
+      });
+      return res.status(503).json({
+        error: "La suppression de la liste n'a pas pu être confirmée. Veuillez réessayer.",
+        persisted: false,
+      });
+    }
+
+    // Round-trip : vérifier que la liste a bien été retirée de Mongo.
+    const stillInDb = await ListModel.findById(listId).select("_id").lean();
+    if (stillInDb) {
+      if (listSnapshot) {
+        memoryStorage.storeList(userId, listSnapshot as any);
+      }
+      listsLogger.error(
+        "Sync OK mais liste toujours présente en Mongo, rollback",
+        { userId, listId },
+      );
+      return res.status(503).json({
+        error: "La suppression de la liste n'a pas pu être confirmée. Veuillez réessayer.",
+        persisted: false,
+      });
     }
 
     listsLogger.info("Liste supprimée avec succès", {
@@ -178,7 +244,7 @@ export async function handleDeleteList(req: Request, res: Response) {
       action: "delete_list",
     });
 
-    res.status(200).json({ message: "Liste supprimée avec succès" });
+    res.status(200).json({ message: "Liste supprimée avec succès", persisted: true });
   } catch (error: unknown) {
     listsLogger.error("Erreur suppression liste", {
       error: getErrorMessage(error),
@@ -202,6 +268,9 @@ export async function handleUpdateList(req: Request, res: Response) {
       });
     }
 
+    // Snapshot avant mutation pour rollback éventuel (cf. fix.md backend #1).
+    const listSnapshot = memoryStorage.getListById(userId, listId);
+
     const updatedList = memoryStorage.updateList(userId, listId, {
       name,
       description,
@@ -218,9 +287,19 @@ export async function handleUpdateList(req: Request, res: Response) {
     const syncResult = await syncService.syncNow(userId);
 
     if (!syncResult.success) {
-      return res
-        .status(500)
-        .json({ error: "Échec de la synchronisation avec la base de données" });
+      // Rollback : restaurer le snapshot d'avant mutation.
+      if (listSnapshot) {
+        memoryStorage.storeList(userId, listSnapshot as any);
+      }
+      listsLogger.error("Sync Mongo échouée, rollback de la mise à jour de liste", {
+        userId,
+        listId,
+        error: syncResult.error,
+      });
+      return res.status(503).json({
+        error: "La mise à jour de la liste n'a pas pu être confirmée. Veuillez réessayer.",
+        persisted: false,
+      });
     }
 
     listsLogger.info("Liste mise à jour avec succès", {

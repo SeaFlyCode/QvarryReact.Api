@@ -4,6 +4,7 @@ import mongoose from "mongoose";
 import { memoryStorage } from "../services/memoryStorageService";
 import { syncService } from "../services/syncService";
 import FicheModel from "../models/fiches";
+import PointModel from "../models/points";
 import { logger } from "../services/loggerService";
 import { safeJsonParse } from "../utils/secureJsonParser";
 
@@ -179,7 +180,19 @@ export async function handleCreatePoint(req: Request, res: Response) {
         : [parsedListIds.toString()];
     }
 
-    memoryStorage.storePoint(userId, pointMemory as any);
+    // Stocker le point en mémoire (cf. fix.md backend #1 — étendu de Phase 1 #20).
+    const stored = memoryStorage.storePoint(userId, pointMemory as any);
+    if (!stored) {
+      pointsLogger.error("Échec du stockage en mémoire du point", {
+        userId,
+        pointId: newPointId.toString(),
+      });
+      return res.status(503).json({
+        success: false,
+        message: "Impossible de stocker le point, veuillez réessayer.",
+        persisted: false,
+      });
+    }
 
     // Si une ou plusieurs fiches sont fournies, ajouter le point dans chaque fiche en mémoire
     let assocSuccess = true;
@@ -271,14 +284,36 @@ export async function handleCreatePoint(req: Request, res: Response) {
     const syncResult = await syncService.syncNow(userId);
 
     if (!syncResult.success) {
-      return res.status(500).json({
+      // Rollback : retirer le point de la mémoire pour éviter un état zombie
+      // (cf. fix.md backend #1 — étendu de Phase 1 #20).
+      memoryStorage.deletePoint(userId, newPointId.toString());
+      pointsLogger.error("Sync Mongo échouée, rollback du point en mémoire", {
+        userId,
+        pointId: newPointId.toString(),
+        error: syncResult.error,
+      });
+      return res.status(503).json({
         success: false,
         message:
-          "Le point a été créé en mémoire mais la synchronisation a échoué",
+          "Le point n'a pas pu être enregistré durablement. Veuillez réessayer.",
         error: syncResult.error,
-        pointId: newPointId,
-        syncFailed: true,
-        assocSuccess,
+        persisted: false,
+      });
+    }
+
+    // Round-trip de vérification : confirmer que le point est bien en Mongo.
+    const pointInDb = await PointModel.findById(newPointId).select("_id").lean();
+    if (!pointInDb) {
+      memoryStorage.deletePoint(userId, newPointId.toString());
+      pointsLogger.error(
+        "Sync OK mais point absent de Mongo après round-trip, rollback",
+        { userId, pointId: newPointId.toString() },
+      );
+      return res.status(503).json({
+        success: false,
+        message:
+          "La persistance du point n'a pas pu être confirmée. Veuillez réessayer.",
+        persisted: false,
       });
     }
 
@@ -296,6 +331,7 @@ export async function handleCreatePoint(req: Request, res: Response) {
       pointId: newPointId,
       syncSuccess: true,
       assocSuccess,
+      persisted: true,
     });
   } catch (error: unknown) {
     pointsLogger.error("Erreur création point", {
@@ -515,6 +551,9 @@ export async function handleDeletePoint(req: Request, res: Response) {
       memoryStorage.removePointFromFiche(userId, ficheId, pointId);
     }
 
+    // Sauvegarde du snapshot pour rollback éventuel (cf. fix.md backend #1).
+    const pointSnapshot = point;
+
     // Supprimer le point de la mémoire
     const deleted = memoryStorage.deletePoint(userId, pointId);
 
@@ -526,13 +565,50 @@ export async function handleDeletePoint(req: Request, res: Response) {
     const syncResult = await syncService.syncNow(userId);
 
     if (!syncResult.success) {
-      return res.status(500).json({
+      // Rollback : restaurer le point en mémoire (et son lien fiche s'il existait)
+      // pour ne pas laisser un état "supprimé localement, présent en DB" zombie.
+      memoryStorage.storePoint(userId, pointSnapshot as any);
+      if ((pointSnapshot as any).ficheId) {
+        memoryStorage.addPointToFiche(
+          userId,
+          (pointSnapshot as any).ficheId.toString(),
+          pointId,
+        );
+      }
+      pointsLogger.error("Sync Mongo échouée, rollback de la suppression du point", {
+        userId,
+        pointId,
+        error: syncResult.error,
+      });
+      return res.status(503).json({
         success: false,
         message:
-          "Le point a été supprimé en mémoire mais n'a pas pu être synchronisé avec la base de données",
+          "La suppression n'a pas pu être confirmée. Veuillez réessayer.",
         error: syncResult.error,
-        pointId,
-        syncFailed: true,
+        persisted: false,
+      });
+    }
+
+    // Round-trip : vérifier que le point a bien été retiré de Mongo.
+    const stillInDb = await PointModel.findById(pointId).select("_id").lean();
+    if (stillInDb) {
+      memoryStorage.storePoint(userId, pointSnapshot as any);
+      if ((pointSnapshot as any).ficheId) {
+        memoryStorage.addPointToFiche(
+          userId,
+          (pointSnapshot as any).ficheId.toString(),
+          pointId,
+        );
+      }
+      pointsLogger.error(
+        "Sync OK mais point toujours présent en Mongo, rollback",
+        { userId, pointId },
+      );
+      return res.status(503).json({
+        success: false,
+        message:
+          "La suppression du point n'a pas pu être confirmée. Veuillez réessayer.",
+        persisted: false,
       });
     }
 
@@ -548,6 +624,7 @@ export async function handleDeletePoint(req: Request, res: Response) {
       message: "Point supprimé avec succès",
       pointId,
       syncSuccess: true,
+      persisted: true,
     });
   } catch (error: unknown) {
     pointsLogger.error("Erreur suppression point", {
@@ -585,6 +662,10 @@ export async function handleUpdatePoint(req: Request, res: Response) {
     if (!point) {
       return res.status(404).json({ message: "Point non trouvé" });
     }
+
+    // Snapshot deep-copy AVANT toute mutation pour rollback éventuel
+    // (cf. fix.md backend #1).
+    const pointSnapshot = JSON.parse(JSON.stringify(point));
 
     // Mettre à jour les champs
     if (name !== undefined) point.name = name;
@@ -674,13 +755,19 @@ export async function handleUpdatePoint(req: Request, res: Response) {
     const syncResult = await syncService.syncNow(userId);
 
     if (!syncResult.success) {
-      return res.status(500).json({
+      // Rollback : restaurer le snapshot d'avant mutation (cf. fix.md backend #1).
+      memoryStorage.storePoint(userId, pointSnapshot);
+      pointsLogger.error("Sync Mongo échouée, rollback de la mise à jour du point", {
+        userId,
+        pointId: id,
+        error: syncResult.error,
+      });
+      return res.status(503).json({
         success: false,
         message:
-          "Le point a été mis à jour en mémoire mais n'a pas pu être synchronisé avec la base de données",
+          "La mise à jour du point n'a pas pu être confirmée. Veuillez réessayer.",
         error: syncResult.error,
-        pointId: id,
-        syncFailed: true,
+        persisted: false,
       });
     }
 

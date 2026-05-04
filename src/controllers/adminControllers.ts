@@ -1515,6 +1515,10 @@ import {
   sendAccountApprovedEmail,
   sendAccountRejectedEmail,
 } from "../services/emailService";
+import {
+  enqueueAccountApproved,
+  enqueueAccountRejected,
+} from "../services/pendingEmailService";
 
 /**
  * Lister les utilisateurs en attente de validation admin
@@ -1607,13 +1611,17 @@ export async function approveUser(req: Request, res: Response) {
     const userEmail = safeDecrypt(user.email);
     const userName = `${safeDecrypt(user.name)} ${safeDecrypt(user.surname)}`;
 
-    sendAccountApprovedEmail(userEmail, userName).catch((err) => {
-      adminLogger.error("[EMAIL] Erreur envoi email approbation", {
-        email: maskEmail(userEmail),
-        error: err instanceof Error ? err.message : String(err),
-        // HIGH-001: stack trace supprimé pour sécurité,
-      });
-    });
+    // P3 backend #4 — enqueue dans la queue persistante avec retry exponentiel
+    // (1min → 12h, 5 tentatives). L'envoi est tenté immédiatement ; si KO, le
+    // cron `processPendingEmails` reprend.
+    await enqueueAccountApproved(user._id.toString(), userEmail, userName).catch(
+      (err) => {
+        adminLogger.error("[EMAIL] Erreur enqueue email approbation", {
+          email: maskEmail(userEmail),
+          error: err instanceof Error ? err.message : String(err),
+        });
+      },
+    );
 
     // Log l'action
     await auditService.log({
@@ -1682,11 +1690,16 @@ export async function rejectUser(req: Request, res: Response) {
     const userEmail = safeDecrypt(user.email);
     const userName = `${safeDecrypt(user.name)} ${safeDecrypt(user.surname)}`;
 
-    sendAccountRejectedEmail(userEmail, userName, reason).catch((err) => {
-      adminLogger.error("[EMAIL] Erreur envoi email refus", {
+    // P3 backend #4 — enqueue dans la queue persistante avec retry exponentiel.
+    await enqueueAccountRejected(
+      user._id.toString(),
+      userEmail,
+      userName,
+      reason,
+    ).catch((err) => {
+      adminLogger.error("[EMAIL] Erreur enqueue email refus", {
         email: maskEmail(userEmail),
         error: err instanceof Error ? err.message : String(err),
-        // HIGH-001: stack trace supprimé pour sécurité,
       });
     });
 

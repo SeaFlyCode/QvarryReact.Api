@@ -135,7 +135,10 @@ describe("loginController", () => {
       expect(res.json).toHaveBeenCalledWith({
         error: "Email ou mot de passe incorrect.",
       });
-      expect(recordFailedLogin).toHaveBeenCalledWith("user@test.com");
+      expect(recordFailedLogin).toHaveBeenCalledWith(
+        "user@test.com",
+        expect.anything(),
+      );
     });
 
     it("devrait bloquer la connexion en mode maintenance pour non-admin", async () => {

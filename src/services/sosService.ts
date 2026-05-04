@@ -17,13 +17,101 @@ import { vonageService } from "./vonageService";
 import { createNotification } from "./notificationService";
 import { webSocketService } from "./webSocketService";
 import { auditService } from "./auditService";
+import { notifyAllAdmins } from "./adminNotificationService";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import UserModel from "../models/users";
 import { logger } from "./loggerService";
 import { sendEmail } from "./emailService";
+import RedisConnectionPool from "../config/redisPool";
+import type Redis from "ioredis";
+import type { Cluster } from "ioredis";
 
 // Create child logger for sos service
 const sosLogger = logger.child({ service: "sos" });
+
+// Always serialize via serializeUserForApi before returning user data
+// Helper interne : déchiffre un champ utilisateur populé en tolérant les cas où
+// `userId` n'a PAS été populé (ObjectId brut) ou où le champ est absent.
+// Évite que `decrypt(session.userId.name)` crash quand le populate manque.
+function safeDecryptUserField(
+  populatedUser: unknown,
+  field: "name" | "surname" | "email",
+): string | null {
+  if (!populatedUser || typeof populatedUser !== "object") {
+    return null;
+  }
+  const value = (populatedUser as Record<string, unknown>)[field];
+  if (typeof value !== "string" || value.length === 0) {
+    return null;
+  }
+  // Format AES-256-GCM : iv:authTag:encrypted
+  if (value.split(":").length !== 3) {
+    return value;
+  }
+  try {
+    return decrypt(value);
+  } catch {
+    return null;
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// STAGE 1 BROADCAST THROTTLE (1 push par session / 30 min)
+// ═══════════════════════════════════════════════════════════════════════════
+// Empêche un re-broadcast lors d'une re-escalade de la même session SOS.
+// Storage : Redis (clé `sos:stage1:{sessionId}`). Fallback in-memory.
+// ═══════════════════════════════════════════════════════════════════════════
+
+const SOS_STAGE1_THROTTLE_TTL_SECONDS = 30 * 60; // 30 min
+
+interface Stage1ThrottleStore {
+  setIfAbsent(sessionId: string, ttlSeconds: number): Promise<boolean>;
+}
+
+class RedisStage1ThrottleStore implements Stage1ThrottleStore {
+  constructor(private client: Redis | Cluster) {}
+  async setIfAbsent(sessionId: string, ttlSeconds: number): Promise<boolean> {
+    const result = await this.client.set(
+      `sos:stage1:${sessionId}`,
+      "1",
+      "EX",
+      ttlSeconds,
+      "NX",
+    );
+    return result === "OK";
+  }
+}
+
+class InMemoryStage1ThrottleStore implements Stage1ThrottleStore {
+  private map = new Map<string, NodeJS.Timeout>();
+  async setIfAbsent(sessionId: string, ttlSeconds: number): Promise<boolean> {
+    if (this.map.has(sessionId)) return false;
+    const timer = setTimeout(() => {
+      this.map.delete(sessionId);
+    }, ttlSeconds * 1000);
+    if (typeof timer.unref === "function") timer.unref();
+    this.map.set(sessionId, timer);
+    return true;
+  }
+}
+
+let stage1ThrottleStore: Stage1ThrottleStore | null = null;
+
+function getStage1ThrottleStore(): Stage1ThrottleStore {
+  if (stage1ThrottleStore) return stage1ThrottleStore;
+  try {
+    stage1ThrottleStore = new RedisStage1ThrottleStore(
+      RedisConnectionPool.getPublisher(),
+    );
+    sosLogger.debug("[stage1-throttle] Store: Redis");
+  } catch {
+    stage1ThrottleStore = new InMemoryStage1ThrottleStore();
+    sosLogger.warn(
+      "[stage1-throttle] Redis indisponible — fallback in-memory (non partagé entre instances)",
+    );
+  }
+  return stage1ThrottleStore;
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONSTANTES
@@ -1668,7 +1756,17 @@ class SosService {
   }
 
   /**
-   * Stage 1: Notifier TOUS les utilisateurs Qvarry (sauf tous les participants de la session)
+   * Stage 1: Notifier les utilisateurs Qvarry dans un rayon configurable
+   * autour de la dernière position connue de la session.
+   *
+   * Protections appliquées :
+   *  1. Filtre géographique 2dsphere ($geoWithin / $centerSphere) — rayon
+   *     configurable via SOS_BROADCAST_RADIUS_KM (default 50). Si la session
+   *     n'a pas de coords → fallback broadcast à tous + warn.
+   *  2. Filtre `notificationPreferences.community_sos !== false` au niveau
+   *     Mongo (perf : évite N appels au notificationService pour rien).
+   *  3. Throttle par session (Redis/in-memory) — pas de re-broadcast si
+   *     déjà émis dans les 30 dernières minutes.
    */
   private async triggerStage1(
     session: ISosSession,
@@ -1698,20 +1796,119 @@ class SosService {
       { sessionId: sessionId.toString(), stage: 1 },
     );
 
-    // Notifier TOUS les utilisateurs Qvarry vérifiés (sauf TOUS les participants de la session)
-    const allVerifiedUsers = await UserModel.find({
+    // ─── Protection 3 : throttle par session ──────────────────────────────
+    // Si on a déjà broadcasté pour cette session dans les 30 dernières
+    // minutes, on skip le re-broadcast (évite double-envoi sur re-escalade).
+    let throttleAcquired = true;
+    try {
+      throttleAcquired = await getStage1ThrottleStore().setIfAbsent(
+        sessionId.toString(),
+        SOS_STAGE1_THROTTLE_TTL_SECONDS,
+      );
+    } catch (err) {
+      // Fail-open : mieux vaut une notif en double qu'aucune
+      sosLogger.warn(
+        "[stage1-throttle] Erreur store — fail-open (broadcast effectué)",
+        {
+          sessionId: sessionId.toString(),
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
+    }
+
+    if (!throttleAcquired) {
+      sosLogger.info(
+        "Stage 1 broadcast skipped — already broadcast in last 30 min",
+        {
+          sessionId: sessionId.toString(),
+          participantId: participantUserId,
+        },
+      );
+      await this.logEvent(sessionId, participantUserId, "STAGE_CHANGE", {
+        stage: 1,
+        previousStage: 0,
+        userName,
+        participantId: participantUserId,
+        broadcastSkipped: "throttled_already_broadcast",
+      });
+      return;
+    }
+
+    // ─── Protection 1 + 2 : filtre géographique + opt-out community_sos ──
+    const radiusKm = Math.max(
+      1,
+      parseInt(process.env.SOS_BROADCAST_RADIUS_KM || "50", 10) || 50,
+    );
+
+    // Position de référence : participant.lastKnown* prioritaire, fallback
+    // sur session.lastKnown* (cf. logique existante du même service).
+    const refLat =
+      typeof participant.lastKnownLat === "number"
+        ? participant.lastKnownLat
+        : typeof session.lastKnownLat === "number"
+          ? session.lastKnownLat
+          : null;
+    const refLng =
+      typeof participant.lastKnownLng === "number"
+        ? participant.lastKnownLng
+        : typeof session.lastKnownLng === "number"
+          ? session.lastKnownLng
+          : null;
+
+    const baseFilter: Record<string, any> = {
       _id: {
         $nin: session.participants.map((p) => p.userId),
       },
       isVerified: true,
-    })
-      .select("_id name")
-      .lean();
+      // Filtre au niveau Mongo : exclure les users ayant explicitement
+      // désactivé community_sos (= false). Les users sans champ ou avec true
+      // restent inclus.
+      "notificationPreferences.community_sos": { $ne: false },
+    };
 
-    sosLogger.info("Stage 1 triggered - notifying all users", {
+    let allVerifiedUsers: Array<{ _id: mongoose.Types.ObjectId; name: string }>;
+    let geoFilterApplied = false;
+
+    if (refLat !== null && refLng !== null) {
+      // $centerSphere attend un rayon en radians (km / rayon Terre en km)
+      const radiusRadians = radiusKm / 6371;
+      allVerifiedUsers = (await UserModel.find({
+        ...baseFilter,
+        lastKnownLocation: {
+          $geoWithin: {
+            $centerSphere: [[refLng, refLat], radiusRadians],
+          },
+        },
+      })
+        .select("_id name")
+        .lean()) as Array<{ _id: mongoose.Types.ObjectId; name: string }>;
+      geoFilterApplied = true;
+    } else {
+      sosLogger.warn(
+        "[stage1-broadcast] Pas de coords pour la session — fallback broadcast à tous",
+        {
+          sessionId: sessionId.toString(),
+          participantId: participantUserId,
+        },
+      );
+      allVerifiedUsers = (await UserModel.find(baseFilter)
+        .select("_id name")
+        .lean()) as Array<{ _id: mongoose.Types.ObjectId; name: string }>;
+    }
+
+    sosLogger.info("Stage 1 triggered - notifying users in scope", {
       sessionId: sessionId.toString(),
       participantId: participantUserId,
       notifiedCount: allVerifiedUsers.length,
+      geoFilterApplied,
+      radiusKm: geoFilterApplied ? radiusKm : null,
+      refLat: geoFilterApplied ? refLat : null,
+      refLng: geoFilterApplied ? refLng : null,
+      protections: {
+        geoFilter: geoFilterApplied,
+        communitySosOptOutFiltered: true,
+        sessionThrottleAcquired: throttleAcquired,
+      },
     });
 
     // Envoyer les notifications à chaque utilisateur avec retry (par batches de 50)
@@ -1860,6 +2057,25 @@ class SosService {
         },
       });
 
+      // Notifier les admins (P1) — Vonage indispo bloque l'escalade SOS
+      try {
+        await notifyAllAdmins(
+          "admin_sos_failed_sms",
+          "🆘 SOS Stage 2 — SMS bloqués",
+          `Vonage non configuré : les SMS d'urgence n'ont pas pu être envoyés (sessionId ${sessionId.toString()}).`,
+          {
+            sessionId: sessionId.toString(),
+            participantId: participantUserId,
+            reason: "VONAGE_NOT_CONFIGURED",
+            dedupKey: `sos-sms-failed:${sessionId.toString()}:vonage_not_configured`,
+          },
+        );
+      } catch (err) {
+        sosLogger.warn("Failed to notify admins (admin_sos_failed_sms)", {
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+
       return; // On ne peut pas envoyer les SMS, on arrête ici
     }
 
@@ -1944,6 +2160,29 @@ class SosService {
           contactName: contact.name,
           error: result.error,
           participantId: participantUserId,
+        });
+      }
+    }
+
+    // Si au moins un SMS a échoué, notifier les admins (P1, dédupliqué par session)
+    const failedCount = results.filter((r) => !r.success).length;
+    if (failedCount > 0) {
+      try {
+        await notifyAllAdmins(
+          "admin_sos_failed_sms",
+          "🆘 SOS Stage 2 — Échec SMS",
+          `${failedCount}/${results.length} SMS d'urgence ont échoué via Vonage (sessionId ${sessionId.toString()}).`,
+          {
+            sessionId: sessionId.toString(),
+            participantId: participantUserId,
+            failedCount,
+            totalCount: results.length,
+            dedupKey: `sos-sms-failed:${sessionId.toString()}:batch`,
+          },
+        );
+      } catch (err) {
+        sosLogger.warn("Failed to notify admins (admin_sos_failed_sms batch)", {
+          error: err instanceof Error ? err.message : String(err),
         });
       }
     }
@@ -2214,8 +2453,8 @@ class SosService {
         session.userId && typeof session.userId === "object"
           ? {
               id: session.userId._id,
-              name: decrypt(session.userId.name),
-              surname: decrypt(session.userId.surname),
+              name: safeDecryptUserField(session.userId, "name"),
+              surname: safeDecryptUserField(session.userId, "surname"),
             }
           : null,
       participantCount: participants.length,
@@ -2537,9 +2776,12 @@ class SosService {
           (session as any).userId && typeof (session as any).userId === "object"
             ? {
                 id: (session as any).userId._id,
-                name: decrypt((session as any).userId.name),
-                surname: decrypt((session as any).userId.surname),
-                email: decrypt((session as any).userId.email),
+                name: safeDecryptUserField((session as any).userId, "name"),
+                surname: safeDecryptUserField(
+                  (session as any).userId,
+                  "surname",
+                ),
+                email: safeDecryptUserField((session as any).userId, "email"),
               }
             : null,
         participantCount: participants.length,
@@ -2607,8 +2849,8 @@ class SosService {
           session.userId && typeof session.userId === "object"
             ? {
                 id: session.userId._id,
-                name: decrypt(session.userId.name),
-                surname: decrypt(session.userId.surname),
+                name: safeDecryptUserField(session.userId, "name"),
+                surname: safeDecryptUserField(session.userId, "surname"),
               }
             : null,
         participantCount: participants.length,

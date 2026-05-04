@@ -27,6 +27,11 @@ import { refreshTokenService } from "../services/refreshTokenService";
 import { redisSessionService } from "../services/redisSessionService";
 import { auditService } from "../services/auditService";
 import { logger } from "../services/loggerService";
+import { z } from "zod";
+import {
+  DEFAULT_NOTIFICATION_PREFERENCES,
+  type NotificationPreferences,
+} from "../services/notificationPreferencesService";
 
 const userLogger = logger.child({ service: "users" });
 
@@ -212,8 +217,8 @@ export async function handleCreateUser(req: Request, res: Response) {
 
     // Envoi de l'email de bienvenue avec le lien de vérification
     const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
-    // Le lien redirige vers la page de connexion avec l'email pré-rempli et le mode vérification
-    const verificationLink = `${frontendUrl}/?verify=${encodeURIComponent(email)}`;
+    // Le lien redirige vers la page de connexion avec l'email + le code pré-remplis
+    const verificationLink = `${frontendUrl}/login?verify=${encodeURIComponent(email)}&code=${emailVerificationCode}`;
 
     // Envoi asynchrone (ne bloque pas la réponse)
     sendWelcomeEmail(
@@ -693,6 +698,29 @@ export async function handleVerifyEmailByCode(req: Request, res: Response) {
       adminsNotified: admins.length,
     });
 
+    // admin_verification_pending : compte vérifié par email, en attente de
+    // validation manuelle par un admin (is_admin_validated === false).
+    try {
+      const { notifyAllAdmins } = await import(
+        "../services/adminNotificationService"
+      );
+      await notifyAllAdmins(
+        "admin_verification_pending",
+        "🟡 Nouveau compte à valider",
+        `${decryptedUserName} (${decryptedUserEmail}) a vérifié son email et attend une validation admin.`,
+        {
+          userId: targetUser._id.toString(),
+          email: decryptedUserEmail,
+          dedupKey: `verif-pending:${targetUser._id.toString()}`,
+        },
+      );
+    } catch (notifyErr) {
+      userLogger.warn("Échec notif admin_verification_pending", {
+        error:
+          notifyErr instanceof Error ? notifyErr.message : String(notifyErr),
+      });
+    }
+
     res.status(200).json({
       message:
         "Email vérifié avec succès ! Un administrateur doit maintenant valider votre compte. Vous recevrez un email lorsque votre compte sera activé.",
@@ -756,8 +784,8 @@ export async function handleResendVerificationEmail(
     // Récupérer le nom décrypté pour l'email
     const userName = decrypt(user.name);
     const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
-    // Le lien redirige vers la page de connexion avec l'email pré-rempli et le mode vérification
-    const verificationLink = `${frontendUrl}/?verify=${encodeURIComponent(email)}`;
+    // Le lien redirige vers la page de connexion avec l'email + le code pré-remplis
+    const verificationLink = `${frontendUrl}/login?verify=${encodeURIComponent(email)}&code=${emailVerificationCode}`;
 
     // Envoyer l'email de vérification
     await sendVerificationEmail(
@@ -780,5 +808,228 @@ export async function handleResendVerificationEmail(
       message: "Erreur lors de l'envoi du code de vérification.",
       error: "Une erreur interne est survenue",
     });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PRÉFÉRENCES DE NOTIFICATIONS
+// ═══════════════════════════════════════════════════════════════════════════
+
+const HHMM_REGEX = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+const quietHoursSchema = z
+  .object({
+    enabled: z.boolean().optional(),
+    start: z
+      .string()
+      .regex(HHMM_REGEX, "Format invalide (attendu HH:MM)")
+      .optional(),
+    end: z
+      .string()
+      .regex(HHMM_REGEX, "Format invalide (attendu HH:MM)")
+      .optional(),
+  })
+  .strict();
+
+const notificationPreferencesPatchSchema = z
+  .object({
+    messages: z.boolean().optional(),
+    contacts: z.boolean().optional(),
+    shares: z.boolean().optional(),
+    groups: z.boolean().optional(),
+    community_sos: z.boolean().optional(),
+    quietHours: quietHoursSchema.optional(),
+  })
+  .strict();
+
+function mergePreferences(
+  current: NotificationPreferences,
+  patch: z.infer<typeof notificationPreferencesPatchSchema>,
+): NotificationPreferences {
+  return {
+    messages: patch.messages ?? current.messages,
+    contacts: patch.contacts ?? current.contacts,
+    shares: patch.shares ?? current.shares,
+    groups: patch.groups ?? current.groups,
+    community_sos: patch.community_sos ?? current.community_sos,
+    quietHours: {
+      enabled: patch.quietHours?.enabled ?? current.quietHours.enabled,
+      start: patch.quietHours?.start ?? current.quietHours.start,
+      end: patch.quietHours?.end ?? current.quietHours.end,
+    },
+  };
+}
+
+/**
+ * GET /users/me/notification-preferences
+ */
+export async function handleGetNotificationPreferences(
+  req: Request,
+  res: Response,
+) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+
+    const user = await UserModel.findById(userId)
+      .select("notificationPreferences")
+      .lean();
+    if (!user) {
+      return res.status(404).json({ message: "Utilisateur non trouvé." });
+    }
+
+    const prefs: NotificationPreferences =
+      (user.notificationPreferences as NotificationPreferences | undefined) ??
+      DEFAULT_NOTIFICATION_PREFERENCES;
+
+    return res.status(200).json({ notificationPreferences: prefs });
+  } catch (error: unknown) {
+    userLogger.error("Erreur récupération préférences notifications", {
+      userId: req.user?.id,
+      error: getErrorMessage(error),
+    });
+    return res.status(500).json({ message: "Une erreur interne est survenue" });
+  }
+}
+
+/**
+ * PATCH /users/me/notification-preferences
+ * Body partiel : n'importe quel sous-ensemble des champs.
+ */
+export async function handleUpdateNotificationPreferences(
+  req: Request,
+  res: Response,
+) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+
+    const parsed = notificationPreferencesPatchSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Données de préférences invalides.",
+        errors: parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
+      });
+    }
+
+    if (Object.keys(parsed.data).length === 0) {
+      return res.status(400).json({
+        message: "Au moins un champ doit être fourni.",
+      });
+    }
+
+    const user = await UserModel.findById(userId).select(
+      "notificationPreferences",
+    );
+    if (!user) {
+      return res.status(404).json({ message: "Utilisateur non trouvé." });
+    }
+
+    const current: NotificationPreferences =
+      (user.notificationPreferences as NotificationPreferences | undefined) ??
+      DEFAULT_NOTIFICATION_PREFERENCES;
+    const merged = mergePreferences(current, parsed.data);
+
+    user.notificationPreferences = merged;
+    user.markModified("notificationPreferences");
+    await user.save();
+
+    await auditService
+      .log({
+        userId,
+        action: "NOTIFICATION_PREFERENCES_UPDATED",
+        level: "info",
+        ipAddress: req.ip || req.connection.remoteAddress,
+        userAgent: req.headers["user-agent"],
+        details: {
+          fieldsUpdated: Object.keys(parsed.data),
+        },
+      })
+      .catch((err: unknown) => {
+        userLogger.warn("Audit log non enregistré (préférences notifs)", {
+          error: getErrorMessage(err),
+        });
+      });
+
+    userLogger.info("Préférences de notifications mises à jour", {
+      userId,
+      fieldsUpdated: Object.keys(parsed.data),
+    });
+
+    return res.status(200).json({
+      message: "Préférences de notifications mises à jour.",
+      notificationPreferences: merged,
+    });
+  } catch (error: unknown) {
+    userLogger.error("Erreur mise à jour préférences notifications", {
+      userId: req.user?.id,
+      error: getErrorMessage(error),
+    });
+    return res.status(500).json({ message: "Une erreur interne est survenue" });
+  }
+}
+
+// ─── Heartbeat de localisation (filtre géo SOS Stage 1 broadcast) ────────────
+
+const updateLocationSchema = z.object({
+  lat: z.number().min(-90).max(90),
+  lng: z.number().min(-180).max(180),
+});
+
+/**
+ * PATCH /users/me/location
+ * Met à jour la dernière position connue de l'utilisateur. Stockée en GeoJSON
+ * Point (`lastKnownLocation`) avec index 2dsphere → utilisée par le filtre
+ * géographique du broadcast SOS Stage 1 (sosService).
+ *
+ * Pas d'audit (volume trop élevé), pas de notification. Endpoint léger.
+ */
+export async function handleUpdateMyLocation(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({ message: "Authentification requise" });
+    }
+
+    const parsed = updateLocationSchema.safeParse(req.body);
+    if (!parsed.success) {
+      return res.status(400).json({
+        message: "Coordonnées invalides.",
+        errors: parsed.error.issues.map((issue) => ({
+          path: issue.path.join("."),
+          message: issue.message,
+        })),
+      });
+    }
+
+    const { lat, lng } = parsed.data;
+
+    await UserModel.updateOne(
+      { _id: userId },
+      {
+        $set: {
+          lastKnownLocation: {
+            type: "Point",
+            coordinates: [lng, lat],
+            updatedAt: new Date(),
+          },
+        },
+      },
+    );
+
+    return res.status(204).send();
+  } catch (error: unknown) {
+    userLogger.error("Erreur mise à jour localisation utilisateur", {
+      userId: req.user?.id,
+      error: getErrorMessage(error),
+    });
+    return res.status(500).json({ message: "Une erreur interne est survenue" });
   }
 }

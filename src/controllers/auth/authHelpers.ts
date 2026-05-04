@@ -107,13 +107,91 @@ export async function checkLoginAttempts(
 }
 
 // Enregistrer une tentative de connexion échouée
-export async function recordFailedLogin(email: string): Promise<void> {
+export async function recordFailedLogin(
+  email: string,
+  ip?: string,
+): Promise<void> {
   await redisSessionService.recordLoginAttempt(email, false);
   const attempt = await redisSessionService.getLoginAttempts(email);
   authHelpersLogger.warn("[SECURITY] Tentative de connexion échouée", {
     email: maskEmail(email),
     attempts: attempt?.attempts || 1,
   });
+
+  // admin_security_breach : > 20 échecs / 60s sur la même IP
+  if (ip) {
+    await checkAuthFailureBurst(ip).catch((err) => {
+      authHelpersLogger.warn(
+        "[SECURITY] Échec check pic logins échoués",
+        { error: err instanceof Error ? err.message : String(err) },
+      );
+    });
+  }
+}
+
+const AUTH_FAIL_WINDOW_SECONDS = 60;
+const AUTH_FAIL_THRESHOLD = 20;
+
+async function checkAuthFailureBurst(ip: string): Promise<void> {
+  // Utiliser Redis pour compter les échecs par IP sur 60s. Fallback in-memory
+  // si Redis indisponible (best-effort, le throttle de notifyAllAdmins protège).
+  let count = 0;
+  try {
+    const RedisConnectionPool = (
+      await import("../../config/redisPool")
+    ).default;
+    const client = RedisConnectionPool.getPublisher();
+    const key = `auth:fails:${ip}`;
+    count = await client.incr(key);
+    if (count === 1) {
+      await client.expire(key, AUTH_FAIL_WINDOW_SECONDS);
+    }
+  } catch {
+    count = inMemoryAuthFailIncr(ip);
+  }
+
+  if (count <= AUTH_FAIL_THRESHOLD) return;
+
+  try {
+    const { notifyAllAdmins } = await import(
+      "../../services/adminNotificationService"
+    );
+    await notifyAllAdmins(
+      "admin_security_breach",
+      "🚨 Pic de logins échoués",
+      `IP ${ip} — ${count}+ échecs en ${AUTH_FAIL_WINDOW_SECONDS}s`,
+      {
+        ip,
+        attempts: count,
+        windowSeconds: AUTH_FAIL_WINDOW_SECONDS,
+        // dedupKey : 1 notif par IP, throttle 5 min côté service
+        dedupKey: `breach:${ip}`,
+      },
+    );
+  } catch (err) {
+    authHelpersLogger.warn("[SECURITY] Échec notification admin_security_breach", {
+      error: err instanceof Error ? err.message : String(err),
+    });
+  }
+}
+
+const authFailMemory = new Map<
+  string,
+  { count: number; expiresAt: number }
+>();
+
+function inMemoryAuthFailIncr(ip: string): number {
+  const now = Date.now();
+  const entry = authFailMemory.get(ip);
+  if (!entry || entry.expiresAt <= now) {
+    authFailMemory.set(ip, {
+      count: 1,
+      expiresAt: now + AUTH_FAIL_WINDOW_SECONDS * 1000,
+    });
+    return 1;
+  }
+  entry.count += 1;
+  return entry.count;
 }
 
 // Réinitialiser les tentatives après un login réussi

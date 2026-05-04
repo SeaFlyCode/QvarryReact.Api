@@ -2120,6 +2120,8 @@ class WebSocketService {
                   data.metadata || undefined,
                 );
                 // Le message retourné contient le content en clair — broadcast direct
+                // FIX: ne pas exclure le sender → multi-device sync (le web doit
+                // recevoir un message envoyé depuis le mobile et inversement).
                 const { type: msgType, ...msgWithoutType } = result.message;
                 this.broadcastToConversation(
                   conversationId,
@@ -2167,8 +2169,21 @@ class WebSocketService {
                   data.messageId,
                   conversationId,
                 );
-                client.send(
-                  JSON.stringify({ type: "message_read", ...result }),
+                // FIX: broadcast à TOUS les participants (avant: ack uniquement
+                // au sender). Permet aux autres devices/users d'invalider leur
+                // état "non-lu" en temps réel.
+                this.broadcastToConversation(
+                  conversationId,
+                  {
+                    type: "message_read",
+                    conversationId,
+                    messageId: data.messageId,
+                    userId: client.userId,
+                    readAt: new Date().toISOString(),
+                    alreadyRead: result.alreadyRead,
+                  },
+                  undefined,
+                  result.participantIds,
                 );
               } catch (err) {
                 client.send(
@@ -2538,23 +2553,11 @@ class WebSocketService {
         }
       }
 
-      // Envoyer une notification de mise à jour à chaque participant connecté au WS notifications
-      // Note: On n'utilise PAS sendNotificationToUser car il ajoute type: 'notification'
-      // qui serait écrasé par notre type: 'conversation_update'
+      // FIX: dispatcher sur LES DEUX canaux (notifications + messages) pour
+      // que les écrans qui écoutent uniquement le WS messages voient aussi
+      // l'update de conversation (badge unread, ordering, dernier message).
       participantIds.forEach((userId: string) => {
-        const userClients = this.clients.get(userId);
-
-        if (!userClients || userClients.size === 0) {
-          wsLogger.info(
-            "No clients connected for user in conversation update",
-            {
-              userId,
-            },
-          );
-          return;
-        }
-
-        const updateMessage = JSON.stringify({
+        const updatePayload = {
           type: "conversation_update",
           conversationId,
           lastMessage: message.content,
@@ -2562,14 +2565,9 @@ class WebSocketService {
           senderName: senderName,
           createdAt: message.createdAt,
           incrementUnread: userId !== message.senderId,
-        });
+        };
 
-        userClients.forEach((client) => {
-          if (client.readyState === WebSocket.OPEN) {
-            this.safeSend(client, updateMessage);
-            wsLogger.info("Conversation update sent to user", { userId });
-          }
-        });
+        this.dispatchToBothChannels(userId, conversationId, updatePayload);
       });
 
       wsLogger.info("Conversation update notification sent", {
@@ -2580,6 +2578,44 @@ class WebSocketService {
       wsLogger.error("Failed to notify conversation update", {
         error: error instanceof Error ? error.message : String(error),
         // HIGH-001: stack trace supprimé pour sécurité,
+      });
+    }
+  }
+
+  /**
+   * Dispatcher un payload aux clients d'un utilisateur sur LES DEUX canaux WS :
+   *   1. canal "notifications" (clients) — notifications app, badges
+   *   2. canal "messages" (messageClients[userId][conversationId]) — vue conv
+   *
+   * Évite la duplication entre notifyConversationUpdate (push à l'écran liste)
+   * et le canal messages (push au composant chat ouvert sur cette conversation).
+   * Le payload est sérialisé une seule fois pour les deux canaux.
+   */
+  private dispatchToBothChannels(
+    userId: string,
+    conversationId: string,
+    payload: any,
+  ): void {
+    const serialized = JSON.stringify(payload);
+
+    // Canal 1 : notifications WS
+    const notifClients = this.clients.get(userId);
+    if (notifClients && notifClients.size > 0) {
+      notifClients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          this.safeSend(client, serialized);
+        }
+      });
+    }
+
+    // Canal 2 : messages WS pour cette conversation
+    const userConversations = this.messageClients.get(userId);
+    const messageConvClients = userConversations?.get(conversationId);
+    if (messageConvClients && messageConvClients.size > 0) {
+      messageConvClients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          this.safeSend(client, serialized);
+        }
       });
     }
   }
@@ -2626,26 +2662,31 @@ class WebSocketService {
   /**
    * Envoyer une notification à un utilisateur spécifique
    * CLUSTERING: Publie aussi via Redis Pub/Sub pour les autres instances
+   * Retourne true si au moins un client local a reçu le message (signal de delivery
+   * utilisé par notificationService pour décider si un fallback push est nécessaire).
    */
-  sendNotificationToUser(userId: string, notification: any): void {
+  sendNotificationToUser(userId: string, notification: any): boolean {
     // Envoyer localement
-    this.sendNotificationToUserLocal(userId, notification);
+    const localDelivered = this.sendNotificationToUserLocal(userId, notification);
 
     // Publier pour les autres instances (si clustering activé)
     if (redisPubSubService.isEnabled()) {
       redisPubSubService.publishNotification(userId, notification);
     }
+
+    return localDelivered;
   }
 
   /**
    * Version locale uniquement (sans Redis Pub/Sub)
+   * Retourne true si au moins un client OPEN a reçu le message.
    */
-  private sendNotificationToUserLocal(userId: string, notification: any): void {
+  private sendNotificationToUserLocal(userId: string, notification: any): boolean {
     const userClients = this.clients.get(userId);
 
     if (!userClients || userClients.size === 0) {
       wsLogger.info("No clients connected for user notification", { userId });
-      return;
+      return false;
     }
 
     const message = JSON.stringify({
@@ -2653,12 +2694,15 @@ class WebSocketService {
       ...notification,
     });
 
+    let delivered = false;
     userClients.forEach((client) => {
       if (client.readyState === WebSocket.OPEN) {
         this.safeSend(client, message);
         wsLogger.info("Notification sent to user (local)", { userId });
+        delivered = true;
       }
     });
+    return delivered;
   }
 
   /**
@@ -3063,11 +3107,13 @@ class WebSocketService {
    * @param conversationId - ID du groupe
    * @param newName - Nouveau nom du groupe
    * @param participantIds - IDs des participants à notifier
+   * @param changedBy - ID de l'utilisateur qui a changé le nom (optionnel)
    */
   notifyGroupNameChanged(
     conversationId: string,
     newName: string,
     participantIds: string[],
+    changedBy?: string,
   ): void {
     wsLogger.info("Notifying group name change to participants", {
       conversationId,
@@ -3078,6 +3124,7 @@ class WebSocketService {
       type: "group_name_changed",
       conversationId,
       newName,
+      ...(changedBy ? { changedBy } : {}),
     });
 
     for (const odId of participantIds) {
@@ -3090,6 +3137,75 @@ class WebSocketService {
           wsLogger.info("Group name change notification sent", {
             userId: odId,
           });
+        }
+      });
+    }
+  }
+
+  /**
+   * Notifier les participants qu'un membre a été ajouté à un groupe.
+   * Émis EN PLUS de notifyGroupUpdate (rétrocompat) — payload aligné
+   * avec les handlers mobiles dédiés.
+   */
+  notifyGroupMemberAdded(
+    conversationId: string,
+    participantIds: string[],
+    addedUserId: string,
+    addedBy: string,
+  ): void {
+    wsLogger.info("Notifying group_member_added to participants", {
+      conversationId,
+      addedUserId,
+    });
+
+    const message = JSON.stringify({
+      type: "group_member_added",
+      conversationId,
+      userId: addedUserId,
+      addedBy,
+    });
+
+    for (const odId of participantIds) {
+      const userClients = this.clients.get(odId);
+      if (!userClients || userClients.size === 0) continue;
+
+      userClients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          this.safeSend(client, message);
+        }
+      });
+    }
+  }
+
+  /**
+   * Notifier les participants qu'un membre a été retiré d'un groupe.
+   * Émis EN PLUS de notifyGroupUpdate / notifyMemberRemoved (rétrocompat).
+   */
+  notifyGroupMemberRemoved(
+    conversationId: string,
+    participantIds: string[],
+    removedUserId: string,
+    removedBy: string,
+  ): void {
+    wsLogger.info("Notifying group_member_removed to participants", {
+      conversationId,
+      removedUserId,
+    });
+
+    const message = JSON.stringify({
+      type: "group_member_removed",
+      conversationId,
+      userId: removedUserId,
+      removedBy,
+    });
+
+    for (const odId of participantIds) {
+      const userClients = this.clients.get(odId);
+      if (!userClients || userClients.size === 0) continue;
+
+      userClients.forEach((client) => {
+        if (client.readyState === WebSocket.OPEN) {
+          this.safeSend(client, message);
         }
       });
     }

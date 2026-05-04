@@ -7,6 +7,23 @@ import UserModel from "../models/users";
 import mongoose from "mongoose";
 import { getErrorMessage } from "../utils/errorUtils";
 import { decrypt } from "../utils/masterEncryptionUtils";
+import { notifyAllAdmins } from "./adminNotificationService";
+
+/**
+ * Erreur levée quand un upload dépasserait le quota de l'utilisateur.
+ * Le caller doit attraper cette erreur, abandonner l'upload, et nettoyer
+ * tout blob qui aurait déjà été écrit (S3 / disque).
+ */
+export class QuotaExceededError extends Error {
+  public readonly code = "QUOTA_EXCEEDED";
+  constructor(
+    public readonly userId: string,
+    public readonly attemptedBytes: number,
+  ) {
+    super(`Quota dépassé pour l'utilisateur ${userId} (${attemptedBytes} octets demandés)`);
+    this.name = "QuotaExceededError";
+  }
+}
 
 /**
  * Interface pour les informations de stockage d'un utilisateur
@@ -81,21 +98,89 @@ class StorageQuotaService {
   }
 
   /**
-   * Incrémente l'espace utilisé d'un utilisateur
-   * @param userId - ID de l'utilisateur
-   * @param bytes - Nombre d'octets à ajouter
+   * Incrémente l'espace utilisé d'un utilisateur de manière atomique avec
+   * vérification du quota dans la même opération Mongo.
+   *
+   * Cf. fix.md backend #2 — race condition asymétrique : auparavant, deux
+   * uploads concurrents pouvaient passer la check `canUploadPhoto()` puis
+   * faire chacun un `$inc`, dépassant le quota. La vérification est désormais
+   * portée par le filtre Mongo via `$expr`, garantissant que la transition
+   * `storage_used → storage_used + bytes` ne se fait que si le résultat reste
+   * inférieur au `storage_quota` actuel du document.
+   *
+   * @throws QuotaExceededError si le quota serait dépassé OU si l'utilisateur
+   *         n'existe pas. Le caller doit nettoyer tout blob déjà uploadé.
    */
   async incrementStorageUsed(userId: string, bytes: number): Promise<void> {
+    if (bytes < 0) {
+      throw new Error("incrementStorageUsed: bytes doit être positif");
+    }
+
     try {
-      await UserModel.findByIdAndUpdate(userId, {
-        $inc: { storage_used: bytes },
-      });
+      const result = await UserModel.findOneAndUpdate(
+        {
+          _id: new mongoose.Types.ObjectId(userId),
+          // Filtre conditionnel : on n'écrit que si used + bytes <= quota.
+          // Avec un quota par défaut si le champ est absent.
+          $expr: {
+            $lte: [
+              { $add: [{ $ifNull: ["$storage_used", 0] }, bytes] },
+              {
+                $ifNull: [
+                  "$storage_quota",
+                  STORAGE_CONFIG.DEFAULT_QUOTA_BYTES,
+                ],
+              },
+            ],
+          },
+        },
+        { $inc: { storage_used: bytes } },
+        { new: true },
+      );
+
+      if (!result) {
+        // Le filtre n'a pas matché : soit user inexistant, soit quota dépassé.
+        // On le distingue avec un read séparé pour le log (pas critique).
+        logger.warn("Quota dépassé ou utilisateur introuvable lors de l'incrémentation", {
+          userId,
+          bytes,
+        });
+
+        // Notification admin (P1) — dédup par user pour éviter le spam
+        // si l'utilisateur retente l'upload plusieurs fois
+        try {
+          await notifyAllAdmins(
+            "admin_quota_exceeded",
+            "📦 Quota stockage dépassé",
+            `Tentative d'upload bloquée : ${bytes} octets demandés par l'utilisateur ${userId}.`,
+            {
+              userId,
+              attemptedBytes: bytes,
+              dedupKey: `quota-exceeded:${userId}`,
+            },
+          );
+        } catch (notifErr) {
+          logger.warn("Échec de notification admin (quota_exceeded)", {
+            userId,
+            error:
+              notifErr instanceof Error
+                ? notifErr.message
+                : String(notifErr),
+          });
+        }
+
+        throw new QuotaExceededError(userId, bytes);
+      }
 
       logger.info("Stockage incrémenté", {
         userId,
         bytes,
+        newStorageUsed: result.storage_used,
       });
     } catch (error) {
+      if (error instanceof QuotaExceededError) {
+        throw error;
+      }
       logger.error("Erreur lors de l'incrémentation du stockage", {
         userId,
         bytes,

@@ -87,6 +87,7 @@
   "license": "ISC",
   "description": "",
   "dependencies": {
+    "@sentry/node": "^10.51.0",
     "bcrypt": "^6.0.0",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
@@ -108,6 +109,7 @@
     "node-cron": "^4.2.1",
     "nodemailer": "^7.0.12",
     "otpauth": "^9.5.0",
+    "prom-client": "^15.1.3",
     "qrcode": "^1.5.4",
     "rate-limit-redis": "^4.3.1",
     "secure-json-parse": "^4.1.0",

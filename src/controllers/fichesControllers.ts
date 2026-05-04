@@ -6,6 +6,7 @@ import { validateFicheData } from "../services/validationService";
 import { syncService } from "../services/syncService";
 import { loadAndDecryptUserData } from "./auth/authHelpers";
 import { logger } from "../services/loggerService";
+import FicheModel from "../models/fiches";
 
 const fichesLogger = logger.child({ service: "fiches" });
 
@@ -97,18 +98,49 @@ export async function handleCreateFiche(req: Request, res: Response) {
     };
 
     // Stocker la fiche en mémoire
-    memoryStorage.storeFiche(userId, ficheMemory as any);
+    const stored = memoryStorage.storeFiche(userId, ficheMemory as any);
+    if (!stored) {
+      fichesLogger.error("Échec du stockage en mémoire de la fiche", {
+        userId,
+        ficheId: newFicheId.toString(),
+      });
+      return res.status(503).json({
+        message: "Impossible de stocker la fiche, veuillez réessayer.",
+        persisted: false,
+      });
+    }
 
     // Forcer la synchronisation immédiate et vérifier le résultat
     const syncResult = await syncService.syncNow(userId);
 
     if (!syncResult.success) {
-      return res.status(500).json({
-        message:
-          "La fiche a été créée en mémoire mais n'a pas pu être synchronisée avec la base de données",
+      // Rollback : retirer la fiche de la mémoire pour éviter un état zombie
+      memoryStorage.deleteFiche(userId, newFicheId.toString());
+      fichesLogger.error("Sync Mongo échouée, rollback de la fiche en mémoire", {
+        userId,
+        ficheId: newFicheId.toString(),
         error: syncResult.error,
-        ficheId: newFicheId,
-        syncFailed: true,
+      });
+      return res.status(503).json({
+        message:
+          "La fiche n'a pas pu être enregistrée durablement. Veuillez réessayer.",
+        error: syncResult.error,
+        persisted: false,
+      });
+    }
+
+    // Round-trip de vérification : confirmer que la fiche est bien en Mongo
+    const ficheInDb = await FicheModel.findById(newFicheId).select("_id").lean();
+    if (!ficheInDb) {
+      memoryStorage.deleteFiche(userId, newFicheId.toString());
+      fichesLogger.error(
+        "Sync OK mais fiche absente de Mongo après round-trip, rollback",
+        { userId, ficheId: newFicheId.toString() },
+      );
+      return res.status(503).json({
+        message:
+          "La persistance de la fiche n'a pas pu être confirmée. Veuillez réessayer.",
+        persisted: false,
       });
     }
 
@@ -123,6 +155,7 @@ export async function handleCreateFiche(req: Request, res: Response) {
       message: "Fiche créée avec succès",
       ficheId: newFicheId,
       syncSuccess: true,
+      persisted: true,
     });
   } catch (error: unknown) {
     fichesLogger.error("Erreur lors de la création de la fiche", {

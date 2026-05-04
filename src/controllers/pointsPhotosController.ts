@@ -5,7 +5,7 @@ import { Request, Response } from "express";
 import { logger } from "../services/loggerService";
 import imageProcessingService from "../services/imageProcessingService";
 import storageService from "../services/storageService";
-import storageQuotaService from "../services/storageQuotaService";
+import storageQuotaService, { QuotaExceededError } from "../services/storageQuotaService";
 import PointModel from "../models/points";
 import mongoose from "mongoose";
 import path from "path";
@@ -62,6 +62,7 @@ export const uploadPointPhoto = async (
     let oldPhotoOriginalName: string | undefined = undefined;
     let oldPhotoChecksum: string | undefined = undefined;
     let tempPhotoPath: string | null = null;
+    let finalFileWritten = false;
     let quotaIncremented = false;
 
     try {
@@ -133,10 +134,13 @@ export const uploadPointPhoto = async (
       // Renommer le fichier temporaire vers le nom définitif
       await storageService.renamePointPhoto(userId, tempPointId, pointId);
       tempPhotoPath = null; // Plus besoin de rollback du temp
+      finalFileWritten = true; // Le fichier est désormais sous son nom final
 
       logger.info("Photo temporaire renommée", { userId, pointId });
 
       // Incrémenter le quota (après succès complet)
+      // Atomique avec check $expr (cf. fix.md backend #2). Lève
+      // QuotaExceededError si le quota est dépassé par un upload concurrent.
       await storageQuotaService.incrementStorageUsed(
         userId,
         processedImage.size,
@@ -202,6 +206,24 @@ export const uploadPointPhoto = async (
         }
       }
 
+      // Si le fichier a été renommé en nom final mais que le quota a échoué
+      // (cf. fix.md backend #2), supprimer le fichier orphelin sous son nom final.
+      if (finalFileWritten && !quotaIncremented) {
+        try {
+          await storageService.deletePointPhoto(userId, pointId);
+          logger.info("Fichier final supprimé (rollback quota)", {
+            userId,
+            pointId,
+          });
+        } catch (cleanupError) {
+          logger.error("Erreur lors du nettoyage du fichier final orphelin", {
+            userId,
+            pointId,
+            error: getErrorMessage(cleanupError),
+          });
+        }
+      }
+
       // Décrémenter quota si incrémenté
       if (quotaIncremented) {
         await storageQuotaService.decrementStorageUsed(
@@ -220,7 +242,7 @@ export const uploadPointPhoto = async (
     });
 
     const errorMessage = getErrorMessage(error);
-    if (errorMessage.includes("quota")) {
+    if (error instanceof QuotaExceededError || /quota/i.test(errorMessage)) {
       res.status(507).json({ error: errorMessage });
     } else if (
       errorMessage.includes("Invalid") ||
