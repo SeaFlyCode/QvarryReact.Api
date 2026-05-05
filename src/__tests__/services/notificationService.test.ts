@@ -851,7 +851,7 @@ describe("NotificationService", () => {
 
         (
           webSocketService.sendNotificationToUser as jest.Mock
-        ).mockImplementation(() => {});
+        ).mockImplementation(() => true);
 
         await NotificationService.retryPendingNotifications();
 

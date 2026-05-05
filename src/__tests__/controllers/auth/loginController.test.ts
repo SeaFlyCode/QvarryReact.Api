@@ -117,11 +117,18 @@ describe("loginController", () => {
       await handleLoginUser(req as Request, res as Response);
 
       expect(res.status).toHaveBeenCalledWith(429);
-      expect(res.json).toHaveBeenCalledWith({
-        error: "Trop de tentatives",
-        waitTime: 10,
-        tooManyAttempts: true,
-      });
+      // P1 UX 2026-05-04 : shape unifiée { error, code, retryAfter, message }
+      // pour tous les 429 — `tooManyAttempts` conservé en legacy.
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: "RATE_LIMITED",
+          code: "TOO_MANY_ATTEMPTS",
+          retryAfter: 600,
+          waitTime: 10,
+          tooManyAttempts: true,
+          message: "Trop de tentatives",
+        }),
+      );
     });
 
     it("devrait rejeter avec des identifiants incorrects", async () => {

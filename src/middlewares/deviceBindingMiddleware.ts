@@ -308,10 +308,13 @@ export const createDeviceRateLimiter = (maxRequests: number = 30) => {
         deviceId: deviceId.substring(0, 8) + "...",
         count: limitData.count,
       });
+      const retryAfter = Math.ceil((limitData.resetAt - now) / 1000);
+      res.setHeader("Retry-After", String(retryAfter));
       return res.status(429).json({
-        error: "Trop de requêtes depuis cet appareil",
+        error: "RATE_LIMITED",
         code: "DEVICE_RATE_LIMIT_EXCEEDED",
-        retryAfter: Math.ceil((limitData.resetAt - now) / 1000),
+        retryAfter,
+        message: "Trop de requêtes depuis cet appareil",
       });
     }
 
@@ -336,10 +339,13 @@ export const createDeviceRateLimiter = (maxRequests: number = 30) => {
         },
       });
 
+      const retryAfter = Math.ceil((limitData.resetAt - now) / 1000);
+      res.setHeader("Retry-After", String(retryAfter));
       return res.status(429).json({
-        error: "Trop de requêtes depuis cet appareil",
+        error: "RATE_LIMITED",
         code: "DEVICE_RATE_LIMIT_EXCEEDED",
-        retryAfter: Math.ceil((limitData.resetAt - now) / 1000),
+        retryAfter,
+        message: "Trop de requêtes depuis cet appareil",
       });
     }
 

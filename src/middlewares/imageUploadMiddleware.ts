@@ -144,11 +144,14 @@ export const uploadRateLimit = rateLimit({
       userId: req.user?.id,
       ip: req.ip,
     });
+    const retryAfter = 15 * 60; // secondes
+    res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
-      error: "Trop d'uploads",
+      error: "RATE_LIMITED",
+      code: "UPLOAD_RATE_LIMIT_EXCEEDED",
+      retryAfter,
       message:
         "Vous avez atteint la limite d'uploads. Veuillez réessayer dans 15 minutes.",
-      retryAfter: 15 * 60, // en secondes
     });
   },
 });

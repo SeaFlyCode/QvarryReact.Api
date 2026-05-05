@@ -7,6 +7,7 @@ jest.mock("../../services/sosService");
 jest.mock("../../services/loggerService");
 
 import { Request, Response } from "express";
+import mongoose from "mongoose";
 import {
   handleSosActivate,
   handleSosHeartbeat,
@@ -811,31 +812,36 @@ describe("mobileSosControllers", () => {
   describe("handleSosAddParticipant", () => {
     let req: Partial<Request>;
     let res: Partial<Response>;
+    // Les handlers valident targetUserId/sessionId via Types.ObjectId.isValid,
+    // donc on génère de vrais ObjectIds pour tous les cas qui doivent atteindre le service.
+    const creatorId = new mongoose.Types.ObjectId().toString();
+    const targetUserId = new mongoose.Types.ObjectId().toString();
+    const sessionId = new mongoose.Types.ObjectId().toString();
 
     beforeEach(() => {
       req = mockRequest({
         body: {
-          targetUserId: "user-456",
-          sessionId: "session-123",
+          targetUserId,
+          sessionId,
         },
-        user: { id: "user-123" },
+        user: { id: creatorId },
       });
       res = mockResponse();
     });
 
     it("devrait ajouter un participant avec succès", async () => {
       const mockSession = {
-        _id: "session-123",
+        _id: sessionId,
         status: "ACTIVE",
         participants: [
           {
-            userId: "user-123",
+            userId: creatorId,
             status: "ACTIVE",
             joinedAt: new Date(),
             leftAt: null,
           },
           {
-            userId: "user-456",
+            userId: targetUserId,
             status: "ACTIVE",
             joinedAt: new Date(),
             leftAt: null,
@@ -850,16 +856,16 @@ describe("mobileSosControllers", () => {
       await handleSosAddParticipant(req as Request, res as Response);
 
       expect(sosService.addParticipantToSession).toHaveBeenCalledWith(
-        "user-123",
-        "user-456",
-        "session-123",
+        creatorId,
+        targetUserId,
+        sessionId,
       );
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           success: true,
           session: expect.objectContaining({
-            id: "session-123",
+            id: sessionId,
             status: "ACTIVE",
           }),
         }),
@@ -886,8 +892,8 @@ describe("mobileSosControllers", () => {
 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({
-        error: "ID de l'utilisateur à ajouter requis.",
-        code: "MISSING_TARGET_USER_ID",
+        error: "ID utilisateur invalide.",
+        code: "INVALID_USER_ID",
       });
       expect(sosService.addParticipantToSession).not.toHaveBeenCalled();
     });
@@ -924,33 +930,36 @@ describe("mobileSosControllers", () => {
   describe("handleSosRemoveParticipant", () => {
     let req: Partial<Request>;
     let res: Partial<Response>;
+    const callerId = new mongoose.Types.ObjectId().toString();
+    const targetUserId = new mongoose.Types.ObjectId().toString();
+    const sessionId = new mongoose.Types.ObjectId().toString();
 
     beforeEach(() => {
       req = mockRequest({
         body: {
-          targetUserId: "user-456",
-          sessionId: "session-123",
+          targetUserId,
+          sessionId,
         },
-        user: { id: "user-123" },
+        user: { id: callerId },
       });
       res = mockResponse();
     });
 
     it("devrait retirer un participant avec succès", async () => {
       const mockSession = {
-        _id: "session-123",
+        _id: sessionId,
         status: "ACTIVE",
         resolvedAt: null,
         resolvedBy: null,
         participants: [
           {
-            userId: "user-123",
+            userId: callerId,
             status: "ACTIVE",
             joinedAt: new Date(),
             leftAt: null,
           },
           {
-            userId: "user-456",
+            userId: targetUserId,
             status: "LEFT",
             joinedAt: new Date(),
             leftAt: new Date(),
@@ -965,16 +974,16 @@ describe("mobileSosControllers", () => {
       await handleSosRemoveParticipant(req as Request, res as Response);
 
       expect(sosService.removeParticipantFromSession).toHaveBeenCalledWith(
-        "user-123",
-        "user-456",
-        "session-123",
+        callerId,
+        targetUserId,
+        sessionId,
       );
       expect(res.status).toHaveBeenCalledWith(200);
       expect(res.json).toHaveBeenCalledWith(
         expect.objectContaining({
           success: true,
           session: expect.objectContaining({
-            id: "session-123",
+            id: sessionId,
             status: "ACTIVE",
           }),
         }),
@@ -1001,8 +1010,8 @@ describe("mobileSosControllers", () => {
 
       expect(res.status).toHaveBeenCalledWith(400);
       expect(res.json).toHaveBeenCalledWith({
-        error: "ID de l'utilisateur à retirer requis.",
-        code: "MISSING_TARGET_USER_ID",
+        error: "ID utilisateur invalide.",
+        code: "INVALID_USER_ID",
       });
       expect(sosService.removeParticipantFromSession).not.toHaveBeenCalled();
     });
@@ -1025,13 +1034,13 @@ describe("mobileSosControllers", () => {
     it("devrait exposer le status RESOLVED quand la session est auto-résolue", async () => {
       const resolvedAt = new Date();
       const mockSession = {
-        _id: "session-123",
+        _id: sessionId,
         status: "RESOLVED",
         resolvedAt,
         resolvedBy: "USER",
         participants: [
           {
-            userId: "user-123",
+            userId: callerId,
             status: "LEFT",
             joinedAt: new Date(),
             leftAt: resolvedAt,

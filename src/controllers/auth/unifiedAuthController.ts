@@ -133,10 +133,14 @@ export async function handleUnifiedLogin(req: Request, res: Response) {
     // 2. RATE LIMITING (BRUTE FORCE)
     const attemptCheck = await checkLoginAttempts(email);
     if (!attemptCheck.allowed) {
+      const retryAfter = (attemptCheck.waitTime ?? 1) * 60;
+      res.setHeader("Retry-After", String(retryAfter));
       return res.status(429).json({
-        error: attemptCheck.message,
-        waitTime: attemptCheck.waitTime,
+        error: "RATE_LIMITED",
         code: "TOO_MANY_ATTEMPTS",
+        retryAfter,
+        waitTime: attemptCheck.waitTime,
+        message: attemptCheck.message,
       });
     }
 
@@ -461,10 +465,14 @@ export async function handleUnifiedComplete2FA(req: Request, res: Response) {
     const attemptCheck =
       await redisSessionService.checkTwoFactorAttempts(userId);
     if (!attemptCheck.allowed) {
+      const retryAfter = (attemptCheck.waitTime ?? 1) * 60;
+      res.setHeader("Retry-After", String(retryAfter));
       return res.status(429).json({
-        error: `Trop de tentatives. Veuillez réessayer dans ${attemptCheck.waitTime} minute(s).`,
+        error: "RATE_LIMITED",
         code: "TOO_MANY_ATTEMPTS",
+        retryAfter,
         waitTime: attemptCheck.waitTime,
+        message: `Trop de tentatives. Veuillez réessayer dans ${attemptCheck.waitTime} minute(s).`,
       });
     }
 

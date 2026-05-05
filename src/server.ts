@@ -238,7 +238,14 @@ app.use(
 
 // Middleware pour parser le JSON
 // HIGH-8: Limite explicite de taille de body pour éviter les attaques DoS
-app.use(express.json({ limit: "1mb" }));
+// P1 UX 2026-05-04 : aligné à 10mb par défaut pour couvrir les payloads form
+// complexes (création de fiches avec listes imbriquées, sync mobile par batch).
+// ⚠️ Les uploads de fichiers binaires (photos de points par ex.) doivent passer
+// par des routes dédiées en multipart/form-data via `multer` —
+// `express.json()` ne traite pas le multipart, seuls les bodies JSON.
+// Paramétrable via env JSON_BODY_LIMIT (ex: "20mb" pour augmenter en prod).
+const JSON_BODY_LIMIT = process.env.JSON_BODY_LIMIT || "10mb";
+app.use(express.json({ limit: JSON_BODY_LIMIT }));
 
 // ═══════════════════════════════════════════════════════════════════════════
 // CONF-007: Morgan - Logging HTTP sans tokens sensibles

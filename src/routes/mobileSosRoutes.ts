@@ -136,10 +136,12 @@ const sosCriticalRateLimiter = async (
       const blockedTtl = await sosRedisClient.ttl(blockedKey);
       if (blockedTtl > 0) {
         const remainingMinutes = Math.ceil(blockedTtl / 60);
+        res.setHeader("Retry-After", String(blockedTtl));
         return res.status(429).json({
-          error: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
+          error: "RATE_LIMITED",
           code: "SOS_RATE_LIMIT_EXCEEDED",
           retryAfter: blockedTtl,
+          message: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
         });
       }
 
@@ -156,10 +158,13 @@ const sosCriticalRateLimiter = async (
           "1",
         );
         await sosRedisClient.del(countKey);
+        const retryAfter = SOS_CRITICAL_BLOCK_DURATION_MS / 1000;
+        res.setHeader("Retry-After", String(retryAfter));
         return res.status(429).json({
-          error: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
+          error: "RATE_LIMITED",
           code: "SOS_RATE_LIMIT_EXCEEDED",
-          retryAfter: SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+          retryAfter,
+          message: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
         });
       }
 
@@ -207,10 +212,12 @@ const sosActivateRateLimiter = async (
       const blockedTtl = await sosRedisClient.ttl(blockedKey);
       if (blockedTtl > 0) {
         const remainingMinutes = Math.ceil(blockedTtl / 60);
+        res.setHeader("Retry-After", String(blockedTtl));
         return res.status(429).json({
-          error: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
+          error: "RATE_LIMITED",
           code: "SOS_RATE_LIMIT_EXCEEDED",
           retryAfter: blockedTtl,
+          message: `Trop de tentatives SOS. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
         });
       }
 
@@ -227,10 +234,13 @@ const sosActivateRateLimiter = async (
           "1",
         );
         await sosRedisClient.del(countKey);
+        const retryAfter = SOS_CRITICAL_BLOCK_DURATION_MS / 1000;
+        res.setHeader("Retry-After", String(retryAfter));
         return res.status(429).json({
-          error: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
+          error: "RATE_LIMITED",
           code: "SOS_RATE_LIMIT_EXCEEDED",
-          retryAfter: SOS_CRITICAL_BLOCK_DURATION_MS / 1000,
+          retryAfter,
+          message: `Trop de tentatives SOS. Bloqué pour ${SOS_CRITICAL_BLOCK_DURATION_MS / 60000} minutes.`,
         });
       }
 

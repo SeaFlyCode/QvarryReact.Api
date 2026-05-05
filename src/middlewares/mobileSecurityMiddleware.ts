@@ -423,10 +423,13 @@ export const mobileRateLimitMiddleware = async (
       details: { deviceId, remainingMinutes, endpoint: req.path },
     });
 
+    const retryAfter = remainingMinutes * 60;
+    res.setHeader("Retry-After", String(retryAfter));
     return res.status(429).json({
-      error: `Trop de tentatives. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
+      error: "RATE_LIMITED",
       code: "RATE_LIMIT_EXCEEDED",
-      retryAfter: remainingMinutes * 60,
+      retryAfter,
+      message: `Trop de tentatives. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
     });
   }
 
@@ -496,10 +499,13 @@ export const mobileRateLimitMiddleware = async (
       },
     });
 
+    const retryAfter = MOBILE_BLOCK_DURATION_MS / 1000;
+    res.setHeader("Retry-After", String(retryAfter));
     return res.status(429).json({
-      error: `Trop de tentatives. Bloqué pour ${MOBILE_BLOCK_DURATION_MS / 60000} minutes.`,
+      error: "RATE_LIMITED",
       code: "RATE_LIMIT_EXCEEDED",
-      retryAfter: MOBILE_BLOCK_DURATION_MS / 1000,
+      retryAfter,
+      message: `Trop de tentatives. Bloqué pour ${MOBILE_BLOCK_DURATION_MS / 60000} minutes.`,
     });
   }
 
@@ -568,10 +574,13 @@ export const mobileSyncRateLimitMiddleware = async (
       details: { deviceId, remainingMinutes, endpoint: req.path },
     });
 
+    const retryAfter = remainingMinutes * 60;
+    res.setHeader("Retry-After", String(retryAfter));
     return res.status(429).json({
-      error: `Trop de tentatives. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
+      error: "RATE_LIMITED",
       code: "RATE_LIMIT_EXCEEDED",
-      retryAfter: remainingMinutes * 60,
+      retryAfter,
+      message: `Trop de tentatives. Veuillez réessayer dans ${remainingMinutes} minute(s).`,
     });
   }
 
@@ -643,10 +652,13 @@ export const mobileSyncRateLimitMiddleware = async (
       },
     });
 
+    const retryAfter = MOBILE_SYNC_BLOCK_DURATION_MS / 1000;
+    res.setHeader("Retry-After", String(retryAfter));
     return res.status(429).json({
-      error: `Trop de tentatives. Bloqué pour ${MOBILE_SYNC_BLOCK_DURATION_MS / 60000} minutes.`,
+      error: "RATE_LIMITED",
       code: "RATE_LIMIT_EXCEEDED",
-      retryAfter: MOBILE_SYNC_BLOCK_DURATION_MS / 1000,
+      retryAfter,
+      message: `Trop de tentatives. Bloqué pour ${MOBILE_SYNC_BLOCK_DURATION_MS / 60000} minutes.`,
     });
   }
 

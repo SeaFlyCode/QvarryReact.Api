@@ -115,10 +115,14 @@ export const globalRateLimiter = rateLimit({
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
     });
+    // P1 UX : header Retry-After explicite pour les clients qui le lisent
+    // (le body conserve aussi `retryAfter` pour les clients qui parsent JSON).
+    res.setHeader("Retry-After", String(60));
     res.status(429).json({
-      error: "Trop de requêtes, veuillez réessayer plus tard.",
+      error: "RATE_LIMITED",
       code: "GLOBAL_RATE_LIMIT_EXCEEDED",
       retryAfter: 60,
+      message: "Trop de requêtes, veuillez réessayer plus tard.",
     });
   },
 });
@@ -264,15 +268,18 @@ export const refreshTokenLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    const retryAfter = 15 * 60;
     rateLimitLogger.warn("🔴 REFRESH: Rate limit dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
     });
+    res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
-      error:
-        "Trop de rafraîchissements de token, veuillez réessayer dans 15 minutes.",
+      error: "RATE_LIMITED",
       code: "REFRESH_TOKEN_RATE_LIMIT_EXCEEDED",
-      retryAfter: 15 * 60,
+      retryAfter,
+      message:
+        "Trop de rafraîchissements de token, veuillez réessayer dans 15 minutes.",
     });
   },
 });
@@ -396,15 +403,18 @@ export const strictAuthLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    const retryAfter = 15 * 60;
     rateLimitLogger.warn("🔴 STRICT: Rate limit auth dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
     });
+    res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
-      error:
-        "Trop de tentatives d'authentification, veuillez réessayer dans 15 minutes.",
+      error: "RATE_LIMITED",
       code: "STRICT_AUTH_RATE_LIMIT_EXCEEDED",
-      retryAfter: 15 * 60,
+      retryAfter,
+      message:
+        "Trop de tentatives d'authentification, veuillez réessayer dans 15 minutes.",
     });
   },
 });
@@ -431,14 +441,17 @@ export const moderateApiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    const retryAfter = 15 * 60;
     rateLimitLogger.warn("🟡 MODERATE: Rate limit API dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
     });
+    res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
-      error: "Trop de requêtes API, veuillez réessayer dans 15 minutes.",
+      error: "RATE_LIMITED",
       code: "MODERATE_API_RATE_LIMIT_EXCEEDED",
-      retryAfter: 15 * 60,
+      retryAfter,
+      message: "Trop de requêtes API, veuillez réessayer dans 15 minutes.",
     });
   },
 });
@@ -470,15 +483,18 @@ export const permissiveMobileLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
+    const retryAfter = 15 * 60;
     rateLimitLogger.warn("🟢 PERMISSIVE: Rate limit mobile dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
     });
+    res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
-      error:
-        "Trop de requêtes depuis l'application mobile, veuillez réessayer dans 15 minutes.",
+      error: "RATE_LIMITED",
       code: "PERMISSIVE_MOBILE_RATE_LIMIT_EXCEEDED",
-      retryAfter: 15 * 60,
+      retryAfter,
+      message:
+        "Trop de requêtes depuis l'application mobile, veuillez réessayer dans 15 minutes.",
     });
   },
 });
@@ -528,10 +544,13 @@ export const mobileAttestationLimiter = rateLimit({
       userAgent: req.headers["user-agent"],
     });
 
+    const retryAfter = Math.ceil(options.windowMs! / 1000);
+    res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
-      error: "Trop de tentatives d'attestation",
-      retryAfter: Math.ceil(options.windowMs! / 1000),
+      error: "RATE_LIMITED",
       code: "RATE_LIMIT_EXCEEDED",
+      retryAfter,
+      message: "Trop de tentatives d'attestation",
     });
   },
 });
@@ -584,10 +603,13 @@ export const mobileAttestationByDeviceLimiter = rateLimit({
       userAgent: req.headers["user-agent"],
     });
 
+    const retryAfter = Math.ceil(options.windowMs! / 1000);
+    res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
-      error: "Quota d'attestation dépassé pour cet appareil",
-      retryAfter: Math.ceil(options.windowMs! / 1000),
+      error: "RATE_LIMITED",
       code: "DEVICE_QUOTA_EXCEEDED",
+      retryAfter,
+      message: "Quota d'attestation dépassé pour cet appareil",
     });
   },
 });

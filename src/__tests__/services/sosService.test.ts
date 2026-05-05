@@ -41,14 +41,76 @@ jest.mock("../../utils/masterEncryptionUtils", () => ({
   encrypt: jest.fn((value) => value),
 }));
 
+/**
+ * Helper qui transforme une valeur en query Mongoose chainable.
+ * Toutes les méthodes intermédiaires (lean, select, populate, sort, limit,
+ * session, maxTimeMS) retournent la même query ; quand on `await` la query,
+ * elle résout avec la valeur fournie. Couvre les chaînes utilisées par
+ * sosService sans avoir à mocker chaque combinaison.
+ */
+const chainableQuery = <T>(value: T): any => {
+  const query: any = {
+    lean: jest.fn(),
+    select: jest.fn(),
+    populate: jest.fn(),
+    sort: jest.fn(),
+    limit: jest.fn(),
+    skip: jest.fn(),
+    session: jest.fn(),
+    maxTimeMS: jest.fn(),
+    then: (onFulfilled: any, onRejected: any) =>
+      Promise.resolve(value).then(onFulfilled, onRejected),
+    catch: (onRejected: any) => Promise.resolve(value).catch(onRejected),
+  };
+  // Toutes les méthodes intermédiaires retournent la query elle-même → chaîne
+  query.lean.mockReturnValue(query);
+  query.select.mockReturnValue(query);
+  query.populate.mockReturnValue(query);
+  query.sort.mockReturnValue(query);
+  query.limit.mockReturnValue(query);
+  query.skip.mockReturnValue(query);
+  query.session.mockReturnValue(query);
+  query.maxTimeMS.mockReturnValue(query);
+  return query;
+};
+
 describe("SosService", () => {
   const mockUserId = "507f1f77bcf86cd799439011";
   const mockUserId2 = "507f1f77bcf86cd799439012";
   const mockSessionId = "507f1f77bcf86cd799439013";
   const mockContactId = "507f1f77bcf86cd799439014";
 
+  // mongoose.startSession() utilise une vraie connexion MongoDB ; on stubbe la
+  // session pour que les transactions des services fonctionnent en test.
+  const originalStartSession = mongoose.startSession;
+  const stubMongoSession: any = {
+    startTransaction: jest.fn(),
+    commitTransaction: jest.fn().mockResolvedValue(undefined),
+    abortTransaction: jest.fn().mockResolvedValue(undefined),
+    endSession: jest.fn().mockResolvedValue(undefined),
+    withTransaction: jest.fn(),
+    inTransaction: () => true,
+  };
+
+  beforeAll(() => {
+    (mongoose as any).startSession = jest
+      .fn()
+      .mockResolvedValue(stubMongoSession);
+  });
+
+  afterAll(() => {
+    (mongoose as any).startSession = originalStartSession;
+  });
+
   beforeEach(() => {
     jest.clearAllMocks();
+    // Réarmer la stub session après clearAllMocks (sinon les .mockResolvedValue
+    // sont effacés mais les références gardées par le service deviennent inertes)
+    stubMongoSession.startTransaction.mockReturnValue(undefined);
+    stubMongoSession.commitTransaction.mockResolvedValue(undefined);
+    stubMongoSession.abortTransaction.mockResolvedValue(undefined);
+    stubMongoSession.endSession.mockResolvedValue(undefined);
+    (mongoose.startSession as jest.Mock).mockResolvedValue(stubMongoSession);
   });
 
   // ═══════════════════════════════════════════════════════════════════
@@ -76,10 +138,12 @@ describe("SosService", () => {
         save: jest.fn().mockResolvedValue({}),
       };
 
-      (SosSessionModel.find as jest.Mock) = jest.fn().mockResolvedValue([]);
-      (SosContactModel.countDocuments as jest.Mock) = jest
+      (SosSessionModel.find as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(1);
+        .mockReturnValue(chainableQuery([]));
+      (SosContactModel.countDocuments as jest.Mock) = jest.fn().mockReturnValue(
+        chainableQuery(1),
+      );
       (SosSessionModel as unknown as jest.Mock).mockImplementation(
         () => mockSession,
       );
@@ -109,12 +173,14 @@ describe("SosService", () => {
     });
 
     it("should reject if user already has an active session", async () => {
-      (SosSessionModel.find as jest.Mock) = jest.fn().mockResolvedValue([
-        {
-          _id: mockSessionId,
-          status: "ACTIVE",
-        },
-      ]);
+      (SosSessionModel.find as jest.Mock) = jest.fn().mockReturnValue(
+        chainableQuery([
+          {
+            _id: mockSessionId,
+            status: "ACTIVE",
+          },
+        ]),
+      );
 
       await expect(
         sosService.activateSession({
@@ -125,10 +191,12 @@ describe("SosService", () => {
     });
 
     it("should reject if duration is invalid", async () => {
-      (SosSessionModel.find as jest.Mock) = jest.fn().mockResolvedValue([]);
+      (SosSessionModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery([]));
       (SosContactModel.countDocuments as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(1);
+        .mockReturnValue(chainableQuery(1));
 
       await expect(
         sosService.activateSession({
@@ -146,10 +214,12 @@ describe("SosService", () => {
     });
 
     it("should reject if no emergency contacts", async () => {
-      (SosSessionModel.find as jest.Mock) = jest.fn().mockResolvedValue([]);
+      (SosSessionModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery([]));
       (SosContactModel.countDocuments as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(0);
+        .mockReturnValue(chainableQuery(0));
 
       await expect(
         sosService.activateSession({
@@ -175,13 +245,15 @@ describe("SosService", () => {
         save: jest.fn().mockResolvedValue({}),
       };
 
-      (SosSessionModel.find as jest.Mock) = jest.fn().mockResolvedValue([]);
-      (UserModel.find as jest.Mock) = jest.fn().mockReturnValue({
-        select: jest.fn().mockResolvedValue([{ _id: mockUserId2 }]),
-      });
+      (SosSessionModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery([]));
+      (UserModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery([{ _id: mockUserId2 }]));
       (SosContactModel.countDocuments as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(1);
+        .mockReturnValue(chainableQuery(1));
       (SosSessionModel as unknown as jest.Mock).mockImplementation(
         () => mockSession,
       );
@@ -209,13 +281,15 @@ describe("SosService", () => {
     });
 
     it("should validate participant IDs exist", async () => {
-      (SosSessionModel.find as jest.Mock) = jest.fn().mockResolvedValue([]);
-      (UserModel.find as jest.Mock) = jest.fn().mockReturnValue({
-        select: jest.fn().mockResolvedValue([]), // Empty array = invalid IDs
-      });
+      (SosSessionModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery([]));
+      (UserModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery([])); // Empty array = invalid IDs
       (SosContactModel.countDocuments as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(1);
+        .mockReturnValue(chainableQuery(1));
 
       await expect(
         sosService.activateSession({
@@ -238,12 +312,12 @@ describe("SosService", () => {
         _id: new mongoose.Types.ObjectId(mockContactId),
       };
 
-      (SosSessionModel.find as jest.Mock) = jest.fn().mockResolvedValue([]);
-      (SosContactModel.find as jest.Mock) = jest.fn().mockReturnValue({
-        select: jest.fn().mockReturnValue({
-          lean: jest.fn().mockResolvedValue([mockPermanentContact]),
-        }),
-      });
+      (SosSessionModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery([]));
+      (SosContactModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery([mockPermanentContact]));
       (SosSessionModel as unknown as jest.Mock).mockImplementation(
         () => mockSession,
       );
@@ -569,6 +643,7 @@ describe("SosService", () => {
     it("should deactivate session with scope 'all'", async () => {
       const mockSession = {
         _id: new mongoose.Types.ObjectId(mockSessionId),
+        userId: new mongoose.Types.ObjectId(mockUserId),
         participants: [
           {
             userId: new mongoose.Types.ObjectId(mockUserId),
@@ -691,32 +766,51 @@ describe("SosService", () => {
 
   describe("confirmSafe", () => {
     it("should resolve session when contact confirms user is safe", async () => {
-      const mockSession = {
+      // confirmSafe utilise findOne(...).lean() pour vérifier l'autorisation, puis
+      // findOneAndUpdate(...) pour résoudre la session de manière atomique.
+      // Le confirmerId DOIT être un participant actif sinon on tombe sur
+      // NOT_AUTHORIZED_TO_CONFIRM avant l'update.
+      const confirmerId = mockUserId;
+      const mockCandidate = {
         _id: new mongoose.Types.ObjectId(mockSessionId),
         userId: new mongoose.Types.ObjectId(mockUserId),
         participants: [
           {
-            userId: new mongoose.Types.ObjectId(mockUserId),
+            userId: new mongoose.Types.ObjectId(confirmerId),
             status: "ESCALATING",
           },
         ],
         status: "ESCALATING",
+      };
+
+      const mockUpdatedSession = {
+        ...mockCandidate,
+        status: "RESOLVED",
+        resolvedBy: "CONTACT_CONFIRM",
+        participants: [
+          {
+            userId: new mongoose.Types.ObjectId(confirmerId),
+            status: "LEFT",
+          },
+        ],
         save: jest.fn().mockResolvedValue({}),
       };
 
       (SosSessionModel.findOne as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(mockSession);
+        .mockReturnValue(chainableQuery(mockCandidate));
+      (SosSessionModel.findOneAndUpdate as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(mockUpdatedSession);
       (SosContactModel.deleteMany as jest.Mock) = jest
         .fn()
         .mockResolvedValue({ deletedCount: 0 });
 
-      const confirmerId = "507f1f77bcf86cd799439099";
-      await sosService.confirmSafe(mockSessionId, confirmerId);
+      const result = await sosService.confirmSafe(mockSessionId, confirmerId);
 
-      expect(mockSession.status).toBe("RESOLVED");
-      expect(mockSession.resolvedBy).toBe("CONTACT_CONFIRM");
-      expect(mockSession.participants[0].status).toBe("LEFT");
+      expect(result.status).toBe("RESOLVED");
+      expect(result.resolvedBy).toBe("CONTACT_CONFIRM");
+      expect(SosSessionModel.findOneAndUpdate).toHaveBeenCalled();
       expect(auditService.log).toHaveBeenCalledWith(
         expect.objectContaining({
           userId: confirmerId,
@@ -728,7 +822,7 @@ describe("SosService", () => {
     it("should throw error if session not found or not escalating", async () => {
       (SosSessionModel.findOne as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(null);
+        .mockReturnValue(chainableQuery(null));
 
       await expect(
         sosService.confirmSafe(mockSessionId, mockUserId),
@@ -762,9 +856,14 @@ describe("SosService", () => {
     });
 
     it("should return null if no active session", async () => {
-      (SosSessionModel.findOne as jest.Mock) = jest
+      // En non-production, getActiveSession fait deux findOne :
+      // 1. avec filtre status (sans .lean()) → on renvoie null directement
+      // 2. debug sans filtre status (avec .lean()) → on renvoie null aussi
+      const mock = jest
         .fn()
-        .mockResolvedValue(null);
+        .mockResolvedValueOnce(null) // premier appel : findOne direct
+        .mockReturnValueOnce(chainableQuery(null)); // second appel : findOne().lean()
+      (SosSessionModel.findOne as jest.Mock) = mock;
 
       const result = await sosService.getActiveSession(mockUserId);
 
@@ -792,14 +891,13 @@ describe("SosService", () => {
         },
       ];
 
-      const mockFind = jest.fn().mockReturnValue({
-        sort: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(mockSessions),
-        select: jest.fn().mockReturnThis(),
-      });
-
-      (SosSessionModel.find as jest.Mock) = mockFind;
+      // getSessionHistory utilise aggregate avec un $facet (data + statsRaw)
+      (SosSessionModel.aggregate as jest.Mock) = jest.fn().mockResolvedValue([
+        {
+          data: mockSessions,
+          statsRaw: mockSessions,
+        },
+      ]);
 
       const result = await sosService.getSessionHistory(mockUserId, 20);
 
@@ -828,14 +926,12 @@ describe("SosService", () => {
         },
       ];
 
-      const mockFind = jest.fn().mockReturnValue({
-        sort: jest.fn().mockReturnThis(),
-        limit: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(mockSessions),
-        select: jest.fn().mockReturnThis(),
-      });
-
-      (SosSessionModel.find as jest.Mock) = mockFind;
+      (SosSessionModel.aggregate as jest.Mock) = jest.fn().mockResolvedValue([
+        {
+          data: mockSessions,
+          statsRaw: mockSessions,
+        },
+      ]);
 
       const result = await sosService.getSessionHistory(mockUserId);
 
@@ -857,13 +953,10 @@ describe("SosService", () => {
         },
       ];
 
-      const mockFind = jest.fn().mockReturnValue({
-        populate: jest.fn().mockReturnThis(),
-        sort: jest.fn().mockReturnThis(),
-        lean: jest.fn().mockResolvedValue(mockSessions),
-      });
-
-      (SosSessionModel.find as jest.Mock) = mockFind;
+      // getActiveSessions chaîne find().select().populate().sort().lean()
+      (SosSessionModel.find as jest.Mock) = jest
+        .fn()
+        .mockReturnValue(chainableQuery(mockSessions));
 
       const result = await sosService.getActiveSessions(mockUserId);
 
@@ -1113,7 +1206,7 @@ describe("SosService", () => {
 
       (SosSessionModel.findOne as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(mockSession);
+        .mockReturnValue(chainableQuery(mockSession));
 
       const outsiderId = "507f1f77bcf86cd799439099";
       await expect(
@@ -1142,7 +1235,7 @@ describe("SosService", () => {
 
       (SosSessionModel.findOne as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(mockSession);
+        .mockReturnValue(chainableQuery(mockSession));
 
       await expect(
         sosService.confirmSafe(mockSessionId, leftUserId),
@@ -1150,7 +1243,7 @@ describe("SosService", () => {
     });
 
     it("should resolve session when confirmerId is an active participant", async () => {
-      const mockSession = {
+      const candidate = {
         _id: new mongoose.Types.ObjectId(mockSessionId),
         userId: new mongoose.Types.ObjectId(mockUserId),
         status: "ESCALATING",
@@ -1164,20 +1257,28 @@ describe("SosService", () => {
             status: "ACTIVE",
           },
         ],
-        save: jest.fn().mockResolvedValue({}),
+      };
+
+      const updated = {
+        ...candidate,
+        status: "RESOLVED",
+        resolvedBy: "CONTACT_CONFIRM",
       };
 
       (SosSessionModel.findOne as jest.Mock) = jest
         .fn()
-        .mockResolvedValue(mockSession);
+        .mockReturnValue(chainableQuery(candidate));
+      (SosSessionModel.findOneAndUpdate as jest.Mock) = jest
+        .fn()
+        .mockResolvedValue(updated);
       (SosContactModel.deleteMany as jest.Mock) = jest
         .fn()
         .mockResolvedValue({ deletedCount: 0 });
 
-      await sosService.confirmSafe(mockSessionId, mockUserId2);
+      const result = await sosService.confirmSafe(mockSessionId, mockUserId2);
 
-      expect(mockSession.status).toBe("RESOLVED");
-      expect(mockSession.resolvedBy).toBe("CONTACT_CONFIRM");
+      expect(result.status).toBe("RESOLVED");
+      expect(result.resolvedBy).toBe("CONTACT_CONFIRM");
     });
   });
 

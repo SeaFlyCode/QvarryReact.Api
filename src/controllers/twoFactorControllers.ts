@@ -478,10 +478,14 @@ export async function verifyTwoFactorLogin(
     // Vérifier le rate limiting par userId avant toute validation
     const attemptCheck = await checkTwoFactorAttempts(userId);
     if (!attemptCheck.allowed) {
+      const retryAfter = (attemptCheck.waitTime ?? 1) * 60;
+      res.setHeader("Retry-After", String(retryAfter));
       return res.status(429).json({
-        error: `Trop de tentatives. Veuillez réessayer dans ${attemptCheck.waitTime} minute(s).`,
+        error: "RATE_LIMITED",
         code: "TOO_MANY_ATTEMPTS",
+        retryAfter,
         waitTime: attemptCheck.waitTime,
+        message: `Trop de tentatives. Veuillez réessayer dans ${attemptCheck.waitTime} minute(s).`,
       });
     }
 

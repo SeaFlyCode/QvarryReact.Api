@@ -88,10 +88,15 @@ export async function handleLoginUser(req: Request, res: Response) {
     // ─────────────────────────────────────────────────────────────────────
     const attemptCheck = await checkLoginAttempts(email);
     if (!attemptCheck.allowed) {
+      const retryAfter = (attemptCheck.waitTime ?? 1) * 60;
+      res.setHeader("Retry-After", String(retryAfter));
       return res.status(429).json({
-        error: attemptCheck.message,
+        error: "RATE_LIMITED",
+        code: "TOO_MANY_ATTEMPTS",
+        retryAfter,
         waitTime: attemptCheck.waitTime,
         tooManyAttempts: true,
+        message: attemptCheck.message,
       });
     }
 

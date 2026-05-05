@@ -617,10 +617,14 @@ export async function mobileVerifyTwoFactorLogin(
     // Vérifier le rate limiting par userId
     const attemptCheck = await checkTwoFactorAttempts(userId);
     if (!attemptCheck.allowed) {
+      const retryAfter = (attemptCheck.waitTime ?? 1) * 60;
+      res.setHeader("Retry-After", String(retryAfter));
       return res.status(429).json({
-        error: `Trop de tentatives. Veuillez réessayer dans ${attemptCheck.waitTime} minute(s).`,
+        error: "RATE_LIMITED",
         code: "TOO_MANY_ATTEMPTS",
+        retryAfter,
         waitTime: attemptCheck.waitTime,
+        message: `Trop de tentatives. Veuillez réessayer dans ${attemptCheck.waitTime} minute(s).`,
       });
     }
 
@@ -649,10 +653,14 @@ export async function mobileVerifyTwoFactorLogin(
       const recoveryAttemptCheck =
         await redisSessionService.checkTwoFactorAttempts(recoveryKey);
       if (!recoveryAttemptCheck.allowed) {
+        const retryAfter = (recoveryAttemptCheck.waitTime ?? 1) * 60;
+        res.setHeader("Retry-After", String(retryAfter));
         return res.status(429).json({
-          error:
-            "Trop de tentatives avec les codes de récupération. Veuillez utiliser un code TOTP.",
+          error: "RATE_LIMITED",
           code: "RECOVERY_LOCKED",
+          retryAfter,
+          message:
+            "Trop de tentatives avec les codes de récupération. Veuillez utiliser un code TOTP.",
         });
       }
 
