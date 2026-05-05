@@ -33,6 +33,7 @@ import {
 } from "./authHelpers";
 import { logger } from "../../services/loggerService";
 import { setRequestContext } from "../../middlewares/correlationMiddleware";
+import { buildForbidden } from "../../utils/authErrors";
 
 // SEC-044: Champs sensibles à exclure des réponses /auth/me
 const AUTH_ME_EXCLUDED_FIELDS = [
@@ -147,9 +148,12 @@ export async function handleLoginUser(req: Request, res: Response) {
       loginLogger.warn("[AUTH] Tentative de connexion d'un compte bloqué", {
         email: maskEmail(email),
       });
+      // P1 — shape unifié { error: "FORBIDDEN", code, message } + flag legacy
       return res.status(403).json({
-        error:
+        ...buildForbidden(
+          "BLOCKED",
           "Votre compte a été suspendu. Contactez l'administrateur pour plus d'informations.",
+        ),
         accountBlocked: true,
       });
     }
@@ -158,10 +162,15 @@ export async function handleLoginUser(req: Request, res: Response) {
     // 4.5 VÉRIFICATION DE L'EMAIL
     // ─────────────────────────────────────────────────────────────────────
     if (!user.is_verified) {
+      // P1 — shape unifié + flags legacy
       return res.status(403).json({
-        error: "Veuillez vérifier votre adresse email avant de vous connecter.",
+        ...buildForbidden(
+          "UNVERIFIED",
+          "Veuillez vérifier votre adresse email avant de vous connecter.",
+          { email },
+        ),
         emailNotVerified: true,
-        email: email, // Pour permettre le renvoi du code
+        email, // legacy: utilisé par le frontend pour permettre le renvoi du code
       });
     }
 
@@ -174,9 +183,16 @@ export async function handleLoginUser(req: Request, res: Response) {
         loginLogger.warn("[AUTH] Tentative de connexion d'un compte refusé", {
           email: maskEmail(email),
         });
+        // P1 — shape unifié + flags legacy
         return res.status(403).json({
-          error:
+          ...buildForbidden(
+            "PENDING_VALIDATION",
             "Votre demande de compte a été refusée. Contactez l'administrateur pour plus d'informations.",
+            {
+              rejected: true,
+              rejectionReason: user.admin_rejection_reason || undefined,
+            },
+          ),
           accountRejected: true,
           rejectionReason: user.admin_rejection_reason || undefined,
         });
@@ -186,9 +202,12 @@ export async function handleLoginUser(req: Request, res: Response) {
         "[AUTH] Tentative de connexion d'un compte en attente de validation",
         { email: maskEmail(email) },
       );
+      // P1 — shape unifié + flags legacy
       return res.status(403).json({
-        error:
+        ...buildForbidden(
+          "PENDING_VALIDATION",
           "Votre compte est en attente de validation par un administrateur. Vous recevrez un email lorsque votre compte sera activé.",
+        ),
         pendingAdminValidation: true,
       });
     }

@@ -11,6 +11,12 @@ export {
   handleAuthMe,
 } from "./loginController";
 
+// P1 Auth — handlers unifiés (web + mobile, JSON body, pas de cookies serveur)
+export {
+  handleUnifiedLogin,
+  handleUnifiedComplete2FA,
+} from "./unifiedAuthController";
+
 // Password reset
 export {
   handleForgotPassword,

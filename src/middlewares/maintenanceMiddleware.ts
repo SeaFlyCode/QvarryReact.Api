@@ -32,6 +32,8 @@ export const maintenanceMiddleware = async (
       "/auth/verify-2fa",
       "/auth/check",
       "/auth/complete-2fa-login",
+      "/auth/complete-2fa", // P1 — endpoint unifié
+      "/auth/complete-2fa-legacy",
       "/admin",
     ];
 

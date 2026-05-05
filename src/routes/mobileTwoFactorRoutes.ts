@@ -5,7 +5,7 @@
 // Utilise l'authentification JWT mobile au lieu des sessions web
 // ═══════════════════════════════════════════════════════════════════════════
 
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import {
   mobileSetupTwoFactor,
   mobileVerifyAndEnableTwoFactor,
@@ -14,6 +14,7 @@ import {
   mobileRegenerateRecoveryCodes,
   mobileGetTwoFactorStatus,
 } from "../controllers/mobileTwoFactorControllers";
+import { handleUnifiedComplete2FA } from "../controllers/auth/unifiedAuthController";
 import { mobileAuthMiddleware } from "../middlewares/mobileAuthMiddleware";
 import {
   verifyMobilePlatform,
@@ -23,6 +24,14 @@ import {
 import { appCheckMiddleware } from "../middlewares/appCheckMiddleware";
 
 const router = express.Router();
+
+/**
+ * P1 — Marqueur "client mobile" pour le handler unifié.
+ */
+function markAsMobile(req: Request, _res: Response, next: NextFunction) {
+  (req as any).clientType = "mobile";
+  next();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ROUTES PROTÉGÉES (utilisateur connecté via JWT mobile)
@@ -183,8 +192,20 @@ router.post(
  *     "refreshTokenExpiresIn": number
  *   }
  */
+// P1 — verify-login devient un alias du handler unifié.
+// Conserve les middlewares mobile (sécurité, App Check) mais utilise le même
+// handler que /api/v1/auth/complete-2fa pour la parité web/mobile.
 router.post(
   "/verify-login",
+  mobileSecurityMiddleware,
+  appCheckMiddleware,
+  markAsMobile,
+  handleUnifiedComplete2FA,
+);
+
+// Rétro-compat : ancien handler 2FA mobile dédié. À supprimer après migration.
+router.post(
+  "/verify-login-legacy",
   mobileSecurityMiddleware,
   appCheckMiddleware,
   mobileVerifyTwoFactorLogin,

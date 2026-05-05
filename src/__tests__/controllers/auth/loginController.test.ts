@@ -189,11 +189,16 @@ describe("loginController", () => {
 
       await handleLoginUser(req as Request, res as Response);
 
+      // P1 — shape unifié { error: "FORBIDDEN", code: "BLOCKED", message } + flag legacy
       expect(res.status).toHaveBeenCalledWith(403);
-      expect(res.json).toHaveBeenCalledWith({
-        error: expect.stringContaining("suspendu"),
-        accountBlocked: true,
-      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: "FORBIDDEN",
+          code: "BLOCKED",
+          message: expect.stringContaining("suspendu"),
+          accountBlocked: true,
+        }),
+      );
     });
 
     it("devrait rejeter un email non vérifié", async () => {
@@ -203,12 +208,17 @@ describe("loginController", () => {
 
       await handleLoginUser(req as Request, res as Response);
 
+      // P1 — shape unifié + flags legacy
       expect(res.status).toHaveBeenCalledWith(403);
-      expect(res.json).toHaveBeenCalledWith({
-        error: expect.stringContaining("vérifier votre adresse email"),
-        emailNotVerified: true,
-        email: "user@test.com",
-      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: "FORBIDDEN",
+          code: "UNVERIFIED",
+          message: expect.stringContaining("vérifier votre adresse email"),
+          emailNotVerified: true,
+          email: "user@test.com",
+        }),
+      );
     });
 
     it("devrait rejeter un compte en attente de validation admin", async () => {
@@ -218,11 +228,16 @@ describe("loginController", () => {
 
       await handleLoginUser(req as Request, res as Response);
 
+      // P1 — shape unifié + flag legacy
       expect(res.status).toHaveBeenCalledWith(403);
-      expect(res.json).toHaveBeenCalledWith({
-        error: expect.stringContaining("attente de validation"),
-        pendingAdminValidation: true,
-      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: "FORBIDDEN",
+          code: "PENDING_VALIDATION",
+          message: expect.stringContaining("attente de validation"),
+          pendingAdminValidation: true,
+        }),
+      );
     });
 
     it("devrait rejeter un compte refusé par admin", async () => {
@@ -237,12 +252,17 @@ describe("loginController", () => {
 
       await handleLoginUser(req as Request, res as Response);
 
+      // P1 — shape unifié (compte refusé = PENDING_VALIDATION + details.rejected)
       expect(res.status).toHaveBeenCalledWith(403);
-      expect(res.json).toHaveBeenCalledWith({
-        error: expect.stringContaining("refusée"),
-        accountRejected: true,
-        rejectionReason: "Raison de refus",
-      });
+      expect(res.json).toHaveBeenCalledWith(
+        expect.objectContaining({
+          error: "FORBIDDEN",
+          code: "PENDING_VALIDATION",
+          message: expect.stringContaining("refusée"),
+          accountRejected: true,
+          rejectionReason: "Raison de refus",
+        }),
+      );
     });
 
     it("devrait demander le code 2FA si activé", async () => {

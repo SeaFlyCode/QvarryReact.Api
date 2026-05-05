@@ -224,10 +224,12 @@ describe("mobileAuthControllers", () => {
 
       await handleMobileLogin(req as Request, res as Response);
 
+      // P1 — shape unifié { error: "FORBIDDEN", code: "BLOCKED", message }
       expect(res.status).toHaveBeenCalledWith(403);
       expect(res.json).toHaveBeenCalledWith({
-        error: "Votre compte a été suspendu.",
-        code: "ACCOUNT_BLOCKED",
+        error: "FORBIDDEN",
+        code: "BLOCKED",
+        message: "Votre compte a été suspendu.",
       });
     });
 

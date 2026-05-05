@@ -2,6 +2,7 @@
 import { Request, Response, NextFunction } from "express";
 import { auditService } from "../services/auditService";
 import { logger } from "../services/loggerService";
+import { sendForbidden } from "../utils/authErrors";
 
 const adminMwLogger = logger.child({ service: "admin-middleware" });
 
@@ -48,10 +49,13 @@ export const adminMiddleware = async (
         },
       });
 
-      return res.status(403).json({
-        message: "Accès réservé aux administrateurs",
-        code: "NOT_ADMIN",
-      });
+      // P1 — 403 unifié { error: "FORBIDDEN", code, message }
+      return sendForbidden(
+        res,
+        "UNAUTHORIZED",
+        "Accès réservé aux administrateurs",
+        { reason: "NOT_ADMIN" },
+      );
     }
 
     // Log de l'accès admin (optionnel en debug)

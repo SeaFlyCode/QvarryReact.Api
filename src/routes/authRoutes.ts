@@ -9,6 +9,9 @@ import {
   handleResetPassword,
   completeLoginAfter2FA,
   handleAuthMe,
+  // P1 — handlers unifiés (web + mobile, pas de cookies serveur)
+  handleUnifiedLogin,
+  handleUnifiedComplete2FA,
 } from "../controllers/auth";
 import {
   handleManualSync,
@@ -71,7 +74,12 @@ const router = express.Router();
  *       429:
  *         description: Trop de tentatives de connexion
  */
-router.post("/login", verifyTurnstile, handleLoginUser);
+// P1 — endpoint unifié (web + mobile). JSON body, JSON response, pas de cookies serveur.
+// Le frontend pose ses propres cookies (web via routes Next.js, mobile via SecureStore).
+// L'ancien handleLoginUser (qui posait les cookies serveur) reste exporté
+// (`controllers/auth/loginController.ts`) à des fins de migration progressive.
+// Sera supprimé après bascule complète des frontends mobile et web.
+router.post("/login", verifyTurnstile, handleUnifiedLogin);
 
 /**
  * @swagger
@@ -288,6 +296,18 @@ router.post("/reset-password", handleResetPassword);
  *       429:
  *         description: Trop de tentatives
  */
-router.post("/complete-2fa-login", completeLoginAfter2FA);
+// P1 — endpoint 2FA unifié (web + mobile)
+// Accepte le shape { tempToken, code } et retourne { accessToken, refreshToken, user }.
+// Compatible avec les anciens tempToken (type: "temp-2fa-web") pour rétro-compat.
+router.post("/complete-2fa", handleUnifiedComplete2FA);
+
+// Alias rétro-compat : ancien chemin web. Pointe désormais vers le handler
+// unifié pour produire un comportement identique sur les deux URLs.
+// À supprimer une fois les frontends migrés.
+router.post("/complete-2fa-login", handleUnifiedComplete2FA);
+
+// Endpoint legacy explicite (cookies serveur) — conservé pour transition.
+// Préfère utiliser /complete-2fa qui retourne les tokens en JSON body.
+router.post("/complete-2fa-legacy", completeLoginAfter2FA);
 
 export default router;

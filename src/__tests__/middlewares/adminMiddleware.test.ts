@@ -139,11 +139,13 @@ describe("adminMiddleware", () => {
       // Act
       await adminMiddleware(req, res, next);
 
-      // Assert
+      // Assert — P1 shape unifié: { error: "FORBIDDEN", code, message, details? }
       expect(res.status).toHaveBeenCalledWith(403);
       expect(res.json).toHaveBeenCalledWith({
+        error: "FORBIDDEN",
+        code: "UNAUTHORIZED",
         message: "Accès réservé aux administrateurs",
-        code: "NOT_ADMIN",
+        details: { reason: "NOT_ADMIN" },
       });
       expect(next).not.toHaveBeenCalled();
 
@@ -172,11 +174,13 @@ describe("adminMiddleware", () => {
       // Act
       await adminMiddleware(req, res, next);
 
-      // Assert
+      // Assert — P1 shape unifié
       expect(res.status).toHaveBeenCalledWith(403);
       expect(res.json).toHaveBeenCalledWith({
+        error: "FORBIDDEN",
+        code: "UNAUTHORIZED",
         message: "Accès réservé aux administrateurs",
-        code: "NOT_ADMIN",
+        details: { reason: "NOT_ADMIN" },
       });
       expect(next).not.toHaveBeenCalled();
       expect(auditService.log).toHaveBeenCalled();

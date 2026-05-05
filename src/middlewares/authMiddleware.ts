@@ -11,6 +11,7 @@ import { anonymizeIp } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
 import { setRequestContext } from "./correlationMiddleware";
 import { JWT_COOKIE_NAME } from "../config/cookieConfig";
+import { sendForbidden } from "../utils/authErrors";
 
 const authLogger = logger.child({ service: "auth" });
 
@@ -272,10 +273,12 @@ export const authMiddleware = async (
         authLogger.warn("Utilisateur bloqué tente d'accéder", {
           userId: decoded.id,
         });
-        return res.status(403).json({
-          message: "Votre compte a été suspendu.",
-          code: "ACCOUNT_BLOCKED",
-        });
+        // P1 — 403 unifié { error: "FORBIDDEN", code: "BLOCKED", message }
+        return sendForbidden(
+          res,
+          "BLOCKED",
+          "Votre compte a été suspendu.",
+        );
       }
       // Utiliser la valeur en base, pas celle du token
       verifiedIsAdmin = user.is_admin === true;
@@ -339,10 +342,13 @@ export const authMiddleware = async (
           });
         }
 
-        return res.status(403).json({
-          message: "Accès refusé. Incident de sécurité enregistré.",
-          code: "PRIVILEGE_ESCALATION_BLOCKED",
-        });
+        // P1 — 403 unifié, code UNAUTHORIZED (motif générique)
+        return sendForbidden(
+          res,
+          "UNAUTHORIZED",
+          "Accès refusé. Incident de sécurité enregistré.",
+          { reason: "PRIVILEGE_ESCALATION_BLOCKED" },
+        );
       }
     }
 

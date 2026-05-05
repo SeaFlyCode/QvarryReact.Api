@@ -576,8 +576,12 @@ app.use("/api/v1/auth/check", authCheckLimiter);
 // Routes 2FA - TOUTES les routes 2FA doivent être limitées (RISQUE ÉLEVÉ - brute force TOTP)
 app.use("/api/2fa", twoFactorLimiter);
 app.use("/api/auth/complete-2fa-login", twoFactorLimiter);
+app.use("/api/auth/complete-2fa", twoFactorLimiter); // P1 — endpoint unifié
+app.use("/api/auth/complete-2fa-legacy", twoFactorLimiter);
 app.use("/api/v1/2fa", twoFactorLimiter);
 app.use("/api/v1/auth/complete-2fa-login", twoFactorLimiter);
+app.use("/api/v1/auth/complete-2fa", twoFactorLimiter); // P1 — endpoint unifié
+app.use("/api/v1/auth/complete-2fa-legacy", twoFactorLimiter);
 
 // Routes de création de compte et vérification d'email
 // registerLimiter uniquement pour POST (création de compte), pas GET/PUT

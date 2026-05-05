@@ -52,6 +52,7 @@ import {
   getAllUsersStorage,
   getUserStorageDetails,
   updateUserQuota,
+  setUserQuotaBytes,
   getGlobalStorageStats,
   cleanupOrphanFiles,
 } from "../controllers/adminStorageController";
@@ -195,6 +196,12 @@ router.patch(
   "/users/:userId/quota",
   validateObjectId("userId"),
   updateUserQuota,
+);
+// P1 — endpoint POST appelé par l'interface admin web. Body: { quotaBytes }.
+router.post(
+  "/users/:userId/quota",
+  validateObjectId("userId"),
+  setUserQuotaBytes,
 );
 router.get("/storage/stats", getGlobalStorageStats);
 router.post("/storage/cleanup", cleanupOrphanFiles);

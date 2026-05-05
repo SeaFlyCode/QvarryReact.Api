@@ -91,6 +91,74 @@ export const getUserStorageDetails = async (
 };
 
 /**
+ * P1 — Met à jour le quota d'un utilisateur (en bytes).
+ * POST /api/v1/admin/users/:userId/quota
+ *
+ * Body: { quotaBytes: number }
+ * Réponse 200: { id, quotaBytes }
+ *
+ * Endpoint dédié appelé par l'interface admin web (frontend Next.js).
+ * Le PATCH /quota (avec `quotaGb`) reste disponible pour rétro-compat.
+ */
+export const setUserQuotaBytes = async (
+  req: Request,
+  res: Response,
+): Promise<void> => {
+  try {
+    const { userId } = req.params;
+    const { quotaBytes } = req.body || {};
+
+    if (!mongoose.Types.ObjectId.isValid(userId)) {
+      res.status(400).json({ error: "ID utilisateur invalide" });
+      return;
+    }
+
+    if (
+      typeof quotaBytes !== "number" ||
+      !Number.isFinite(quotaBytes) ||
+      quotaBytes < 0
+    ) {
+      res.status(400).json({
+        error: "Le quota doit être un nombre positif (en octets)",
+        code: "INVALID_QUOTA_BYTES",
+      });
+      return;
+    }
+
+    // Borne haute raisonnable pour éviter les valeurs aberrantes (1 PB)
+    const MAX_QUOTA_BYTES = 1024 * 1024 * 1024 * 1024 * 1024;
+    if (quotaBytes > MAX_QUOTA_BYTES) {
+      res.status(400).json({
+        error: "Quota excessif (max 1 Po)",
+        code: "QUOTA_TOO_LARGE",
+      });
+      return;
+    }
+
+    await storageQuotaService.updateUserQuota(userId, quotaBytes);
+
+    logger.info("Quota utilisateur mis à jour par admin (POST/bytes)", {
+      adminId: req.user?.id,
+      targetUserId: userId,
+      newQuotaBytes: quotaBytes,
+    });
+
+    res.status(200).json({
+      id: userId,
+      quotaBytes,
+    });
+  } catch (error) {
+    logger.error("Erreur lors de la mise à jour du quota (bytes)", { error });
+    res.status(500).json({
+      error:
+        error instanceof Error
+          ? error.message
+          : "Erreur lors de la mise à jour du quota",
+    });
+  }
+};
+
+/**
  * Met à jour le quota d'un utilisateur
  * PATCH /api/admin/users/:userId/quota
  */

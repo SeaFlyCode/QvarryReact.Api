@@ -680,10 +680,12 @@ describe("authMiddleware", () => {
 
       await authMiddleware(req, res, next);
 
+      // P1 — shape unifié { error: "FORBIDDEN", code: "BLOCKED", message }
       expect(res.status).toHaveBeenCalledWith(403);
       expect(res.json).toHaveBeenCalledWith({
+        error: "FORBIDDEN",
+        code: "BLOCKED",
         message: "Votre compte a été suspendu.",
-        code: "ACCOUNT_BLOCKED",
       });
     });
 
@@ -718,10 +720,13 @@ describe("authMiddleware", () => {
 
       await authMiddleware(req, res, next);
 
+      // P1 — shape unifié { error: "FORBIDDEN", code: "UNAUTHORIZED", message, details }
       expect(res.status).toHaveBeenCalledWith(403);
       expect(res.json).toHaveBeenCalledWith({
+        error: "FORBIDDEN",
+        code: "UNAUTHORIZED",
         message: "Accès refusé. Incident de sécurité enregistré.",
-        code: "PRIVILEGE_ESCALATION_BLOCKED",
+        details: { reason: "PRIVILEGE_ESCALATION_BLOCKED" },
       });
       expect(mockRedisSessionService.blacklistToken).toHaveBeenCalled();
       expect(next).not.toHaveBeenCalled();

@@ -16,6 +16,7 @@ import UserModel from "../models/users";
 import { anonymizeIp } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
 import { setRequestContext } from "./correlationMiddleware";
+import { sendForbidden } from "../utils/authErrors";
 
 const mobileAuthLogger = logger.child({ service: "mobile-auth" });
 
@@ -228,10 +229,8 @@ export const mobileAuthMiddleware = async (
         mobileAuthLogger.warn("Utilisateur bloqué tente d'accéder", {
           userId: decoded.id,
         });
-        return res.status(403).json({
-          error: "Votre compte a été suspendu",
-          code: "ACCOUNT_BLOCKED",
-        });
+        // P1 — 403 unifié
+        return sendForbidden(res, "BLOCKED", "Votre compte a été suspendu");
       }
 
       // Utiliser la valeur en base, pas celle du token
@@ -303,10 +302,13 @@ export const mobileAuthMiddleware = async (
           });
         }
 
-        return res.status(403).json({
-          error: "Accès refusé. Incident de sécurité enregistré.",
-          code: "PRIVILEGE_ESCALATION_BLOCKED",
-        });
+        // P1 — 403 unifié
+        return sendForbidden(
+          res,
+          "UNAUTHORIZED",
+          "Accès refusé. Incident de sécurité enregistré.",
+          { reason: "PRIVILEGE_ESCALATION_BLOCKED" },
+        );
       }
     }
 

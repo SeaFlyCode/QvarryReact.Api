@@ -27,6 +27,7 @@ import {
 import { associateDeviceWithUser } from "../middlewares/mobileSecurityMiddleware";
 import { maskEmail } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
+import { buildForbidden } from "../utils/authErrors";
 
 const mobileAuthLogger = logger.child({ service: "mobile-auth" });
 
@@ -121,34 +122,48 @@ export async function handleMobileLogin(req: Request, res: Response) {
       });
     }
 
-    // 5. VÉRIFICATION ÉTAT DU COMPTE
+    // 5. VÉRIFICATION ÉTAT DU COMPTE — P1 shape unifié { error, code, message }
     if (user.is_blocked) {
-      return res.status(403).json({
-        error: "Votre compte a été suspendu.",
-        code: "ACCOUNT_BLOCKED",
-      });
+      return res
+        .status(403)
+        .json(buildForbidden("BLOCKED", "Votre compte a été suspendu."));
     }
 
     if (!user.is_verified) {
       return res.status(403).json({
-        error: "Veuillez vérifier votre adresse email.",
-        code: "EMAIL_NOT_VERIFIED",
-        email: email,
+        ...buildForbidden(
+          "UNVERIFIED",
+          "Veuillez vérifier votre adresse email.",
+          { email },
+        ),
+        // legacy: gardé pour rétro-compat clients existants
+        email,
       });
     }
 
     if (!user.is_admin_validated) {
       if (user.admin_validation_rejected) {
-        return res.status(403).json({
-          error: "Votre demande de compte a été refusée.",
-          code: "ACCOUNT_REJECTED",
-          reason: user.admin_rejection_reason,
-        });
+        return res
+          .status(403)
+          .json(
+            buildForbidden(
+              "PENDING_VALIDATION",
+              "Votre demande de compte a été refusée.",
+              {
+                rejected: true,
+                rejectionReason: user.admin_rejection_reason,
+              },
+            ),
+          );
       }
-      return res.status(403).json({
-        error: "Votre compte est en attente de validation.",
-        code: "PENDING_VALIDATION",
-      });
+      return res
+        .status(403)
+        .json(
+          buildForbidden(
+            "PENDING_VALIDATION",
+            "Votre compte est en attente de validation.",
+          ),
+        );
     }
 
     // 6. VÉRIFICATION 2FA

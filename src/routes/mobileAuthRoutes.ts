@@ -5,7 +5,7 @@
 // Utilise des protections alternatives à Turnstile (non compatible mobile)
 // ═══════════════════════════════════════════════════════════════════════════
 
-import express from "express";
+import express, { Request, Response, NextFunction } from "express";
 import {
   handleMobileLogin,
   handleMobileRegister,
@@ -14,6 +14,7 @@ import {
   handleMobileGetMe,
 } from "../controllers/mobileAuthControllers";
 import { handleLogoutUser } from "../controllers/auth/logoutController";
+import { handleUnifiedLogin } from "../controllers/auth/unifiedAuthController";
 import {
   mobileSecurityMiddleware,
   verifyMobilePlatform,
@@ -27,6 +28,15 @@ import {
 } from "../config/rateLimitConfig";
 
 const router = express.Router();
+
+/**
+ * P1 — Marqueur "client mobile" pour le handler unifié.
+ * Le handler unifié détecte le client via ce flag (priorité) ou via mobileContext.
+ */
+function markAsMobile(req: Request, _res: Response, next: NextFunction) {
+  (req as any).clientType = "mobile";
+  next();
+}
 
 // ═══════════════════════════════════════════════════════════════════════════
 // ROUTES PUBLIQUES (protégées par sécurité mobile)
@@ -48,11 +58,28 @@ const router = express.Router();
  *
  * HIGH-003: Double rate limiting (IP + Device) pour sécuriser l'attestation
  */
+// P1 — Login mobile : alias du handler unifié.
+// Garde tous les middlewares de sécurité mobile (App Check, attestation, etc.)
+// mais utilise le même handler que /api/v1/auth/login pour garantir la parité
+// web/mobile (shape de réponse, codes 403, gestion 2FA…).
 router.post(
   "/login",
   appCheckMiddleware,
   mobileAttestationLimiter, // ✅ Par IP (3/heure)
   mobileAttestationByDeviceLimiter, // ✅ Par deviceId (5/jour)
+  mobileSecurityMiddleware,
+  markAsMobile,
+  handleUnifiedLogin,
+);
+
+// Rétro-compat : ancien handler mobile dédié, gardé pour permettre une bascule
+// progressive (l'app mobile pourra basculer sur /api/v1/auth/login dans une PR
+// suivante). À supprimer après migration.
+router.post(
+  "/login-legacy",
+  appCheckMiddleware,
+  mobileAttestationLimiter,
+  mobileAttestationByDeviceLimiter,
   mobileSecurityMiddleware,
   handleMobileLogin,
 );
