@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from "mongoose";
+import { softDeletePlugin } from "../utils/softDeletePlugin";
 
 export interface IPoint extends Document {
   userId: mongoose.Types.ObjectId;
@@ -88,6 +89,9 @@ const pointSchema = new Schema(
   },
   { timestamps: true },
 );
+
+// REFONTE §4.2.2: soft-delete par défaut (exclut deletedAt !== null des find).
+pointSchema.plugin(softDeletePlugin);
 
 // Index pour accélérer les requêtes géospatiales
 pointSchema.index({ location: "2dsphere" });

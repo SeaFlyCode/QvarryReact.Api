@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from "mongoose";
+import { softDeletePlugin } from "../utils/softDeletePlugin";
 
 // Interface pour les fiches avec des coordonnées chiffrées
 export interface IFiche extends Document {
@@ -140,6 +141,10 @@ const ficheSchema = new Schema<IFiche>(
     },
   },
 );
+
+// REFONTE §4.2.2: soft-delete par défaut (exclut deletedAt !== null des find).
+// Opt-in via .setOptions({ withDeleted: true }) pour archivage/sync.
+ficheSchema.plugin(softDeletePlugin);
 
 // Index pour accélérer les requêtes de soft-delete
 ficheSchema.index({ deletedAt: 1 });

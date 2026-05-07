@@ -161,9 +161,12 @@ export async function deleteUserById(userId: string): Promise<{
 
   // Archiver les points
   // BUG-003: Utilisation de Promise.all pour paralléliser l'archivage (éviter le pattern N+1)
+  // §4.2.2: archivage RGPD doit inclure les soft-deleted (cascade complète)
   const pointsToArchive = await PointModel.find({
     userId: userObjectId,
-  }).lean();
+  })
+    .setOptions({ withDeleted: true })
+    .lean();
   await Promise.all(
     pointsToArchive.map((point) =>
       dataArchiveService.archiveEntity(
@@ -181,9 +184,12 @@ export async function deleteUserById(userId: string): Promise<{
   );
 
   // Archiver les fiches
+  // §4.2.2: archivage RGPD doit inclure les soft-deleted (cascade complète)
   const fichesToArchive = await FicheModel.find({
     userId: userObjectId,
-  }).lean();
+  })
+    .setOptions({ withDeleted: true })
+    .lean();
   await Promise.all(
     fichesToArchive.map((fiche) =>
       dataArchiveService.archiveEntity(
@@ -201,7 +207,10 @@ export async function deleteUserById(userId: string): Promise<{
   );
 
   // Archiver les listes
-  const listsToArchive = await ListModel.find({ userId: userObjectId }).lean();
+  // §4.2.2: archivage RGPD doit inclure les soft-deleted (cascade complète)
+  const listsToArchive = await ListModel.find({ userId: userObjectId })
+    .setOptions({ withDeleted: true })
+    .lean();
   await Promise.all(
     listsToArchive.map((list) =>
       dataArchiveService.archiveEntity(

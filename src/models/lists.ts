@@ -1,4 +1,5 @@
 import mongoose, { Schema, Document } from "mongoose";
+import { softDeletePlugin } from "../utils/softDeletePlugin";
 
 export interface IList extends Document {
   userId: mongoose.Types.ObjectId;
@@ -60,6 +61,9 @@ const listSchema = new Schema(
   },
   { timestamps: true },
 );
+
+// REFONTE §4.2.2: soft-delete par défaut (exclut deletedAt !== null des find).
+listSchema.plugin(softDeletePlugin);
 
 // Index pour accélérer les requêtes de soft-delete
 listSchema.index({ deletedAt: 1 });

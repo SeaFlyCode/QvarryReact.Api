@@ -1,4 +1,5 @@
 import mongoose, { Document, Schema, Model } from "mongoose";
+import { softDeletePlugin } from "../utils/softDeletePlugin";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // MODÈLE SOS CONTACT (CONTACTS D'URGENCE)
@@ -84,6 +85,9 @@ const sosContactSchema: Schema<ISosContact> = new Schema(
     timestamps: true,
   },
 );
+
+// REFONTE §4.2.2: soft-delete par défaut (exclut deletedAt !== null des find).
+sosContactSchema.plugin(softDeletePlugin);
 
 // Index composites
 sosContactSchema.index({ userId: 1, isDefault: -1, createdAt: -1 });
