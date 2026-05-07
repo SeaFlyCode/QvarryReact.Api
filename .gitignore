@@ -397,3 +397,6 @@ coverage/
 
 # Jest cache
 .jest/
+
+# Smoke test credentials (généré par scripts/create-smoke-test-account.ts)
+.smoke-test-creds
