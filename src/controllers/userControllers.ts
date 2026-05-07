@@ -33,6 +33,11 @@ import {
   type NotificationPreferences,
 } from "../services/notificationPreferencesService";
 import { webSocketService } from "../services/webSocketService";
+import {
+  serializeUserForApi,
+  serializeUsersForApi,
+  SENSITIVE_FIELDS as USER_SERIALIZER_SENSITIVE_FIELDS,
+} from "../utils/userSerializer";
 
 const userLogger = logger.child({ service: "users" });
 
@@ -48,42 +53,9 @@ function getOriginDeviceId(req: Request): string | undefined {
   return undefined;
 }
 
-// SEC-044: Champs sensibles à exclure des réponses API
-const EXCLUDED_USER_FIELDS = [
-  "password",
-  "password_history",
-  "reset_password_token",
-  "reset_password_expires",
-  "email_verification_token",
-  "email_verification_code",
-  "email_verification_expires",
-  "two_factor_secret",
-  "two_factor_recovery_codes",
-];
-
-function decryptUser(user: IUser): IUser {
-  return {
-    ...user.toObject(),
-    name: decrypt(user.name),
-    surname: decrypt(user.surname),
-    pseudo: user.pseudo ? decrypt(user.pseudo) : undefined,
-    email: decrypt(user.email),
-    ip_creation: decrypt(user.ip_creation),
-    ip_last_connection: decrypt(user.ip_last_connection),
-  };
-}
-
-/**
- * SEC-044: Nettoie les données utilisateur avant de les retourner au client
- * Supprime tous les champs sensibles (mots de passe, tokens, secrets)
- */
-function sanitizeUserForResponse(user: any): any {
-  const sanitized = { ...user };
-  EXCLUDED_USER_FIELDS.forEach((field) => {
-    delete sanitized[field];
-  });
-  return sanitized;
-}
+// §4.1.5 B: utilise SENSITIVE_FIELDS canoniques de userSerializer pour le
+// .select() Mongoose (cohérence avec la sanitize côté response).
+const EXCLUDED_USER_FIELDS = USER_SERIALIZER_SENSITIVE_FIELDS;
 
 /**
  * Génère un code de contact cryptographiquement sûr
@@ -288,11 +260,8 @@ export async function handleGetAllUsers(req: Request, res: Response) {
       UserModel.countDocuments(),
     ]);
 
-    // SEC-044: Déchiffrer puis sanitize chaque utilisateur
-    const sanitizedUsers = users.map((user) => {
-      const decrypted = decryptUser(user);
-      return sanitizeUserForResponse(decrypted);
-    });
+    // §4.1.5 B: serializeUsersForApi (déchiffre + supprime sensibles + IPs)
+    const sanitizedUsers = serializeUsersForApi(users);
 
     res.status(200).json({
       data: sanitizedUsers,
@@ -320,8 +289,9 @@ export async function handleGetAllUsers(req: Request, res: Response) {
  */
 async function fetchAndFormatUser(
   userId: string,
-): Promise<ReturnType<typeof sanitizeUserForResponse> | null> {
-  // SEC-044: Exclure les champs sensibles de la query Mongoose
+): Promise<ReturnType<typeof serializeUserForApi> | null> {
+  // SEC-044 + §4.1.5 B: query Mongoose .select(-sensitive) pour bandwidth,
+  // puis serializeUserForApi (déchiffre + supprime sensibles + IPs).
   const selectFields = EXCLUDED_USER_FIELDS.map((field) => `-${field}`).join(
     " ",
   );
@@ -331,8 +301,7 @@ async function fetchAndFormatUser(
     return null;
   }
 
-  const decrypted = decryptUser(user);
-  return sanitizeUserForResponse(decrypted);
+  return serializeUserForApi(user);
 }
 
 export async function handleGetUserById(req: Request, res: Response) {

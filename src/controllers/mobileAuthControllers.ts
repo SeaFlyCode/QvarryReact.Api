@@ -614,19 +614,11 @@ export async function handleMobileForgotPassword(req: Request, res: Response) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 // SEC-044: Champs sensibles à exclure des réponses /mobile/auth/me
-const MOBILE_ME_EXCLUDED_FIELDS = [
-  "password",
-  "password_history",
-  "reset_password_token",
-  "reset_password_expires",
-  "email_verification_token",
-  "email_verification_code",
-  "email_verification_expires",
-  "two_factor_secret",
-  "two_factor_recovery_codes",
-  "ip_creation",
-  "ip_last_connection",
-];
+// §4.1.5 B: utilise SENSITIVE_FIELDS canoniques (cohérence cross-controllers).
+import {
+  serializeUserForApi,
+  SENSITIVE_FIELDS as MOBILE_ME_EXCLUDED_FIELDS,
+} from "../utils/userSerializer";
 
 /**
  * GET /api/v1/mobile/auth/me
@@ -644,7 +636,8 @@ export async function handleMobileGetMe(req: Request, res: Response) {
       });
     }
 
-    // SEC-044: Exclure les champs sensibles de la query Mongoose
+    // SEC-044 + §4.1.5 B: query Mongoose .select(-sensitive) pour bandwidth,
+    // puis serializeUserForApi (déchiffre + supprime sensibles + IPs).
     const selectFields = MOBILE_ME_EXCLUDED_FIELDS.map(
       (field) => `-${field}`,
     ).join(" ");
@@ -657,27 +650,11 @@ export async function handleMobileGetMe(req: Request, res: Response) {
       });
     }
 
-    // Déchiffrer les champs chiffrés
-    const { ip_creation: _ic, ip_last_connection: _ilc, ...userObj } = user.toObject();
-    const decrypted = {
-      ...userObj,
-      name: decrypt(user.name),
-      surname: decrypt(user.surname),
-      pseudo: user.pseudo ? decrypt(user.pseudo) : undefined,
-      email: decrypt(user.email),
-    };
-
-    // Sanitize finale : supprimer les champs exclus restants
-    const sanitized: Record<string, any> = { ...decrypted };
-    MOBILE_ME_EXCLUDED_FIELDS.forEach((field) => {
-      delete sanitized[field];
-    });
-
     mobileAuthLogger.debug("[MOBILE-AUTH] /mobile/auth/me — profil récupéré", {
       userId,
     });
 
-    return res.status(200).json(sanitized);
+    return res.status(200).json(serializeUserForApi(user));
   } catch (error) {
     mobileAuthLogger.error(
       "[MOBILE-AUTH] Erreur lors de la récupération du profil /me",

@@ -36,19 +36,11 @@ import { setRequestContext } from "../../middlewares/correlationMiddleware";
 import { buildForbidden } from "../../utils/authErrors";
 
 // SEC-044: Champs sensibles à exclure des réponses /auth/me
-const AUTH_ME_EXCLUDED_FIELDS = [
-  "password",
-  "password_history",
-  "reset_password_token",
-  "reset_password_expires",
-  "email_verification_token",
-  "email_verification_code",
-  "email_verification_expires",
-  "two_factor_secret",
-  "two_factor_recovery_codes",
-  "ip_creation",
-  "ip_last_connection",
-];
+// §4.1.5 B: utilise SENSITIVE_FIELDS canoniques de userSerializer (cohérence cross-repo).
+import {
+  serializeUserForApi,
+  SENSITIVE_FIELDS as AUTH_ME_EXCLUDED_FIELDS,
+} from "../../utils/userSerializer";
 
 const loginLogger = logger.child({ service: "auth-login" });
 
@@ -917,7 +909,8 @@ export async function handleAuthMe(req: Request, res: Response) {
       return res.status(401).json({ message: "Authentification requise" });
     }
 
-    // SEC-044: Exclure les champs sensibles de la query Mongoose
+    // SEC-044 + §4.1.5 B: query Mongoose .select(-sensitive) pour bandwidth,
+    // puis serializeUserForApi (déchiffre + supprime sensibles + IPs).
     const selectFields = AUTH_ME_EXCLUDED_FIELDS.map(
       (field) => `-${field}`,
     ).join(" ");
@@ -927,25 +920,9 @@ export async function handleAuthMe(req: Request, res: Response) {
       return res.status(404).json({ message: "Utilisateur non trouvé." });
     }
 
-    // Déchiffrer les champs chiffrés
-    const { ip_creation: _ic, ip_last_connection: _ilc, ...userObj } = user.toObject();
-    const decrypted = {
-      ...userObj,
-      name: decrypt(user.name),
-      surname: decrypt(user.surname),
-      pseudo: user.pseudo ? decrypt(user.pseudo) : undefined,
-      email: decrypt(user.email),
-    };
-
-    // Sanitize finale : supprimer les champs exclus restants
-    const sanitized: Record<string, any> = { ...decrypted };
-    AUTH_ME_EXCLUDED_FIELDS.forEach((field) => {
-      delete sanitized[field];
-    });
-
     loginLogger.debug("[AUTH] /auth/me — profil récupéré", { userId });
 
-    return res.status(200).json(sanitized);
+    return res.status(200).json(serializeUserForApi(user));
   } catch (error: unknown) {
     loginLogger.error("[AUTH] Erreur lors de la récupération du profil /me", {
       userId: req.user?.id,

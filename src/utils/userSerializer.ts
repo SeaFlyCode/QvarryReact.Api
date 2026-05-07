@@ -17,7 +17,7 @@
 
 import { decrypt } from "./masterEncryptionUtils";
 
-const SENSITIVE_FIELDS = [
+export const SENSITIVE_FIELDS = [
   "password",
   "password_history",
   "reset_password_token",
@@ -28,6 +28,9 @@ const SENSITIVE_FIELDS = [
   "two_factor_secret",
   "two_factor_recovery_codes",
   "emailHash",
+  // §4.1.5 B: IPs jamais exposées au client (audit/sécurité interne uniquement)
+  "ip_creation",
+  "ip_last_connection",
 ] as const;
 
 const ENCRYPTED_FIELDS = [
@@ -35,8 +38,6 @@ const ENCRYPTED_FIELDS = [
   "surname",
   "pseudo",
   "email",
-  "ip_creation",
-  "ip_last_connection",
 ] as const;
 
 export interface ApiUser {
