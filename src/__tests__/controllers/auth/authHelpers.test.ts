@@ -276,7 +276,8 @@ describe("authHelpers", () => {
           expiresIn: "15m",
           algorithm: "HS256",
           issuer: "qvarry-api",
-          audience: "qvarry-client",
+          // V7r6: audience différenciée par platform Vague 1 (qvarry-mobile pour mobile).
+          audience: "qvarry-mobile",
         }),
       );
     });

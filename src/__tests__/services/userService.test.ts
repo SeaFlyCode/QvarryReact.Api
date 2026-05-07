@@ -1121,7 +1121,7 @@ describe("userService", () => {
       (masterEncryptionUtils.hashEmail as jest.Mock).mockReturnValue(
         "hashed-email",
       );
-      (UserModel.findOne as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findOne as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       const result = await getUserByEmail(email);
 
@@ -1144,7 +1144,7 @@ describe("userService", () => {
       (masterEncryptionUtils.hashEmail as jest.Mock).mockReturnValue(
         "hashed-email",
       );
-      (UserModel.findOne as jest.Mock).mockResolvedValue(null); // No hash match
+      (UserModel.findOne as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(null) }); // No hash match
       (UserModel.find as jest.Mock).mockResolvedValue([mockUser]);
       (masterEncryptionUtils.decrypt as jest.Mock).mockReturnValue(email);
 
@@ -1172,7 +1172,7 @@ describe("userService", () => {
       (masterEncryptionUtils.hashEmail as jest.Mock).mockReturnValue(
         "new-hashed-email",
       );
-      (UserModel.findOne as jest.Mock).mockResolvedValue(null);
+      (UserModel.findOne as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(null) });
       (UserModel.find as jest.Mock).mockResolvedValue([mockUser]);
       (masterEncryptionUtils.decrypt as jest.Mock).mockReturnValue(email);
 
@@ -1188,7 +1188,7 @@ describe("userService", () => {
       (masterEncryptionUtils.hashEmail as jest.Mock).mockReturnValue(
         "hashed-email",
       );
-      (UserModel.findOne as jest.Mock).mockResolvedValue(null);
+      (UserModel.findOne as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(null) });
       (UserModel.find as jest.Mock).mockResolvedValue([]);
 
       const result = await getUserByEmail(email);
@@ -1227,7 +1227,7 @@ describe("userService", () => {
       (masterEncryptionUtils.hashEmail as jest.Mock).mockReturnValue(
         "hashed-email",
       );
-      (UserModel.findOne as jest.Mock).mockResolvedValue(null);
+      (UserModel.findOne as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(null) });
       (UserModel.find as jest.Mock).mockResolvedValue([mockUser1, mockUser2]);
       (masterEncryptionUtils.decrypt as jest.Mock)
         .mockReturnValueOnce("john@test.com") // mockUser1
