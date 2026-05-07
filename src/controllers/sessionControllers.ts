@@ -8,6 +8,7 @@ import { refreshTokenService } from "../services/refreshTokenService";
 import { auditService } from "../services/auditService";
 import { logger } from "../services/loggerService";
 import { UserModel } from "../models/users";
+import { webSocketService } from "../services/webSocketService";
 
 const sessionLogger = logger.child({ service: "session" });
 
@@ -75,6 +76,17 @@ export async function revokeAllOtherSessions(req: Request, res: Response) {
       revokedCount,
       userId,
     });
+
+    // 2026-05-07 §4.1.4 B: force logout temps-réel sur tous les autres devices.
+    // Les clients reçoivent `session_revoked` avec revokedTokenId="all" et se
+    // déconnectent si leur tokenId courant n'est pas le keptTokenId (filtrage front).
+    if (revokedCount > 0) {
+      webSocketService.broadcastSessionRevoked(
+        userId,
+        "all",
+        "user_revoked_all",
+      );
+    }
 
     res.status(200).json({
       success: true,

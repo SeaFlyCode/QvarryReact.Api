@@ -3883,6 +3883,64 @@ class WebSocketService {
       });
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-05-07 §4.1.4 B — SESSION RÉVOQUÉE (force logout WS)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Quand l'utilisateur révoque une session via DELETE /security/sessions/:id,
+  // on émet `session_revoked` à TOUS ses sockets notifications. Le client
+  // dont le tokenId match se déconnecte ; les autres ignorent. Évite d'attendre
+  // le prochain refresh HTTP (qui ne se ferait que via heartbeat ou nav user).
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Broadcast `session_revoked` à tous les sockets notifications du user.
+   * Si `tokenId === "all"` → toutes les autres sessions ont été révoquées.
+   *
+   * Best-effort : un crash WS ne fait jamais échouer la requête HTTP.
+   */
+  broadcastSessionRevoked(
+    userId: string,
+    revokedTokenId: string | "all",
+    reason: string = "user_revoked",
+  ): void {
+    if (!userId) return;
+
+    try {
+      const event = {
+        type: "session_revoked",
+        revokedTokenId,
+        reason,
+        timestamp: Date.now(),
+      };
+
+      this.sendNotificationToUserLocal(userId, event);
+
+      if (redisPubSubService.isEnabled()) {
+        try {
+          redisPubSubService.publishNotification(userId, event);
+        } catch (err) {
+          wsLogger.error("[WS] session_revoked pub/sub publish failed", {
+            userId,
+            revokedTokenId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      wsLogger.info("[WS] session_revoked broadcast", {
+        userId,
+        revokedTokenId,
+        reason,
+      });
+    } catch (err) {
+      wsLogger.error("[WS] session_revoked broadcast failed (swallowed)", {
+        userId,
+        revokedTokenId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 }
 
 // Export d'une instance singleton

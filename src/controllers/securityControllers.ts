@@ -3,6 +3,7 @@ import { Request, Response } from "express";
 import { refreshTokenService } from "../services/refreshTokenService";
 import { auditService } from "../services/auditService";
 import { logger } from "../services/loggerService";
+import { webSocketService } from "../services/webSocketService";
 
 const securityLogger = logger.child({ service: "security" });
 
@@ -88,6 +89,10 @@ export async function revokeSession(req: Request, res: Response) {
       userAgent: req.get("user-agent"),
       details: { revokedTokenId: tokenId },
     });
+
+    // 2026-05-07 §4.1.4 B: force logout temps-réel sur le device concerné
+    // (le client dont le tokenId match se déconnecte, les autres ignorent).
+    webSocketService.broadcastSessionRevoked(userId, tokenId, "user_revoked");
 
     res
       .status(200)

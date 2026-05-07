@@ -844,24 +844,63 @@ export class RedisSessionService {
   // ═══════════════════════════════════════════════════════════════════════
   private readonly WS_TOKEN_PREFIX = "qvarry:ws_token:";
   private readonly WS_TOKEN_TTL = 300; // 5 minutes
+  /**
+   * Fenêtre de dédup (ms) : si un JTI est reconsommé dans cet intervalle après
+   * sa première consommation, on retourne true (succès) au lieu de reject.
+   * Cf. REFONTE §4.1.4 A — évite la boucle d'erreurs auth quand le client
+   * retry après timeout réseau.
+   */
+  private readonly WS_TOKEN_DEDUP_WINDOW_MS = parseInt(
+    process.env.WS_TOKEN_DEDUP_WINDOW_MS || "3000",
+    10,
+  );
 
   /**
-   * Marquer un token WebSocket comme utilisé (à usage unique)
-   * @returns true si le token était valide et a été consommé, false si déjà utilisé
+   * Marquer un token WebSocket comme utilisé (à usage unique).
+   *
+   * Une fenêtre de dédup de quelques secondes permet au même JTI d'être
+   * reconsommé après un retry réseau (le client n'a pas reçu le 200, retry,
+   * sans dédup le 2e appel échoue alors qu'il devrait succéder).
+   *
+   * @returns true si le token est valide ou si reconsommé dans la fenêtre dédup,
+   *          false s'il est déjà consommé hors fenêtre.
    */
   async consumeWsToken(tokenJti: string): Promise<boolean> {
     if (redis) {
       try {
         const key = `${this.WS_TOKEN_PREFIX}${tokenJti}`;
-        // SETNX retourne 1 si la clé n'existait pas (première utilisation)
-        // Retourne 0 si la clé existait déjà (token déjà consommé)
-        const result = await redis.setnx(key, "used");
-        if (result === 1) {
-          // Définir un TTL pour nettoyer automatiquement
-          await redis.expire(key, this.WS_TOKEN_TTL);
-          return true;
+        const now = Date.now();
+        // SET key timestamp NX EX 300 — atomique : pose la valeur seulement
+        // si la clé n'existe pas. Retourne "OK" sur succès, null sinon.
+        const result = await redis.set(
+          key,
+          String(now),
+          "EX",
+          this.WS_TOKEN_TTL,
+          "NX",
+        );
+        if (result === "OK") {
+          return true; // Première consommation
         }
-        return false; // Token déjà utilisé
+        // Clé déjà présente : vérifier si on est dans la fenêtre de dédup.
+        const firstUsedAtRaw = await redis.get(key);
+        if (firstUsedAtRaw) {
+          const firstUsedAt = parseInt(firstUsedAtRaw, 10);
+          if (
+            Number.isFinite(firstUsedAt) &&
+            now - firstUsedAt <= this.WS_TOKEN_DEDUP_WINDOW_MS
+          ) {
+            redisLogger.info(
+              "WS token reconsommé dans fenêtre dédup, accepté",
+              {
+                jti: tokenJti.substring(0, 8) + "...",
+                ageMs: now - firstUsedAt,
+              },
+            );
+            return true; // Retry réseau — accepté
+          }
+        }
+        return false; // Vraiment déjà consommé
       } catch (error: unknown) {
         redisLogger.error("Failed to consume WS token in Redis, using memory", {
           error: getErrorMessage(error),
@@ -874,14 +913,20 @@ export class RedisSessionService {
     }
   }
 
-  // Fallback mémoire pour tokens WS
-  private usedWsTokensMemory: Set<string> = new Set();
+  // Fallback mémoire pour tokens WS — Map<jti, firstUsedAtMs>
+  private usedWsTokensMemory: Map<string, number> = new Map();
 
   private consumeWsTokenMemory(tokenJti: string): boolean {
-    if (this.usedWsTokensMemory.has(tokenJti)) {
-      return false; // Déjà utilisé
+    const now = Date.now();
+    const firstUsedAt = this.usedWsTokensMemory.get(tokenJti);
+    if (firstUsedAt !== undefined) {
+      // Déjà consommé : autoriser uniquement si dans la fenêtre dédup
+      if (now - firstUsedAt <= this.WS_TOKEN_DEDUP_WINDOW_MS) {
+        return true;
+      }
+      return false;
     }
-    this.usedWsTokensMemory.add(tokenJti);
+    this.usedWsTokensMemory.set(tokenJti, now);
     // Nettoyage automatique après 5 minutes
     setTimeout(() => {
       this.usedWsTokensMemory.delete(tokenJti);

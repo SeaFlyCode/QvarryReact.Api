@@ -562,16 +562,30 @@ describe("RedisSessionService - Memory Fallback Mode", () => {
       expect(result).toBe(true);
     });
 
-    it("should return false on second consumption (token already used)", async () => {
-      // Arrange
+    it("should return true on second consumption within dedup window (retry réseau)", async () => {
+      // Vague 4 §4.1.4 A: fenêtre dédup 3s — un retry après timeout réseau
+      // doit être accepté pour éviter la boucle d'erreurs auth côté client.
       const tokenJti = "ws-token-456";
       await redisSessionService.consumeWsToken(tokenJti);
 
-      // Act
       const result = await redisSessionService.consumeWsToken(tokenJti);
 
-      // Assert
+      expect(result).toBe(true);
+    });
+
+    it("should return false on second consumption outside dedup window", async () => {
+      // Hors fenêtre 3s : reject normal (vrai replay).
+      jest.useFakeTimers();
+      const tokenJti = "ws-token-457";
+      await redisSessionService.consumeWsToken(tokenJti);
+
+      // Avancer le temps au-delà de la fenêtre dédup (3s).
+      jest.advanceTimersByTime(4000);
+
+      const result = await redisSessionService.consumeWsToken(tokenJti);
+
       expect(result).toBe(false);
+      jest.useRealTimers();
     });
   });
 
@@ -1084,33 +1098,39 @@ describe("RedisSessionService - Redis Mode", () => {
   // ─────────────────────────────────────────────────────────────────────────
 
   describe("consumeWsToken - Redis", () => {
-    it("should consume WS token in Redis using SETNX", async () => {
-      // Arrange
-      mockRedisInstance.setnx.mockResolvedValue(1);
+    it("should consume WS token in Redis using SET NX EX (atomique)", async () => {
+      // Vague 4 §4.1.4 A: SET key timestamp NX EX 300 (atomique avec TTL).
+      mockRedisInstance.set.mockResolvedValue("OK");
 
-      // Act
       const result = await redisSessionService.consumeWsToken("ws-token-123");
 
-      // Assert
-      expect(mockRedisInstance.setnx).toHaveBeenCalledWith(
+      expect(mockRedisInstance.set).toHaveBeenCalledWith(
         "qvarry:ws_token:ws-token-123",
-        "used",
-      );
-      expect(mockRedisInstance.expire).toHaveBeenCalledWith(
-        "qvarry:ws_token:ws-token-123",
+        expect.any(String), // timestamp
+        "EX",
         300,
+        "NX",
       );
       expect(result).toBe(true);
     });
 
-    it("should return false if token already consumed", async () => {
-      // Arrange
-      mockRedisInstance.setnx.mockResolvedValue(0);
+    it("should accept retry within dedup window (Redis)", async () => {
+      // SET NX retourne null (clé existe), GET retourne un timestamp récent.
+      mockRedisInstance.set.mockResolvedValue(null);
+      mockRedisInstance.get.mockResolvedValue(String(Date.now()));
 
-      // Act
       const result = await redisSessionService.consumeWsToken("ws-token-456");
 
-      // Assert
+      expect(result).toBe(true);
+    });
+
+    it("should return false if token already consumed outside dedup window", async () => {
+      // SET NX retourne null, et le timestamp est ancien (>3s).
+      mockRedisInstance.set.mockResolvedValue(null);
+      mockRedisInstance.get.mockResolvedValue(String(Date.now() - 10000));
+
+      const result = await redisSessionService.consumeWsToken("ws-token-789");
+
       expect(result).toBe(false);
     });
   });

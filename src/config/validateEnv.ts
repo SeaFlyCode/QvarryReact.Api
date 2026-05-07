@@ -29,6 +29,35 @@ const REQUIRED_PROD = [
 ];
 
 /**
+ * Secrets sensibles : doivent être uniques par environnement et jamais égaux
+ * aux placeholders du `.env.example`. Détecter le placeholder bloque le boot
+ * en prod (isolation cassée si la valeur dev fuit).
+ */
+const SECRETS_NO_PLACEHOLDER_IN_PROD = [
+  "JWT_SECRET",
+  "ENCRYPTION_KEY_MASTER",
+  "ENCRYPTION_KEY_COMMUNICATION",
+];
+
+/**
+ * Patterns reconnus comme valeurs placeholder du `.env.example` (à ne jamais
+ * laisser en prod). Match insensible à la casse.
+ */
+const PLACEHOLDER_PATTERNS = [
+  /^GENERATE_WITH/i,
+  /^CHANGE[_-]?ME/i,
+  /^TODO/i,
+  /^XXX/i,
+  /^REPLACE[_-]?ME/i,
+  /^YOUR[_-]/i,
+  /^SET[_-]/i,
+];
+
+function looksLikePlaceholder(value: string): boolean {
+  return PLACEHOLDER_PATTERNS.some((re) => re.test(value));
+}
+
+/**
  * Valide les variables d'environnement.
  *
  * @returns Résultat de validation (ok, missing, warnings).
@@ -58,6 +87,17 @@ export function validateEnv(): EnvValidationResult {
     }
     if (process.env.BYPASS_CAPTCHA === "true") {
       missing.push("BYPASS_CAPTCHA=true interdit en production");
+    }
+
+    // Détection placeholder .env.example sur les secrets sensibles : isolation
+    // dev/prod cassée si une valeur de template fuit en prod.
+    for (const key of SECRETS_NO_PLACEHOLDER_IN_PROD) {
+      const value = process.env[key];
+      if (value && looksLikePlaceholder(value)) {
+        missing.push(
+          `${key} contient une valeur placeholder du .env.example (interdite en production)`,
+        );
+      }
     }
 
     // Avertissements non bloquants mais à surveiller.
