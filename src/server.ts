@@ -105,7 +105,6 @@ import sosRoutes from "./routes/sosRoutes";
 import mobilePushTokenRoutes from "./routes/mobilePushTokenRoutes";
 import mobileAppVersionRoutes from "./routes/mobileAppVersionRoutes";
 import webhookRoutes from "./routes/webhookRoutes";
-import publicRoutes from "./routes/publicRoutes";
 import quickActionRoutes from "./routes/quickActionRoutes";
 import { maintenanceMiddleware } from "./middlewares/maintenanceMiddleware";
 import cookieParser from "cookie-parser";
@@ -878,14 +877,6 @@ app.use("/api", generalLimiter);
     // Pas d'authentification, pas de maintenance check
     // ═══════════════════════════════════════════════════════════════════════════
     app.use("/api/webhooks/vonage", webhookRoutes);
-
-    // ═══════════════════════════════════════════════════════════════════════════
-    // ROUTES PUBLIQUES - RESSOURCES STATIQUES ACCESSIBLES SANS AUTH
-    // ═══════════════════════════════════════════════════════════════════════════
-    // Ces routes servent des fichiers publics (logo, assets)
-    // Pas d'authentification, optimisé pour le cache long terme
-    // ═══════════════════════════════════════════════════════════════════════════
-    app.use("/public", publicRoutes);
 
     // MED-09 FIX: API versioning — Middleware de rétrocompatibilité /api/ → /api/v1/
     // Les routes sont montées sur /api/v1/ et /api/ redirige pour rétrocompatibilité
