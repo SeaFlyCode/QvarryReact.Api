@@ -17,10 +17,30 @@ jest.mock("../../controllers/mobileAuthControllers", () => ({
   handleMobileRefreshToken: jest.fn((req: any, res: any) =>
     res.status(200).json({}),
   ),
+  handleMobileGetMe: jest.fn((req: any, res: any) => res.status(200).json({})),
 }));
 
 jest.mock("../../controllers/auth/logoutController", () => ({
   handleLogoutUser: jest.fn((req: any, res: any) => res.status(200).json({})),
+}));
+
+// V7: handler unifié Vague 1 (login web+mobile commun)
+jest.mock("../../controllers/auth/unifiedAuthController", () => ({
+  handleUnifiedLogin: jest.fn((req: any, res: any) => res.status(200).json({})),
+  handleUnifiedComplete2FA: jest.fn((req: any, res: any) => res.status(200).json({})),
+}));
+
+jest.mock("../../middlewares/mobileAuthMiddleware", () => ({
+  mobileAuthMiddleware: jest.fn((req: any, res: any, next: any) => next()),
+}));
+
+jest.mock("../../middlewares/appCheckMiddleware", () => ({
+  appCheckMiddleware: jest.fn((req: any, res: any, next: any) => next()),
+}));
+
+jest.mock("../../config/rateLimitConfig", () => ({
+  mobileAttestationLimiter: jest.fn((req: any, res: any, next: any) => next()),
+  mobileAttestationByDeviceLimiter: jest.fn((req: any, res: any, next: any) => next()),
 }));
 
 import router from "../../routes/mobileAuthRoutes";

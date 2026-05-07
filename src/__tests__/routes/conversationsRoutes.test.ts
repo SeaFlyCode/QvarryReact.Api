@@ -15,6 +15,13 @@ jest.mock("../../middlewares/validateObjectIdMiddleware", () => ({
   ),
 }));
 
+jest.mock("../../middlewares/conversationValidationMiddleware", () => ({
+  validateMuteBody: jest.fn((req: any, res: any, next: any) => next()),
+  validatePinBody: jest.fn((req: any, res: any, next: any) => next()),
+  validateBlockBody: jest.fn((req: any, res: any, next: any) => next()),
+  validatePaginationQuery: jest.fn((req: any, res: any, next: any) => next()),
+}));
+
 jest.mock("../../controllers/conversationsControllers", () => ({
   listConversations: jest.fn(),
   createPrivateConversation: jest.fn(),
@@ -29,6 +36,18 @@ jest.mock("../../controllers/conversationsControllers", () => ({
   markConversationAsRead: jest.fn(),
   deleteConversation: jest.fn(),
   adminDeleteConversationPermanent: jest.fn(),
+  // V7: handlers ajoutés Vagues récentes (mute/archive/pin/unread/block)
+  muteConversation: jest.fn(),
+  unmuteConversation: jest.fn(),
+  archiveConversation: jest.fn(),
+  unarchiveConversation: jest.fn(),
+  listArchivedConversations: jest.fn(),
+  pinConversation: jest.fn(),
+  unpinConversation: jest.fn(),
+  markConversationAsUnread: jest.fn(),
+  unmarkConversationAsUnread: jest.fn(),
+  blockConversation: jest.fn(),
+  unblockConversation: jest.fn(),
 }));
 
 import router from "../../routes/conversationsRoutes";

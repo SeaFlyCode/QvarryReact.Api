@@ -22,10 +22,15 @@ jest.mock("../../controllers/userControllers", () => ({
   handleCreateUser: jest.fn((req: any, res: any) => res.json({})),
   handleGetAllUsers: jest.fn((req: any, res: any) => res.json({})),
   handleGetUserById: jest.fn((req: any, res: any) => res.json({})),
+  handleGetMe: jest.fn((req: any, res: any) => res.json({})),
   handleDeleteUser: jest.fn((req: any, res: any) => res.json({})),
   handleUpdateUser: jest.fn((req: any, res: any) => res.json({})),
   handleVerifyEmailByCode: jest.fn((req: any, res: any) => res.json({})),
   handleResendVerificationEmail: jest.fn((req: any, res: any) => res.json({})),
+  // V7: handlers ajoutés Vagues récentes (notifications + location)
+  handleGetNotificationPreferences: jest.fn((req: any, res: any) => res.json({})),
+  handleUpdateNotificationPreferences: jest.fn((req: any, res: any) => res.json({})),
+  handleUpdateMyLocation: jest.fn((req: any, res: any) => res.json({})),
 }));
 
 import router from "../../routes/userRoutes";

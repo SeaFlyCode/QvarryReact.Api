@@ -16,6 +16,10 @@ jest.mock("../../controllers/auth", () => ({
   handleForgotPassword: jest.fn(),
   handleResetPassword: jest.fn(),
   completeLoginAfter2FA: jest.fn(),
+  handleAuthMe: jest.fn(),
+  // V7: handlers unifiés Vague 1 (auth/login + 2FA web+mobile)
+  handleUnifiedLogin: jest.fn(),
+  handleUnifiedComplete2FA: jest.fn(),
 }));
 
 jest.mock("../../controllers/syncControllers", () => ({

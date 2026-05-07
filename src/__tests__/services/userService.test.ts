@@ -222,12 +222,15 @@ describe("userService", () => {
         dataArchiveService.archiveAndRecordDeletion as jest.Mock
       ).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -305,12 +308,15 @@ describe("userService", () => {
         dataArchiveService.archiveAndRecordDeletion as jest.Mock
       ).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -386,12 +392,15 @@ describe("userService", () => {
       ).mockResolvedValue({});
       (dataArchiveService.archiveEntity as jest.Mock).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(mockPoints),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -496,12 +505,15 @@ describe("userService", () => {
       ).mockResolvedValue({});
       (dataArchiveService.archiveEntity as jest.Mock).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(mockFiches),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue(mockLists),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -620,12 +632,15 @@ describe("userService", () => {
         dataArchiveService.archiveAndRecordDeletion as jest.Mock
       ).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -694,12 +709,15 @@ describe("userService", () => {
         dataArchiveService.archiveAndRecordDeletion as jest.Mock
       ).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -773,12 +791,15 @@ describe("userService", () => {
         dataArchiveService.archiveAndRecordDeletion as jest.Mock
       ).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -843,12 +864,15 @@ describe("userService", () => {
         dataArchiveService.archiveAndRecordDeletion as jest.Mock
       ).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -913,12 +937,15 @@ describe("userService", () => {
         dataArchiveService.archiveAndRecordDeletion as jest.Mock
       ).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({
@@ -985,12 +1012,15 @@ describe("userService", () => {
         dataArchiveService.archiveAndRecordDeletion as jest.Mock
       ).mockResolvedValue({});
       (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
         lean: jest.fn().mockResolvedValue([]),
       });
       (MessageModel.find as jest.Mock).mockReturnValue({

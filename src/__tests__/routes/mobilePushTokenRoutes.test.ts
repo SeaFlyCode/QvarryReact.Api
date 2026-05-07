@@ -5,6 +5,12 @@ jest.mock("../../middlewares/authMiddleware", () => ({
 jest.mock("../../middlewares/mobileSecurityMiddleware", () => ({
   verifyMobilePlatform: jest.fn((req: any, res: any, next: any) => next()),
   mobileRateLimitMiddleware: jest.fn((req: any, res: any, next: any) => next()),
+  // V7: middleware ajouté Vagues récentes
+  mobileSyncRateLimitMiddleware: jest.fn((req: any, res: any, next: any) => next()),
+}));
+
+jest.mock("../../middlewares/appCheckMiddleware", () => ({
+  appCheckMiddleware: jest.fn((req: any, res: any, next: any) => next()),
 }));
 
 jest.mock("../../controllers/mobilePushTokenControllers", () => ({
