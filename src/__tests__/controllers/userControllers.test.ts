@@ -476,10 +476,12 @@ describe("userControllers", () => {
       });
       res = mockResponse();
 
-      (UserModel.findById as jest.Mock).mockResolvedValue({
-        _id: "user123",
-        password: "hashed-password",
-        password_history: [],
+      (UserModel.findById as jest.Mock).mockReturnValue({
+        select: jest.fn().mockResolvedValue({
+          _id: "user123",
+          password: "hashed-password",
+          password_history: [],
+        }),
       });
       (bcrypt.compare as jest.Mock).mockResolvedValue(true);
       (updateUserById as jest.Mock).mockResolvedValue(
@@ -543,7 +545,7 @@ describe("userControllers", () => {
     });
 
     it("devrait retourner 404 si utilisateur non trouvé", async () => {
-      (UserModel.findById as jest.Mock).mockResolvedValue(null);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(null) });
 
       await handleUpdateUser(req as Request, res as Response);
 
