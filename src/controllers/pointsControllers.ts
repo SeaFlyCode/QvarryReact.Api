@@ -7,8 +7,21 @@ import FicheModel from "../models/fiches";
 import PointModel from "../models/points";
 import { logger } from "../services/loggerService";
 import { safeJsonParse } from "../utils/secureJsonParser";
+import { webSocketService } from "../services/webSocketService";
 
 const pointsLogger = logger.child({ service: "points" });
+
+/**
+ * Helper : récupère le deviceId origin depuis le header `x-device-id`
+ * pour éviter qu'un device se notifie lui-même via sync_update.
+ */
+function getOriginDeviceId(req: Request): string | undefined {
+  const raw = req.headers["x-device-id"];
+  if (typeof raw === "string" && raw.length > 0 && raw.length <= 128) {
+    return raw;
+  }
+  return undefined;
+}
 
 // typescript
 export async function handleCreatePoint(req: Request, res: Response) {
@@ -325,6 +338,16 @@ export async function handleCreatePoint(req: Request, res: Response) {
       hasLists: !!parsedListIds,
     });
 
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "point",
+      "created",
+      newPointId.toString(),
+      { _id: newPointId, name, longitude, latitude },
+      getOriginDeviceId(req),
+    );
+
     res.status(201).json({
       success: true,
       message: "Point créé avec succès",
@@ -619,6 +642,16 @@ export async function handleDeletePoint(req: Request, res: Response) {
       hasFiche: !!(point as any).ficheId,
     });
 
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "point",
+      "deleted",
+      pointId,
+      { _id: pointId },
+      getOriginDeviceId(req),
+    );
+
     res.status(200).json({
       success: true,
       message: "Point supprimé avec succès",
@@ -787,6 +820,16 @@ export async function handleUpdatePoint(req: Request, res: Response) {
         ].includes(k),
       ),
     });
+
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "point",
+      "updated",
+      id,
+      point,
+      getOriginDeviceId(req),
+    );
 
     res.status(200).json({
       success: true,

@@ -32,8 +32,21 @@ import {
   DEFAULT_NOTIFICATION_PREFERENCES,
   type NotificationPreferences,
 } from "../services/notificationPreferencesService";
+import { webSocketService } from "../services/webSocketService";
 
 const userLogger = logger.child({ service: "users" });
+
+/**
+ * Helper : récupère le deviceId origin depuis le header `x-device-id`
+ * pour éviter qu'un device se notifie lui-même via sync_update.
+ */
+function getOriginDeviceId(req: Request): string | undefined {
+  const raw = req.headers["x-device-id"];
+  if (typeof raw === "string" && raw.length > 0 && raw.length <= 128) {
+    return raw;
+  }
+  return undefined;
+}
 
 // SEC-044: Champs sensibles à exclure des réponses API
 const EXCLUDED_USER_FIELDS = [
@@ -602,6 +615,21 @@ export async function handleUpdateUser(req: Request, res: Response) {
       ),
       passwordChanged: !!password,
     });
+
+    // 2026-05-04 §4.2: sync_update multi-device (sans password ni hash)
+    const safePayload = Object.fromEntries(
+      Object.entries(updatedUser).filter(
+        ([k]) => k !== "password" && k !== "password_history",
+      ),
+    );
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "user",
+      "updated",
+      userId,
+      safePayload,
+      getOriginDeviceId(req),
+    );
 
     res.status(200).json({ message: "Profil mis à jour avec succès." });
   } catch (error: unknown) {

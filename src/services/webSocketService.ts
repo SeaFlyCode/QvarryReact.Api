@@ -13,6 +13,8 @@ import {
   deleteMessageOp,
 } from "./messageOperationsService";
 import ConversationModel from "../models/conversations";
+import MessageModel from "../models/messages";
+import NotificationModel from "../models/notifications";
 import { decrypt } from "../utils/masterEncryptionUtils";
 import UserModel from "../models/users";
 import { redisSessionService } from "./redisSessionService";
@@ -29,6 +31,24 @@ import { randomBytes } from "crypto";
 import { safeJsonParse } from "../utils/secureJsonParser";
 import { getAppCheck } from "firebase-admin/app-check";
 import admin from "firebase-admin";
+import {
+  WS_CLOSE_CODES,
+  WS_CLOSE_REASONS,
+} from "../constants/wsCloseCodes";
+
+/**
+ * Ressources broadcastables via `sync_update`. Le client utilise ce champ
+ * pour invalider sa cache locale ciblée.
+ */
+export type SyncUpdateResource =
+  | "fiche"
+  | "point"
+  | "sos"
+  | "notification"
+  | "user"
+  | "list";
+
+export type SyncUpdateAction = "created" | "updated" | "deleted";
 
 const wsLogger = logger.child({ service: "websocket" });
 
@@ -40,6 +60,17 @@ interface AuthenticatedWebSocket extends WebSocket {
   messageCount?: number;
   messageCountResetTime?: number;
   lastStateSave?: number; // PHASE 4: Last time state was saved
+  /**
+   * Heartbeat applicatif : timestamp (epoch ms) du dernier `ping` envoyé par
+   * le serveur en attente d'un `pong` du client. `undefined` si pas de ping
+   * en cours. Utilisé pour détecter les zombies via proxy silencieux.
+   */
+  pendingAppPingTs?: number;
+  /**
+   * Heartbeat applicatif : timestamp (epoch ms) du dernier pong reçu du
+   * client. Sert au monitoring + à la détection de timeout (60 s).
+   */
+  lastAppPongTs?: number;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════
@@ -120,7 +151,69 @@ const WsMessageSchemas: Record<string, z.ZodTypeAny> = {
     messageId: MessageIdSchema,
     conversationId: z.string().optional(),
   }),
+  // 2026-05-04: Heartbeat applicatif client → serveur (symétrique)
+  ping: z.object({
+    type: z.literal("ping"),
+    t: z.number().int().nonnegative().optional(),
+  }),
+  // 2026-05-04: Réponse client à un ping applicatif serveur
+  pong: z.object({
+    type: z.literal("pong"),
+    t: z.number().int().nonnegative().optional(),
+  }),
+  // 2026-05-04: Indicateurs typing (canal Message)
+  typing_start: z.object({
+    type: z.literal("typing_start"),
+    conversationId: z.string().min(1),
+  }),
+  typing_stop: z.object({
+    type: z.literal("typing_stop"),
+    conversationId: z.string().min(1),
+  }),
 };
+
+/**
+ * 2026-05-04: Schéma Zod pour le message d'auth (canal notifications + messages).
+ * Étendu avec `lastAckTimestamp` (resume diff) et `deviceId` (multi-device sync).
+ * Rétro-compat : les deux champs sont optionnels — un client legacy reçoit le
+ * comportement actuel (pas de diff, deviceId généré côté serveur).
+ */
+const WsAuthSchema = z.object({
+  type: z.literal("auth"),
+  token: z.string().min(1),
+  lastAckTimestamp: z.number().int().nonnegative().optional(),
+  deviceId: z.string().min(1).max(128).optional(),
+});
+
+// 2026-05-04: Heartbeat applicatif (en plus du ping/pong WS bas niveau RFC)
+// - Le serveur envoie `{ type: "ping", t }` toutes les 30 s
+// - Le client doit répondre `{ type: "pong", t }` en moins de 60 s
+// - Sinon ws.close(4010, "heartbeat_timeout")
+// - Le client peut aussi initier `{ type: "ping" }` → réponse symétrique du serveur
+const APP_HEARTBEAT_INTERVAL_MS = parseInt(
+  process.env.WS_APP_HEARTBEAT_INTERVAL_MS || "30000",
+  10,
+);
+const APP_HEARTBEAT_TIMEOUT_MS = parseInt(
+  process.env.WS_APP_HEARTBEAT_TIMEOUT_MS || "60000",
+  10,
+);
+
+// 2026-05-04: Limites resume_diff — au-delà → flag truncated, le client refetch via REST
+const RESUME_DIFF_MAX_MESSAGES = parseInt(
+  process.env.WS_RESUME_DIFF_MAX_MESSAGES || "200",
+  10,
+);
+const RESUME_DIFF_MAX_NOTIFICATIONS = parseInt(
+  process.env.WS_RESUME_DIFF_MAX_NOTIFICATIONS || "100",
+  10,
+);
+
+// 2026-05-04: Auto-stop typing si pas de nouveau typing_start dans cette fenêtre
+const TYPING_AUTO_STOP_MS = parseInt(
+  process.env.WS_TYPING_AUTO_STOP_MS || "5000",
+  10,
+);
 
 // WS-HEARTBEAT: Intervalle configurable via env var
 const WS_HEARTBEAT_INTERVAL_MS = parseInt(
@@ -276,6 +369,13 @@ class WebSocketService {
   // PERF: Heartbeat adaptatif - tracking de l'activité des clients
   private clientLastActivity = new Map<AuthenticatedWebSocket, number>();
   private heartbeatIntervals: ReturnType<typeof setInterval>[] = [];
+
+  // 2026-05-04: Heartbeat applicatif (séparé du heartbeat WS bas niveau)
+  private appHeartbeatInterval: ReturnType<typeof setInterval> | null = null;
+
+  // 2026-05-04: Typing indicators — auto-stop par (conversationId, userId)
+  // Map clé `${conversationId}:${userId}` → timer setTimeout pour stop auto
+  private typingTimers = new Map<string, NodeJS.Timeout>();
 
   /**
    * FIX-1: Helper sécurisé pour envoyer des messages aux clients WS
@@ -1287,8 +1387,11 @@ class WebSocketService {
     );
     this.messagesWss.on("connection", this.handleMessageConnection.bind(this));
 
-    // PERF: Heartbeat adaptatif - démarre les intervals
+    // PERF: Heartbeat adaptatif - démarre les intervals (ping/pong WS bas niveau)
     this.startAdaptiveHeartbeat();
+
+    // 2026-05-04: Heartbeat applicatif (ping/pong JSON) en plus du WS bas niveau
+    this.startApplicationHeartbeat();
 
     // R-5: Nettoyage périodique des tentatives de connexion anciennes
     this.connectionAttemptsCleanupInterval = setInterval(
@@ -1497,7 +1600,10 @@ class WebSocketService {
         ip: anonymizeIp(ip),
         reason: rateLimitCheck.reason,
       });
-      client.close(4029, rateLimitCheck.reason);
+      client.close(
+        WS_CLOSE_CODES.RATE_LIMITED,
+        WS_CLOSE_REASONS[WS_CLOSE_CODES.RATE_LIMITED],
+      );
       return;
     }
 
@@ -1507,7 +1613,10 @@ class WebSocketService {
         ip: anonymizeIp(ip),
         limit: MAX_CONCURRENT_CONNECTIONS_PER_IP,
       });
-      client.terminate();
+      client.close(
+        WS_CLOSE_CODES.RATE_LIMITED,
+        WS_CLOSE_REASONS[WS_CLOSE_CODES.RATE_LIMITED],
+      );
       return;
     }
 
@@ -1526,36 +1635,48 @@ class WebSocketService {
 
     // FIX-2: Auth handshake via premier message applicatif (token JWT)
     // Le token arrive dans le premier message { type: "auth", token: "..." }
-    // Timeout 5s → fermeture avec 4001 "Auth timeout"
+    // Timeout 5s → fermeture avec 4001 "auth_required"
     const AUTH_TIMEOUT_MS = 5000;
     const authTimeout = setTimeout(() => {
       wsLogger.warn("Notifications - Auth timeout, fermeture", {
         ip: anonymizeIp(ip),
       });
-      client.close(4001, "Auth timeout");
+      client.close(
+        WS_CLOSE_CODES.AUTH_REQUIRED,
+        WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_REQUIRED],
+      );
     }, AUTH_TIMEOUT_MS);
 
     client.once("message", async (rawMsg: Buffer) => {
       clearTimeout(authTimeout);
 
-      let authData: any;
+      let authRaw: any;
       try {
-        authData = safeJsonParse(rawMsg.toString(), {
+        authRaw = safeJsonParse(rawMsg.toString(), {
           context: "websocket-auth",
           maxDepth: 3,
         });
       } catch {
         wsLogger.error("Notifications - Premier message non JSON");
-        client.close(4001, "Auth required");
+        client.close(
+          WS_CLOSE_CODES.AUTH_REQUIRED,
+          WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_REQUIRED],
+        );
         return;
       }
 
-      if (!authData || authData.type !== "auth" || !authData.token) {
-        wsLogger.error("Notifications - Premier message n'est pas un auth");
-        client.close(4001, "Auth required");
+      // 2026-05-04: validation Zod du payload d'auth + nouveaux champs
+      // (lastAckTimestamp + deviceId optionnels, rétro-compat).
+      const parsedAuth = WsAuthSchema.safeParse(authRaw);
+      if (!parsedAuth.success) {
+        wsLogger.error("Notifications - Auth payload invalide (zod)");
+        client.close(
+          WS_CLOSE_CODES.AUTH_REQUIRED,
+          WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_REQUIRED],
+        );
         return;
       }
-
+      const authData = parsedAuth.data;
       const token: string = authData.token;
 
       try {
@@ -1579,7 +1700,10 @@ class WebSocketService {
           wsLogger.error(
             'Notifications - Token invalide: type attendu "websocket"',
           );
-          client.close(4002, "Invalid token type");
+          client.close(
+            WS_CLOSE_CODES.AUTH_INVALID,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+          );
           return;
         }
 
@@ -1591,7 +1715,10 @@ class WebSocketService {
               wsType: decoded.wsType,
             },
           );
-          client.close(4002, "Invalid token type for this connection");
+          client.close(
+            WS_CLOSE_CODES.AUTH_INVALID,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+          );
           return;
         }
 
@@ -1599,7 +1726,10 @@ class WebSocketService {
         // R-1: Rejeter explicitement les tokens sans JTI
         if (!decoded.jti) {
           wsLogger.error("Notifications - Token invalide: JTI manquant");
-          client.close(4002, "Invalid token: missing JTI");
+          client.close(
+            WS_CLOSE_CODES.AUTH_INVALID,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+          );
           return;
         }
         const isTokenValid = await redisSessionService.consumeWsToken(
@@ -1609,7 +1739,10 @@ class WebSocketService {
           wsLogger.error("Notifications - Token déjà utilisé", {
             jti: decoded.jti.substring(0, 8) + "...",
           });
-          client.close(4003, "Token already used");
+          client.close(
+            WS_CLOSE_CODES.AUTH_EXPIRED,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_EXPIRED],
+          );
           return;
         }
         wsLogger.info("Notifications - Token à usage unique validé", {
@@ -1619,7 +1752,10 @@ class WebSocketService {
         client.userId = decoded.id;
 
         // PHASE 4: Extraire ou générer le deviceId
-        client.deviceId = this.getOrGenerateDeviceId(request);
+        // 2026-05-04: priorité au deviceId fourni dans le payload auth (front
+        // multi-device). Fallback : query param ou généré aléatoirement.
+        client.deviceId =
+          authData.deviceId || this.getOrGenerateDeviceId(request);
 
         // PERF: Initialiser l'activité pour heartbeat adaptatif
         this.clientLastActivity.set(client, Date.now());
@@ -1648,6 +1784,17 @@ class WebSocketService {
           }),
         );
 
+        // 2026-05-04 §4.3: si le client a fourni lastAckTimestamp, lui
+        // renvoyer un resume_diff ciblé (notifications uniquement sur ce
+        // canal — les messages sont gérés par le canal Messages).
+        if (typeof authData.lastAckTimestamp === "number") {
+          await this.sendResumeDiff(
+            client,
+            client.userId,
+            authData.lastAckTimestamp,
+          );
+        }
+
         // Gérer la fermeture
         client.on("close", () => {
           // Décrémenter le compteur de connexions simultanées
@@ -1674,8 +1821,33 @@ class WebSocketService {
           }
         });
 
-        // R-8: Canal notifications en lecture seule — retourner une erreur explicite
-        client.on("message", () => {
+        // 2026-05-04: le canal notifications n'est plus strictement
+        // read-only — il accepte les frames d'heartbeat applicatif
+        // (ping/pong) pour détecter les zombies. Tout autre type est rejeté.
+        client.on("message", (rawIncoming: Buffer) => {
+          let parsed: any;
+          try {
+            parsed = safeJsonParse(rawIncoming.toString(), {
+              context: "websocket-notif-frame",
+              maxDepth: 3,
+            });
+          } catch {
+            this.safeSend(
+              client,
+              JSON.stringify({
+                type: "error",
+                code: "INVALID_JSON",
+                message: "Format JSON invalide",
+              }),
+            );
+            return;
+          }
+
+          if (parsed?.type === "ping" || parsed?.type === "pong") {
+            this.handleAppHeartbeatFrame(client, parsed);
+            return;
+          }
+
           this.safeSend(
             client,
             JSON.stringify({
@@ -1687,7 +1859,10 @@ class WebSocketService {
         });
       } catch (error) {
         wsLogger.error("Notifications - Token invalide", { error });
-        client.close(4002, "Invalid token");
+        client.close(
+          WS_CLOSE_CODES.AUTH_INVALID,
+          WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+        );
       }
     });
   }
@@ -1713,7 +1888,10 @@ class WebSocketService {
         ip: anonymizeIp(ip),
         reason: rateLimitCheck.reason,
       });
-      client.close(4029, rateLimitCheck.reason);
+      client.close(
+        WS_CLOSE_CODES.RATE_LIMITED,
+        WS_CLOSE_REASONS[WS_CLOSE_CODES.RATE_LIMITED],
+      );
       return;
     }
 
@@ -1723,7 +1901,10 @@ class WebSocketService {
         ip: anonymizeIp(ip),
         limit: MAX_CONCURRENT_CONNECTIONS_PER_IP,
       });
-      client.terminate();
+      client.close(
+        WS_CLOSE_CODES.RATE_LIMITED,
+        WS_CLOSE_REASONS[WS_CLOSE_CODES.RATE_LIMITED],
+      );
       return;
     }
 
@@ -1747,41 +1928,55 @@ class WebSocketService {
 
     if (!conversationId) {
       wsLogger.error("Messages - Connexion refusée : paramètre conv manquant");
-      client.close(4001, "Missing parameters");
+      client.close(
+        WS_CLOSE_CODES.PROTOCOL_VIOLATION,
+        WS_CLOSE_REASONS[WS_CLOSE_CODES.PROTOCOL_VIOLATION],
+      );
       return;
     }
 
     // FIX-2: Auth handshake via premier message applicatif (token JWT)
-    // Timeout 5s → fermeture avec 4001 "Auth timeout"
+    // Timeout 5s → fermeture avec 4001 "auth_required"
     const AUTH_TIMEOUT_MS = 5000;
     const authTimeout = setTimeout(() => {
       wsLogger.warn("Messages - Auth timeout, fermeture", {
         ip: anonymizeIp(ip),
       });
-      client.close(4001, "Auth timeout");
+      client.close(
+        WS_CLOSE_CODES.AUTH_REQUIRED,
+        WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_REQUIRED],
+      );
     }, AUTH_TIMEOUT_MS);
 
     client.once("message", async (rawMsg: Buffer) => {
       clearTimeout(authTimeout);
 
-      let authData: any;
+      let authRaw: any;
       try {
-        authData = safeJsonParse(rawMsg.toString(), {
+        authRaw = safeJsonParse(rawMsg.toString(), {
           context: "websocket-auth",
           maxDepth: 3,
         });
       } catch {
         wsLogger.error("Messages - Premier message non JSON");
-        client.close(4001, "Auth required");
+        client.close(
+          WS_CLOSE_CODES.AUTH_REQUIRED,
+          WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_REQUIRED],
+        );
         return;
       }
 
-      if (!authData || authData.type !== "auth" || !authData.token) {
-        wsLogger.error("Messages - Premier message n'est pas un auth");
-        client.close(4001, "Auth required");
+      // 2026-05-04: validation Zod du payload d'auth + nouveaux champs
+      const parsedAuth = WsAuthSchema.safeParse(authRaw);
+      if (!parsedAuth.success) {
+        wsLogger.error("Messages - Auth payload invalide (zod)");
+        client.close(
+          WS_CLOSE_CODES.AUTH_REQUIRED,
+          WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_REQUIRED],
+        );
         return;
       }
-
+      const authData = parsedAuth.data;
       const token: string = authData.token;
 
       try {
@@ -1803,7 +1998,10 @@ class WebSocketService {
         // WS-008: Vérifier que le token est bien de type 'websocket'
         if (decoded.type !== "websocket") {
           wsLogger.error('Messages - Token invalide: type attendu "websocket"');
-          client.close(4002, "Invalid token type");
+          client.close(
+            WS_CLOSE_CODES.AUTH_INVALID,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+          );
           return;
         }
 
@@ -1815,7 +2013,10 @@ class WebSocketService {
               wsType: decoded.wsType,
             },
           );
-          client.close(4002, "Invalid token type for this connection");
+          client.close(
+            WS_CLOSE_CODES.AUTH_INVALID,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+          );
           return;
         }
 
@@ -1823,7 +2024,10 @@ class WebSocketService {
         // R-1: Rejeter explicitement les tokens sans JTI
         if (!decoded.jti) {
           wsLogger.error("Messages - Token invalide: JTI manquant");
-          client.close(4002, "Invalid token: missing JTI");
+          client.close(
+            WS_CLOSE_CODES.AUTH_INVALID,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+          );
           return;
         }
         const isTokenValid = await redisSessionService.consumeWsToken(
@@ -1833,7 +2037,10 @@ class WebSocketService {
           wsLogger.error("Messages - Token déjà utilisé", {
             jti: decoded.jti.substring(0, 8) + "...",
           });
-          client.close(4003, "Token already used");
+          client.close(
+            WS_CLOSE_CODES.AUTH_EXPIRED,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_EXPIRED],
+          );
           return;
         }
         wsLogger.info("Messages - Token à usage unique validé", {
@@ -1843,8 +2050,9 @@ class WebSocketService {
         client.userId = decoded.id;
         client.conversationId = conversationId;
 
-        // PHASE 4: Extraire ou générer le deviceId
-        client.deviceId = this.getOrGenerateDeviceId(request);
+        // PHASE 4 + 2026-05-04: deviceId fourni par le client en priorité
+        client.deviceId =
+          authData.deviceId || this.getOrGenerateDeviceId(request);
 
         // WS-001: Vérifier que l'utilisateur est bien participant de la conversation
         // Note: participants est un tableau de sous-documents avec userId, pas de simples ObjectIds
@@ -1861,7 +2069,10 @@ class WebSocketService {
               conversationId,
             },
           );
-          client.close(4003, "Not a participant");
+          client.close(
+            WS_CLOSE_CODES.FORBIDDEN,
+            WS_CLOSE_REASONS[WS_CLOSE_CODES.FORBIDDEN],
+          );
           return;
         }
 
@@ -1906,6 +2117,20 @@ class WebSocketService {
         // PHASE 4: Marquer l'état comme dirty (sauvegarde différée via debouncing)
         if (client.userId) {
           this.markStateDirty(client.userId);
+        }
+
+        // 2026-05-04 §4.3: resume_diff ciblé sur la conversation si le client
+        // a fourni lastAckTimestamp dans le payload d'auth.
+        if (
+          typeof authData.lastAckTimestamp === "number" &&
+          client.userId
+        ) {
+          await this.sendResumeDiff(
+            client,
+            client.userId,
+            authData.lastAckTimestamp,
+            conversationId,
+          );
         }
 
         // Gérer les messages entrants
@@ -1988,6 +2213,10 @@ class WebSocketService {
               "deleteMessage",
               "resume", // PHASE 4
               "ack", // PHASE 4
+              "ping", // 2026-05-04 heartbeat applicatif
+              "pong", // 2026-05-04 heartbeat applicatif
+              "typing_start", // 2026-05-04 typing indicators
+              "typing_stop", // 2026-05-04 typing indicators
             ];
             if (
               !data ||
@@ -2038,7 +2267,10 @@ class WebSocketService {
             // Cela empêche un utilisateur retiré d'une conversation de continuer à envoyer des messages
             if (!client.userId) {
               wsLogger.error("Messages - userId manquant");
-              client.close(4002, "Invalid session");
+              client.close(
+                WS_CLOSE_CODES.AUTH_INVALID,
+                WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+              );
               return;
             }
 
@@ -2063,7 +2295,10 @@ class WebSocketService {
                 }),
               );
               // Fermer la connexion car l'utilisateur n'a plus accès
-              client.close(4003, "Access revoked");
+              client.close(
+                WS_CLOSE_CODES.FORBIDDEN,
+                WS_CLOSE_REASONS[WS_CLOSE_CODES.FORBIDDEN],
+              );
               return;
             }
 
@@ -2308,6 +2543,18 @@ class WebSocketService {
 
               // Optionnel: Confirmer l'ACK au client
               // (le client n'attend généralement pas de confirmation)
+            } else if (data.type === "ping" || data.type === "pong") {
+              // 2026-05-04: Heartbeat applicatif (symétrique)
+              this.handleAppHeartbeatFrame(client, data);
+            } else if (data.type === "typing_start") {
+              // 2026-05-04: Typing indicators - validation conv ciblée
+              if (data.conversationId && data.conversationId === conversationId) {
+                this.handleTypingFrame(client, conversationId, "start");
+              }
+            } else if (data.type === "typing_stop") {
+              if (data.conversationId && data.conversationId === conversationId) {
+                this.handleTypingFrame(client, conversationId, "stop");
+              }
             } else {
               client.send(
                 JSON.stringify({
@@ -2359,7 +2606,10 @@ class WebSocketService {
         });
       } catch (error) {
         wsLogger.error("Messages - Token invalide", { error });
-        client.close(4002, "Invalid token");
+        client.close(
+          WS_CLOSE_CODES.AUTH_INVALID,
+          WS_CLOSE_REASONS[WS_CLOSE_CODES.AUTH_INVALID],
+        );
       }
     });
   }
@@ -3043,8 +3293,11 @@ class WebSocketService {
                 message: "Vous avez été retiré de cette conversation",
               }),
             );
-            // Fermer la connexion avec le code 4003 (Access revoked)
-            client.close(4003, "Access revoked - removed from conversation");
+            // Fermer la connexion avec le code 4005 (forbidden)
+            client.close(
+              WS_CLOSE_CODES.FORBIDDEN,
+              WS_CLOSE_REASONS[WS_CLOSE_CODES.FORBIDDEN],
+            );
             wsLogger.info("Message connection closed for removed member", {
               userId: removedUserId,
               conversationId,
@@ -3207,6 +3460,426 @@ class WebSocketService {
         if (client.readyState === WebSocket.OPEN) {
           this.safeSend(client, message);
         }
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-05-04 §4.1 — HEARTBEAT APPLICATIF
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Au-delà du ping/pong WS bas niveau (couche RFC), les proxys peuvent fermer
+  // silencieusement une connexion. On rajoute un heartbeat applicatif :
+  //   - Serveur → client : { type: "ping", t } toutes les 30 s
+  //   - Client doit répondre { type: "pong", t } en moins de 60 s
+  //   - Sinon ws.close(4010, "heartbeat_timeout")
+  //   - Le ping est aussi accepté en sens inverse (client → serveur).
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Démarre l'intervalle d'envoi du ping applicatif.
+   * Idempotent : appel multiple sans effet.
+   */
+  private startApplicationHeartbeat(): void {
+    if (this.appHeartbeatInterval) return;
+
+    this.appHeartbeatInterval = setInterval(() => {
+      const now = Date.now();
+      const timeoutTs = now - APP_HEARTBEAT_TIMEOUT_MS;
+
+      const checkClient = (ws: WebSocket) => {
+        const client = ws as AuthenticatedWebSocket;
+        if (client.readyState !== WebSocket.OPEN) return;
+
+        // Si un ping précédent attend toujours un pong et qu'on est au-delà
+        // du timeout → close 4010
+        if (
+          client.pendingAppPingTs !== undefined &&
+          client.pendingAppPingTs < timeoutTs
+        ) {
+          wsLogger.warn(
+            "[WS] Application heartbeat timeout, closing connection",
+            {
+              userId: client.userId,
+              conversationId: client.conversationId,
+              pendingSince: now - client.pendingAppPingTs,
+            },
+          );
+          try {
+            client.close(
+              WS_CLOSE_CODES.HEARTBEAT_TIMEOUT,
+              WS_CLOSE_REASONS[WS_CLOSE_CODES.HEARTBEAT_TIMEOUT],
+            );
+          } catch (err) {
+            wsLogger.error("[WS] Failed to close on heartbeat timeout", {
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+          return;
+        }
+
+        // Envoyer un nouveau ping si pas de ping en cours OU si l'ancien a
+        // déjà reçu un pong (lastAppPongTs >= pendingAppPingTs).
+        const t = now;
+        client.pendingAppPingTs = t;
+        try {
+          client.send(JSON.stringify({ type: "ping", t }));
+        } catch (err) {
+          wsLogger.error("[WS] Failed to send application ping", {
+            userId: client.userId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      };
+
+      this.notificationsWss?.clients.forEach(checkClient);
+      this.messagesWss?.clients.forEach(checkClient);
+    }, APP_HEARTBEAT_INTERVAL_MS);
+
+    this.heartbeatIntervals.push(this.appHeartbeatInterval);
+
+    wsLogger.info("[WS] Application heartbeat started", {
+      intervalMs: APP_HEARTBEAT_INTERVAL_MS,
+      timeoutMs: APP_HEARTBEAT_TIMEOUT_MS,
+    });
+  }
+
+  /**
+   * Traiter un message `{ type: "ping" | "pong" }` venant d'un client.
+   * Si ping → réponse symétrique avec le même `t`.
+   * Si pong → marque le client comme "vivant" applicativement.
+   * Public car appelé depuis les handlers de message (notifications + messages).
+   */
+  handleAppHeartbeatFrame(client: AuthenticatedWebSocket, data: any): void {
+    const now = Date.now();
+
+    if (data?.type === "pong") {
+      // Pong reçu → reset pendingAppPingTs, mémorise le pong
+      client.lastAppPongTs = now;
+      client.pendingAppPingTs = undefined;
+      return;
+    }
+
+    if (data?.type === "ping") {
+      // Le client peut aussi initier un ping → on répond par un pong avec le
+      // même `t` (selon le contrat front).
+      const t = typeof data.t === "number" ? data.t : now;
+      try {
+        client.send(JSON.stringify({ type: "pong", t }));
+      } catch (err) {
+        wsLogger.error("[WS] Failed to send pong reply", {
+          userId: client.userId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      }
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-05-04 §4.2 — SYNC_UPDATE MULTI-DEVICE
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Ressources mutées via REST → tous les sockets ouverts du user reçoivent
+  // un `sync_update` sur le canal notifications. Le client filtre côté front
+  // sur `originDeviceId !== thisDeviceId` pour éviter de se notifier soi-même.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Émet un `sync_update` à tous les devices d'un user (canal notifications).
+   *
+   * @param userId           userId qui possède la ressource
+   * @param resource         Type de ressource mutée
+   * @param action           Type d'opération (created/updated/deleted)
+   * @param id               ID de la ressource
+   * @param payload          Objet complet ou patch à appliquer côté client
+   * @param originDeviceId   deviceId du device qui a déclenché (filtré côté
+   *                         front pour éviter l'echo). Optionnel.
+   */
+  broadcastSyncUpdate(
+    userId: string,
+    resource: SyncUpdateResource,
+    action: SyncUpdateAction,
+    id: string,
+    payload?: any,
+    originDeviceId?: string,
+  ): void {
+    if (!userId) return;
+
+    // Best-effort : un crash WS ne doit jamais faire échouer la requête HTTP
+    // qui a muté la ressource. Tout l'envoi est wrappé.
+    try {
+      const event = {
+        type: "sync_update",
+        resource,
+        action,
+        id,
+        payload: payload ?? null,
+        originDeviceId: originDeviceId ?? null,
+        timestamp: Date.now(),
+      };
+
+      // Envoi local sur le canal notifications (multi-device)
+      this.sendNotificationToUserLocal(userId, event);
+
+      // Clustering : republier vers les autres instances
+      if (redisPubSubService.isEnabled()) {
+        try {
+          redisPubSubService.publishNotification(userId, event);
+        } catch (err) {
+          wsLogger.error("[WS] sync_update pub/sub publish failed", {
+            userId,
+            resource,
+            action,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      wsLogger.debug("[WS] sync_update broadcast", {
+        userId,
+        resource,
+        action,
+        id,
+        originDeviceId,
+      });
+    } catch (err) {
+      wsLogger.error("[WS] sync_update broadcast failed (swallowed)", {
+        userId,
+        resource,
+        action,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-05-04 §4.3 — RESUME DIFF AU RECONNECT
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Sur `auth`, si le client passe `lastAckTimestamp`, on lui renvoie un
+  // `resume_diff` avec les messages de la conversation et les notifications
+  // qui ont eu lieu depuis ce timestamp. Limites : 200 messages / 100 notifs.
+  // Au-delà → flag `truncated: true` et le client refetch via REST.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Construit et envoie un `resume_diff` au client.
+   *
+   * @param client            Socket authentifié
+   * @param userId            ID de l'utilisateur
+   * @param lastAckTimestamp  Epoch ms borne basse (exclusive)
+   * @param conversationId    Optionnel, restreint le diff Messages à 1 conv
+   */
+  private async sendResumeDiff(
+    client: AuthenticatedWebSocket,
+    userId: string,
+    lastAckTimestamp: number,
+    conversationId?: string,
+  ): Promise<void> {
+    if (
+      !Number.isFinite(lastAckTimestamp) ||
+      lastAckTimestamp < 0 ||
+      lastAckTimestamp > Date.now()
+    ) {
+      // Borne invalide → on n'envoie rien (silencieux)
+      wsLogger.warn("[WS] resume_diff: lastAckTimestamp invalide", {
+        userId,
+        lastAckTimestamp,
+      });
+      return;
+    }
+
+    const since = new Date(lastAckTimestamp);
+    let truncated = false;
+
+    // ── Messages : si conversationId fourni, restreindre à cette conv ;
+    //    sinon, ne pas charger les messages (canal notifications n'est pas
+    //    le bon endroit pour récupérer TOUS les messages user).
+    let missedMessages: any[] = [];
+    if (conversationId) {
+      try {
+        // Cap à RESUME_DIFF_MAX_MESSAGES + 1 pour détecter la troncature
+        const docs = await MessageModel.find({
+          conversationId,
+          createdAt: { $gt: since },
+        })
+          .sort({ createdAt: 1 })
+          .limit(RESUME_DIFF_MAX_MESSAGES + 1)
+          .lean();
+
+        if (docs.length > RESUME_DIFF_MAX_MESSAGES) {
+          truncated = true;
+          missedMessages = docs.slice(0, RESUME_DIFF_MAX_MESSAGES);
+        } else {
+          missedMessages = docs;
+        }
+      } catch (err) {
+        wsLogger.error("[WS] resume_diff: query messages failed", {
+          userId,
+          conversationId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+        // On continue : envoyer un resume_diff vide vaut mieux que rien
+      }
+    }
+
+    // ── Notifications : query directe sur le user
+    let missedNotifications: any[] = [];
+    try {
+      const docs = await NotificationModel.find({
+        userId,
+        createdAt: { $gt: since },
+      })
+        .sort({ createdAt: 1 })
+        .limit(RESUME_DIFF_MAX_NOTIFICATIONS + 1)
+        .lean();
+
+      if (docs.length > RESUME_DIFF_MAX_NOTIFICATIONS) {
+        truncated = true;
+        missedNotifications = docs.slice(0, RESUME_DIFF_MAX_NOTIFICATIONS);
+      } else {
+        missedNotifications = docs;
+      }
+    } catch (err) {
+      wsLogger.error("[WS] resume_diff: query notifications failed", {
+        userId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+
+    const payload = {
+      type: "resume_diff",
+      ...(conversationId ? { conversationId } : {}),
+      missedMessages,
+      missedNotifications,
+      truncated,
+      timestamp: Date.now(),
+    };
+
+    this.safeSend(client, JSON.stringify(payload));
+
+    wsLogger.info("[WS] resume_diff sent", {
+      userId,
+      conversationId,
+      messageCount: missedMessages.length,
+      notificationCount: missedNotifications.length,
+      truncated,
+    });
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-05-04 §4.4 — TYPING INDICATORS
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Canal Message uniquement. Pas de persistance, pas de push.
+  // Auto-stop côté serveur après 5 s sans nouveau typing_start.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Diffuse un typing indicator aux autres participants de la conversation.
+   * Si action = "start" → planifie un auto-stop après 5 s.
+   */
+  private handleTypingFrame(
+    client: AuthenticatedWebSocket,
+    conversationId: string,
+    action: "start" | "stop",
+  ): void {
+    if (!client.userId) return;
+
+    const userId = client.userId;
+    const key = `${conversationId}:${userId}`;
+
+    // Annule un timer auto-stop éventuellement en cours
+    const existing = this.typingTimers.get(key);
+    if (existing) {
+      clearTimeout(existing);
+      this.typingTimers.delete(key);
+    }
+
+    const broadcast = (broadcastAction: "start" | "stop") => {
+      const event = {
+        type: "typing_indicator",
+        conversationId,
+        userId,
+        action: broadcastAction,
+        timestamp: Date.now(),
+      };
+      // Broadcast aux AUTRES participants (excludeUserId = userId courant)
+      this.broadcastToConversation(conversationId, event, userId);
+    };
+
+    broadcast(action);
+
+    if (action === "start") {
+      const timer = setTimeout(() => {
+        // Auto-stop : émet un typing_indicator stop si toujours pas de
+        // nouveau typing_start
+        if (this.typingTimers.get(key) === timer) {
+          this.typingTimers.delete(key);
+          const stopEvent = {
+            type: "typing_indicator",
+            conversationId,
+            userId,
+            action: "stop",
+            timestamp: Date.now(),
+            autoStop: true,
+          };
+          this.broadcastToConversation(conversationId, stopEvent, userId);
+        }
+      }, TYPING_AUTO_STOP_MS);
+      this.typingTimers.set(key, timer);
+    }
+  }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-05-04 §4.6 — NOTIFICATION_READ MULTI-DEVICE
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Quand une notif est marquée lue (web, mobile, action button, mark-all),
+  // on broadcast à TOUS les sockets notifications du user pour que les autres
+  // devices invalident leur état UI sans round-trip REST.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Broadcast `notification_read` à tous les sockets notifications du user.
+   * Si `notificationId === "all"` → mark-all-read.
+   */
+  broadcastNotificationRead(
+    userId: string,
+    notificationId: string | "all",
+    originDeviceId?: string,
+  ): void {
+    if (!userId) return;
+
+    // Best-effort : un crash WS ne doit jamais faire échouer la requête HTTP
+    // qui a marqué la notif comme lue.
+    try {
+      const event = {
+        type: "notification_read",
+        notificationId,
+        userId,
+        originDeviceId: originDeviceId ?? null,
+        timestamp: Date.now(),
+      };
+
+      this.sendNotificationToUserLocal(userId, event);
+
+      if (redisPubSubService.isEnabled()) {
+        try {
+          redisPubSubService.publishNotification(userId, event);
+        } catch (err) {
+          wsLogger.error("[WS] notification_read pub/sub publish failed", {
+            userId,
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+      }
+
+      wsLogger.debug("[WS] notification_read broadcast", {
+        userId,
+        notificationId,
+        originDeviceId,
+      });
+    } catch (err) {
+      wsLogger.error("[WS] notification_read broadcast failed (swallowed)", {
+        userId,
+        notificationId,
+        error: err instanceof Error ? err.message : String(err),
       });
     }
   }

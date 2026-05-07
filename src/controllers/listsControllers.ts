@@ -5,8 +5,21 @@ import { syncService } from "../services/syncService";
 import UserModel from "../models/users";
 import { getErrorMessage } from "../utils/errorUtils";
 import { logger } from "../services/loggerService";
+import { webSocketService } from "../services/webSocketService";
 
 const listsLogger = logger.child({ service: "lists" });
+
+/**
+ * Helper : récupère le deviceId origin depuis le header `x-device-id`
+ * pour éviter qu'un device se notifie lui-même via sync_update.
+ */
+function getOriginDeviceId(req: Request): string | undefined {
+  const raw = req.headers["x-device-id"];
+  if (typeof raw === "string" && raw.length > 0 && raw.length <= 128) {
+    return raw;
+  }
+  return undefined;
+}
 
 export async function handleCreateList(req: Request, res: Response) {
   try {
@@ -79,6 +92,16 @@ export async function handleCreateList(req: Request, res: Response) {
       listId: listMemory._id.toString(),
       action: "create_list",
     });
+
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "list",
+      "created",
+      listMemory._id.toString(),
+      listMemory,
+      getOriginDeviceId(req),
+    );
 
     res.status(201).json({
       message: "Liste créée avec succès",
@@ -244,6 +267,16 @@ export async function handleDeleteList(req: Request, res: Response) {
       action: "delete_list",
     });
 
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "list",
+      "deleted",
+      listId,
+      { _id: listId },
+      getOriginDeviceId(req),
+    );
+
     res.status(200).json({ message: "Liste supprimée avec succès", persisted: true });
   } catch (error: unknown) {
     listsLogger.error("Erreur suppression liste", {
@@ -310,6 +343,16 @@ export async function handleUpdateList(req: Request, res: Response) {
         ["name", "description", "points", "color", "icon"].includes(k),
       ),
     });
+
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "list",
+      "updated",
+      listId,
+      updatedList,
+      getOriginDeviceId(req),
+    );
 
     res
       .status(200)

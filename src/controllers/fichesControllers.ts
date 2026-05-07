@@ -12,6 +12,20 @@ import {
   ficheCreateSchema,
   ficheUpdateSchema,
 } from "../schemas/ficheSchemas";
+import { webSocketService } from "../services/webSocketService";
+
+/**
+ * Helper : récupère le deviceId depuis le header `x-device-id`.
+ * Optionnel — si absent, le sync_update est broadcast à TOUS les devices
+ * (le client filtrera côté front s'il connaît son propre deviceId via WS).
+ */
+function getOriginDeviceId(req: Request): string | undefined {
+  const raw = req.headers["x-device-id"];
+  if (typeof raw === "string" && raw.length > 0 && raw.length <= 128) {
+    return raw;
+  }
+  return undefined;
+}
 
 const fichesLogger = logger.child({ service: "fiches" });
 
@@ -182,6 +196,16 @@ export async function handleCreateFiche(req: Request, res: Response) {
       hasPoints: validPointsIds.length > 0,
     });
 
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "fiche",
+      "created",
+      newFicheId.toString(),
+      ficheMemory,
+      getOriginDeviceId(req),
+    );
+
     res.status(201).json({
       message: "Fiche créée avec succès",
       ficheId: newFicheId,
@@ -290,6 +314,16 @@ export async function handleUpdateFiche(req: Request, res: Response) {
       ),
     });
 
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "fiche",
+      "updated",
+      ficheId,
+      fiche,
+      getOriginDeviceId(req),
+    );
+
     res.status(200).json({
       message: "Fiche mise à jour avec succès",
       fiche,
@@ -365,6 +399,16 @@ export async function handleDeleteFiche(req: Request, res: Response) {
       action: "delete_fiche",
       pointsCount: fiche.points_ids?.length || 0,
     });
+
+    // 2026-05-04 §4.2: sync_update multi-device
+    webSocketService.broadcastSyncUpdate(
+      userId,
+      "fiche",
+      "deleted",
+      ficheId,
+      { _id: ficheId },
+      getOriginDeviceId(req),
+    );
 
     res.status(200).json({
       message: "Fiche supprimée avec succès",

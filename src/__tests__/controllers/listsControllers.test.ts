@@ -7,6 +7,12 @@ jest.mock("../../models/lists");
 jest.mock("../../models/points");
 jest.mock("../../services/memoryStorageService");
 jest.mock("../../services/syncService");
+jest.mock("../../services/webSocketService", () => ({
+  webSocketService: {
+    broadcastSyncUpdate: jest.fn(),
+    broadcastNotificationRead: jest.fn(),
+  },
+}));
 
 import { Request, Response } from "express";
 import {

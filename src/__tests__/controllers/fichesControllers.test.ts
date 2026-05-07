@@ -7,6 +7,12 @@ jest.mock("../../services/memoryStorageService");
 jest.mock("../../services/syncService");
 jest.mock("../../services/validationService");
 jest.mock("../../controllers/auth/authHelpers");
+jest.mock("../../services/webSocketService", () => ({
+  webSocketService: {
+    broadcastSyncUpdate: jest.fn(),
+    broadcastNotificationRead: jest.fn(),
+  },
+}));
 jest.mock("../../models/fiches", () => ({
   __esModule: true,
   default: { findById: jest.fn() },

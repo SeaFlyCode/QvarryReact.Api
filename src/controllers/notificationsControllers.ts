@@ -8,8 +8,22 @@ import {
 } from "../services/notificationService";
 import dataArchiveService from "../services/dataArchiveService";
 import { logger } from "../services/loggerService";
+import { webSocketService } from "../services/webSocketService";
 
 const notifCtrlLogger = logger.child({ service: "notifications-controller" });
+
+/**
+ * Helper : récupère le deviceId origin depuis le header `x-device-id`.
+ * Sert à filtrer les broadcasts notification_read côté client (le device
+ * qui a déclenché le mark_read n'a pas besoin d'être notifié).
+ */
+function getOriginDeviceId(req: Request): string | undefined {
+  const raw = req.headers["x-device-id"];
+  if (typeof raw === "string" && raw.length > 0 && raw.length <= 128) {
+    return raw;
+  }
+  return undefined;
+}
 
 /**
  * Récupère toutes les notifications de l'utilisateur connecté
@@ -137,6 +151,13 @@ export const markAsRead = async (req: Request, res: Response) => {
       action: "mark_notification_read",
     });
 
+    // 2026-05-04 §4.6: notification_read multi-device
+    webSocketService.broadcastNotificationRead(
+      userId,
+      notificationId,
+      getOriginDeviceId(req),
+    );
+
     res.json({ message: "Notification marquée comme lue" });
   } catch (error) {
     notifCtrlLogger.error("Mark as read error", {
@@ -172,6 +193,13 @@ export const markAllAsRead = async (req: Request, res: Response) => {
       userId,
       action: "mark_all_notifications_read",
     });
+
+    // 2026-05-04 §4.6: notification_read multi-device (mark-all)
+    webSocketService.broadcastNotificationRead(
+      userId,
+      "all",
+      getOriginDeviceId(req),
+    );
 
     res.json({
       message: "Toutes les notifications ont été marquées comme lues",

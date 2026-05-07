@@ -12,6 +12,12 @@ jest.mock("../../services/emailService");
 jest.mock("../../services/refreshTokenService");
 jest.mock("../../services/redisSessionService");
 jest.mock("../../services/auditService");
+jest.mock("../../services/webSocketService", () => ({
+  webSocketService: {
+    broadcastSyncUpdate: jest.fn(),
+    broadcastNotificationRead: jest.fn(),
+  },
+}));
 jest.mock("../../utils/masterEncryptionUtils");
 jest.mock("../../utils/passwordUtils");
 jest.mock("../../utils/emailUtils");

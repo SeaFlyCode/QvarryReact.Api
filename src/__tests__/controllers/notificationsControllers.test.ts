@@ -5,7 +5,12 @@
 
 jest.mock("../../models/notifications");
 jest.mock("../../services/notificationService");
-jest.mock("../../services/webSocketService");
+jest.mock("../../services/webSocketService", () => ({
+  webSocketService: {
+    broadcastSyncUpdate: jest.fn(),
+    broadcastNotificationRead: jest.fn(),
+  },
+}));
 jest.mock("../../utils/communicationEncryptionUtils", () => ({
   decrypt: jest.fn((val) => val),
   encrypt: jest.fn((val) => val),
