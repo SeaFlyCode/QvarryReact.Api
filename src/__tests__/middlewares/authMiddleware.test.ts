@@ -113,6 +113,19 @@ const mockNext = jest.fn();
 // ✅ Test Suite
 // ════════════════════════════════════════════════════════
 
+// V7r2: middleware exige issuer/audience canoniques (cf. authMiddleware.ts:117-118).
+// Les tokens de test doivent les inclure pour passer jwt.verify.
+const JWT_TEST_OPTS: jwt.SignOptions = {
+  algorithm: "HS256",
+  issuer: "qvarry-api",
+  audience: "qvarry-client",
+};
+const JWT_TEST_OPTS_MOBILE: jwt.SignOptions = {
+  algorithm: "HS256",
+  issuer: "qvarry-api",
+  audience: "qvarry-mobile",
+};
+
 describe("authMiddleware", () => {
   let validToken: string;
   const userId = "507f1f77bcf86cd799439011";
@@ -124,7 +137,7 @@ describe("authMiddleware", () => {
     validToken = jwt.sign(
       { id: userId, isAdmin: false },
       process.env.JWT_SECRET!,
-      { algorithm: "HS256" },
+      JWT_TEST_OPTS,
     );
 
     // Reset default mocks
@@ -188,11 +201,11 @@ describe("authMiddleware", () => {
     it("should prioritize cookie over Authorization header", async () => {
       const cookieToken = jwt.sign(
         { id: "cookie-user" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
       const headerToken = jwt.sign(
         { id: "header-user" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       const req = mockReq({
@@ -294,7 +307,7 @@ describe("authMiddleware", () => {
     it("should reject expired token", async () => {
       const expiredToken = jwt.sign(
         { id: userId, exp: Math.floor(Date.now() / 1000) - 3600 },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       const req = mockReq({
@@ -333,7 +346,7 @@ describe("authMiddleware", () => {
     it("should detect mobile token via platform claim", async () => {
       const mobileToken = jwt.sign(
         { id: userId, platform: "mobile", jti: "test-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockRedisSessionService.validateSessionJti.mockResolvedValue(true);
@@ -359,7 +372,7 @@ describe("authMiddleware", () => {
     it("should detect mobile via x-platform header (iOS)", async () => {
       const mobileToken = jwt.sign(
         { id: userId, jti: "test-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockRedisSessionService.validateSessionJti.mockResolvedValue(true);
@@ -379,7 +392,7 @@ describe("authMiddleware", () => {
     it("should detect mobile via x-platform header (android)", async () => {
       const mobileToken = jwt.sign(
         { id: userId, jti: "test-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockRedisSessionService.validateSessionJti.mockResolvedValue(true);
@@ -401,7 +414,7 @@ describe("authMiddleware", () => {
     it("should reject mobile token with invalid JTI", async () => {
       const mobileToken = jwt.sign(
         { id: userId, platform: "mobile", jti: "test-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockRedisSessionService.validateSessionJti.mockResolvedValue(false);
@@ -425,7 +438,7 @@ describe("authMiddleware", () => {
     it("should initialize memoryStorage lazily for mobile", async () => {
       const mobileToken = jwt.sign(
         { id: userId, platform: "mobile", jti: "test-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockRedisSessionService.validateSessionJti.mockResolvedValue(true);
@@ -447,7 +460,7 @@ describe("authMiddleware", () => {
     it("should handle lazy initialization error", async () => {
       const mobileToken = jwt.sign(
         { id: userId, platform: "mobile", jti: "test-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockRedisSessionService.validateSessionJti.mockResolvedValue(true);
@@ -553,7 +566,7 @@ describe("authMiddleware", () => {
     it("should validate JTI for web tokens", async () => {
       const tokenWithJti = jwt.sign(
         { id: userId, jti: "web-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockRedisSessionService.validateSessionJti.mockResolvedValue(true);
@@ -577,7 +590,7 @@ describe("authMiddleware", () => {
     it("should reject web token with invalid JTI", async () => {
       const tokenWithJti = jwt.sign(
         { id: userId, jti: "invalid-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockRedisSessionService.validateSessionJti.mockResolvedValue(false);
@@ -604,7 +617,7 @@ describe("authMiddleware", () => {
     it("should verify admin status from database", async () => {
       const adminToken = jwt.sign(
         { id: userId, isAdmin: true },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockUserModel.findById.mockReturnValue({
@@ -632,7 +645,7 @@ describe("authMiddleware", () => {
     it("should return 401 if user not found in database", async () => {
       const adminToken = jwt.sign(
         { id: userId, isAdmin: true },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockUserModel.findById.mockReturnValue({
@@ -659,7 +672,7 @@ describe("authMiddleware", () => {
     it("should return 403 if user is blocked", async () => {
       const adminToken = jwt.sign(
         { id: userId, isAdmin: true },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockUserModel.findById.mockReturnValue({
@@ -692,7 +705,7 @@ describe("authMiddleware", () => {
     it("should block privilege escalation attempt", async () => {
       const fakeAdminToken = jwt.sign(
         { id: userId, isAdmin: true },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       mockUserModel.findById.mockReturnValue({
@@ -755,7 +768,7 @@ describe("authMiddleware", () => {
     it("should attach mobile context for mobile tokens", async () => {
       const mobileToken = jwt.sign(
         { id: userId, platform: "mobile", jti: "test-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       const req = mockReq({
@@ -792,7 +805,7 @@ describe("authMiddleware", () => {
     it("should not touch session for mobile tokens", async () => {
       const mobileToken = jwt.sign(
         { id: userId, platform: "mobile", jti: "test-jti" },
-        process.env.JWT_SECRET!,
+        process.env.JWT_SECRET!, JWT_TEST_OPTS,
       );
 
       const req = mockReq({

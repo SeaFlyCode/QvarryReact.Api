@@ -15,8 +15,21 @@ import { STORAGE_CONFIG } from "../../config/storageConfig";
 import sharp from "sharp";
 
 // Mock Sharp pour certains tests
+// V7r2: mock chainable par défaut (metadata + jpeg + resize + toBuffer) pour
+// que les tests qui ne configurent pas explicitement sharp ne crash pas.
 jest.mock("sharp", () => {
-  return jest.fn();
+  const defaultMetadata = { width: 1024, height: 768, format: "jpeg" };
+  return jest.fn(() => {
+    const instance: any = {
+      metadata: jest.fn().mockResolvedValue(defaultMetadata),
+      jpeg: jest.fn().mockReturnThis(),
+      resize: jest.fn().mockReturnThis(),
+      rotate: jest.fn().mockReturnThis(),
+      withMetadata: jest.fn().mockReturnThis(),
+      toBuffer: jest.fn().mockResolvedValue(Buffer.from([0xff, 0xd8, 0xff])),
+    };
+    return instance;
+  });
 });
 
 // Mock heic-convert
@@ -35,6 +48,16 @@ jest.mock("heic-convert", () => {
 describe("ImageProcessingService", () => {
   beforeEach(() => {
     jest.clearAllMocks();
+    // V7r2: avec resetMocks:true (jest.config) le mock factory est reset.
+    // Re-appliquer l'implémentation par défaut pour les tests qui ne le font pas.
+    (sharp as any).mockImplementation(() => ({
+      metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
+      jpeg: jest.fn().mockReturnThis(),
+      resize: jest.fn().mockReturnThis(),
+      rotate: jest.fn().mockReturnThis(),
+      withMetadata: jest.fn().mockReturnThis(),
+      toBuffer: jest.fn().mockResolvedValue(Buffer.from([0xff, 0xd8, 0xff])),
+    }));
   });
 
   describe("validateMimeType", () => {
@@ -163,6 +186,7 @@ describe("ImageProcessingService", () => {
 
       // Mock Sharp pour retourner un buffer compressé
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         jpeg: jest.fn().mockReturnThis(),
         toBuffer: jest
           .fn()
@@ -187,6 +211,7 @@ describe("ImageProcessingService", () => {
       let callCount = 0;
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         jpeg: jest.fn().mockReturnThis(),
         toBuffer: jest.fn().mockImplementation(async () => {
           callCount++;
@@ -213,6 +238,7 @@ describe("ImageProcessingService", () => {
       const targetSizeKb = 50;
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         jpeg: jest.fn().mockReturnThis(),
         toBuffer: jest.fn().mockResolvedValue(createMockJpegBuffer(500)), // Toujours trop gros
       };
@@ -244,6 +270,7 @@ describe("ImageProcessingService", () => {
       const inputBuffer = createMockJpegBuffer(100);
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         jpeg: jest.fn().mockReturnThis(),
         toBuffer: jest.fn().mockResolvedValue(createMockJpegBuffer(240)),
       };
@@ -290,6 +317,7 @@ describe("ImageProcessingService", () => {
       const inputBuffer = createMockJpegBuffer(100);
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         metadata: jest
           .fn()
           .mockResolvedValue({ width: 1000, height: 1000, format: "jpeg" }),
@@ -318,6 +346,7 @@ describe("ImageProcessingService", () => {
       const inputBuffer = createMockJpegBuffer(100);
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         metadata: jest.fn().mockResolvedValueOnce({
           width: 3000,
           height: 2500,
@@ -358,6 +387,7 @@ describe("ImageProcessingService", () => {
       const heicBuffer = createMockHeicBuffer(100);
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         metadata: jest
           .fn()
           .mockResolvedValue({ width: 1000, height: 1000, format: "jpeg" }),
@@ -404,6 +434,7 @@ describe("ImageProcessingService", () => {
       const inputBuffer = createMockJpegBuffer(100);
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         metadata: jest
           .fn()
           .mockResolvedValue({ width: 1000, height: 1000, format: "jpeg" }),
@@ -426,6 +457,7 @@ describe("ImageProcessingService", () => {
       const largeBuffer = createMockJpegBuffer(500);
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         metadata: jest
           .fn()
           .mockResolvedValue({ width: 1000, height: 1000, format: "jpeg" }),
@@ -448,6 +480,7 @@ describe("ImageProcessingService", () => {
       const heifBuffer = createMockHeicBuffer(100);
 
       const mockSharpInstance: any = {
+metadata: jest.fn().mockResolvedValue({ width: 1024, height: 768, format: "jpeg" }),
         metadata: jest
           .fn()
           .mockResolvedValue({ width: 1000, height: 1000, format: "jpeg" }),

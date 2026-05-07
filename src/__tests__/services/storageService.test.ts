@@ -34,8 +34,8 @@ describe("StorageService", () => {
 
   describe("getPhotoPath", () => {
     it("devrait générer le chemin correct pour une photo", () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
 
       const photoPath = storageService.getPhotoPath(userId, pointId);
 
@@ -45,9 +45,9 @@ describe("StorageService", () => {
     });
 
     it("devrait générer des chemins différents pour des users différents", () => {
-      const userId1 = "user1";
-      const userId2 = "user2";
-      const pointId = "point1";
+      const userId1 = "507f1f77bcf86cd799439021";
+      const userId2 = "507f1f77bcf86cd799439022";
+      const pointId = "507f1f77bcf86cd799439041";
 
       const path1 = storageService.getPhotoPath(userId1, pointId);
       const path2 = storageService.getPhotoPath(userId2, pointId);
@@ -60,8 +60,8 @@ describe("StorageService", () => {
 
   describe("fileExists", () => {
     it("devrait retourner true pour un fichier existant", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const buffer = createMockJpegBuffer(10);
 
       // Créer le fichier
@@ -84,8 +84,8 @@ describe("StorageService", () => {
 
   describe("savePointPhoto", () => {
     it("devrait sauvegarder une photo correctement", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const buffer = createMockJpegBuffer(50);
 
       const relativePath = await storageService.savePointPhoto(
@@ -106,7 +106,7 @@ describe("StorageService", () => {
 
     it("devrait créer automatiquement le dossier utilisateur", async () => {
       const userId = "newuser789";
-      const pointId = "point123";
+      const pointId = "507f1f77bcf86cd799439034";
       const buffer = createMockJpegBuffer(10);
 
       const userDir = path.join(TEST_STORAGE_PATH, userId);
@@ -118,8 +118,8 @@ describe("StorageService", () => {
     });
 
     it("devrait écraser une photo existante", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const buffer1 = createMockJpegBuffer(10);
       const buffer2 = createMockJpegBuffer(20);
 
@@ -135,8 +135,8 @@ describe("StorageService", () => {
     });
 
     it("devrait gérer les erreurs d'écriture", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const buffer = createMockJpegBuffer(10);
 
       // Mock fs.promises.writeFile pour simuler une erreur
@@ -153,9 +153,9 @@ describe("StorageService", () => {
     });
 
     it("devrait sauvegarder plusieurs photos pour le même user", async () => {
-      const userId = "user123";
-      const pointId1 = "point1";
-      const pointId2 = "point2";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId1 = "507f1f77bcf86cd799439041";
+      const pointId2 = "507f1f77bcf86cd799439042";
       const buffer = createMockJpegBuffer(10);
 
       await storageService.savePointPhoto(userId, pointId1, buffer);
@@ -170,8 +170,8 @@ describe("StorageService", () => {
 
   describe("deletePointPhoto", () => {
     it("devrait supprimer une photo existante", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const buffer = createMockJpegBuffer(10);
 
       // Créer la photo
@@ -186,7 +186,7 @@ describe("StorageService", () => {
     });
 
     it("devrait ne rien faire si la photo n'existe pas", async () => {
-      const userId = "user123";
+      const userId = "507f1f77bcf86cd799439011";
       const pointId = "nonexistent";
 
       // Ne devrait pas lancer d'erreur
@@ -196,8 +196,8 @@ describe("StorageService", () => {
     });
 
     it("devrait supprimer le dossier utilisateur s'il est vide", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const buffer = createMockJpegBuffer(10);
 
       // Créer une photo
@@ -213,9 +213,9 @@ describe("StorageService", () => {
     });
 
     it("ne devrait pas supprimer le dossier utilisateur s'il contient d'autres photos", async () => {
-      const userId = "user123";
-      const pointId1 = "point1";
-      const pointId2 = "point2";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId1 = "507f1f77bcf86cd799439041";
+      const pointId2 = "507f1f77bcf86cd799439042";
       const buffer = createMockJpegBuffer(10);
 
       // Créer deux photos
@@ -232,8 +232,8 @@ describe("StorageService", () => {
 
   describe("getPhotoSize", () => {
     it("devrait retourner la taille correcte d'une photo", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const sizeKb = 50;
       const buffer = createMockJpegBuffer(sizeKb);
 
@@ -246,7 +246,7 @@ describe("StorageService", () => {
     });
 
     it("devrait retourner 0 pour une photo inexistante", async () => {
-      const userId = "user123";
+      const userId = "507f1f77bcf86cd799439011";
       const pointId = "nonexistent";
 
       const size = await storageService.getPhotoSize(userId, pointId);
@@ -257,19 +257,19 @@ describe("StorageService", () => {
 
   describe("listUserPhotos", () => {
     it("devrait lister toutes les photos d'un utilisateur", async () => {
-      const userId = "user123";
+      const userId = "507f1f77bcf86cd799439011";
       const buffer = createMockJpegBuffer(10);
 
-      await storageService.savePointPhoto(userId, "point1", buffer);
-      await storageService.savePointPhoto(userId, "point2", buffer);
-      await storageService.savePointPhoto(userId, "point3", buffer);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439041", buffer);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439042", buffer);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439043", buffer);
 
       const photos = await storageService.listUserPhotos(userId);
 
       expect(photos).toHaveLength(3);
-      expect(photos).toContain("point1");
-      expect(photos).toContain("point2");
-      expect(photos).toContain("point3");
+      expect(photos).toContain("507f1f77bcf86cd799439041");
+      expect(photos).toContain("507f1f77bcf86cd799439042");
+      expect(photos).toContain("507f1f77bcf86cd799439043");
     });
 
     it("devrait retourner un tableau vide pour un user sans photos", async () => {
@@ -281,10 +281,10 @@ describe("StorageService", () => {
     });
 
     it("ne devrait lister que les fichiers .jpg", async () => {
-      const userId = "user123";
+      const userId = "507f1f77bcf86cd799439011";
       const buffer = createMockJpegBuffer(10);
 
-      await storageService.savePointPhoto(userId, "point1", buffer);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439041", buffer);
 
       // Créer un fichier non-jpg
       const userDir = path.join(TEST_STORAGE_PATH, userId);
@@ -293,18 +293,18 @@ describe("StorageService", () => {
       const photos = await storageService.listUserPhotos(userId);
 
       expect(photos).toHaveLength(1);
-      expect(photos).toContain("point1");
+      expect(photos).toContain("507f1f77bcf86cd799439041");
     });
   });
 
   describe("calculateUserStorage", () => {
     it("devrait calculer l'espace utilisé par un utilisateur", async () => {
-      const userId = "user123";
+      const userId = "507f1f77bcf86cd799439011";
       const buffer1 = createMockJpegBuffer(50);
       const buffer2 = createMockJpegBuffer(30);
 
-      await storageService.savePointPhoto(userId, "point1", buffer1);
-      await storageService.savePointPhoto(userId, "point2", buffer2);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439041", buffer1);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439042", buffer2);
 
       const totalSize = await storageService.calculateUserStorage(userId);
 
@@ -320,16 +320,16 @@ describe("StorageService", () => {
     });
 
     it("devrait calculer correctement après suppression de photos", async () => {
-      const userId = "user123";
+      const userId = "507f1f77bcf86cd799439011";
       const buffer = createMockJpegBuffer(50);
 
-      await storageService.savePointPhoto(userId, "point1", buffer);
-      await storageService.savePointPhoto(userId, "point2", buffer);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439041", buffer);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439042", buffer);
 
       const sizeBefore = await storageService.calculateUserStorage(userId);
       expect(sizeBefore).toBe(buffer.length * 2);
 
-      await storageService.deletePointPhoto(userId, "point1");
+      await storageService.deletePointPhoto(userId, "507f1f77bcf86cd799439041");
 
       const sizeAfter = await storageService.calculateUserStorage(userId);
       expect(sizeAfter).toBe(buffer.length);
@@ -340,15 +340,15 @@ describe("StorageService", () => {
     it("devrait trouver tous les fichiers stockés", async () => {
       const buffer = createMockJpegBuffer(10);
 
-      await storageService.savePointPhoto("user1", "point1", buffer);
-      await storageService.savePointPhoto("user1", "point2", buffer);
-      await storageService.savePointPhoto("user2", "point3", buffer);
+      await storageService.savePointPhoto("507f1f77bcf86cd799439021", "507f1f77bcf86cd799439041", buffer);
+      await storageService.savePointPhoto("507f1f77bcf86cd799439021", "507f1f77bcf86cd799439042", buffer);
+      await storageService.savePointPhoto("507f1f77bcf86cd799439022", "507f1f77bcf86cd799439043", buffer);
 
       const orphans = await storageService.findOrphanFiles();
 
       expect(orphans.size).toBe(2);
-      expect(orphans.get("user1")).toEqual(["point1", "point2"]);
-      expect(orphans.get("user2")).toEqual(["point3"]);
+      expect(orphans.get("507f1f77bcf86cd799439021")).toEqual(["507f1f77bcf86cd799439041", "507f1f77bcf86cd799439042"]);
+      expect(orphans.get("507f1f77bcf86cd799439022")).toEqual(["507f1f77bcf86cd799439043"]);
     });
 
     it("devrait retourner une Map vide si aucun fichier", async () => {
@@ -358,10 +358,10 @@ describe("StorageService", () => {
     });
 
     it("devrait ignorer les fichiers non-.jpg", async () => {
-      const userId = "user123";
+      const userId = "507f1f77bcf86cd799439011";
       const buffer = createMockJpegBuffer(10);
 
-      await storageService.savePointPhoto(userId, "point1", buffer);
+      await storageService.savePointPhoto(userId, "507f1f77bcf86cd799439041", buffer);
 
       // Créer un fichier non-jpg
       const userDir = path.join(TEST_STORAGE_PATH, userId);
@@ -369,7 +369,7 @@ describe("StorageService", () => {
 
       const orphans = await storageService.findOrphanFiles();
 
-      expect(orphans.get(userId)).toEqual(["point1"]);
+      expect(orphans.get(userId)).toEqual(["507f1f77bcf86cd799439041"]);
     });
   });
 
@@ -379,9 +379,9 @@ describe("StorageService", () => {
       const buffer2 = createMockJpegBuffer(30);
       const buffer3 = createMockJpegBuffer(20);
 
-      await storageService.savePointPhoto("user1", "point1", buffer1);
-      await storageService.savePointPhoto("user1", "point2", buffer2);
-      await storageService.savePointPhoto("user2", "point3", buffer3);
+      await storageService.savePointPhoto("507f1f77bcf86cd799439021", "507f1f77bcf86cd799439041", buffer1);
+      await storageService.savePointPhoto("507f1f77bcf86cd799439021", "507f1f77bcf86cd799439042", buffer2);
+      await storageService.savePointPhoto("507f1f77bcf86cd799439022", "507f1f77bcf86cd799439043", buffer3);
 
       const totalSize = await storageService.calculateTotalStorage();
 
@@ -397,13 +397,13 @@ describe("StorageService", () => {
     it("devrait calculer correctement après suppressions", async () => {
       const buffer = createMockJpegBuffer(50);
 
-      await storageService.savePointPhoto("user1", "point1", buffer);
-      await storageService.savePointPhoto("user2", "point2", buffer);
+      await storageService.savePointPhoto("507f1f77bcf86cd799439021", "507f1f77bcf86cd799439041", buffer);
+      await storageService.savePointPhoto("507f1f77bcf86cd799439022", "507f1f77bcf86cd799439042", buffer);
 
       const sizeBefore = await storageService.calculateTotalStorage();
       expect(sizeBefore).toBe(buffer.length * 2);
 
-      await storageService.deletePointPhoto("user1", "point1");
+      await storageService.deletePointPhoto("507f1f77bcf86cd799439021", "507f1f77bcf86cd799439041");
 
       const sizeAfter = await storageService.calculateTotalStorage();
       expect(sizeAfter).toBe(buffer.length);
@@ -412,8 +412,8 @@ describe("StorageService", () => {
 
   describe("Error handling", () => {
     it("devrait gérer les erreurs de permission", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const buffer = createMockJpegBuffer(10);
 
       // Mock pour simuler une erreur de permission
@@ -433,8 +433,8 @@ describe("StorageService", () => {
     });
 
     it("devrait gérer les erreurs de disque plein", async () => {
-      const userId = "user123";
-      const pointId = "point456";
+      const userId = "507f1f77bcf86cd799439011";
+      const pointId = "507f1f77bcf86cd799439033";
       const buffer = createMockJpegBuffer(10);
 
       // Mock pour simuler un disque plein
