@@ -327,10 +327,12 @@ describe("authHelpers", () => {
     const mockUserKey = "decrypted-user-key";
 
     beforeEach(() => {
-      (KeysModel.findOne as jest.Mock).mockResolvedValue({
-        userId: mockUserId,
-        key: "encrypted-key",
-        type: "user",
+      (KeysModel.findOne as jest.Mock).mockReturnValue({
+        lean: jest.fn().mockResolvedValue({
+          userId: mockUserId,
+          key: "encrypted-key",
+          type: "user",
+        }),
       });
       (decrypt as jest.Mock).mockReturnValue(mockUserKey);
       (memoryStorage.initSession as jest.Mock).mockReturnValue(undefined);
@@ -378,7 +380,7 @@ describe("authHelpers", () => {
     });
 
     it("devrait créer une clé utilisateur si elle n'existe pas", async () => {
-      (KeysModel.findOne as jest.Mock).mockResolvedValue(null);
+      (KeysModel.findOne as jest.Mock).mockReturnValue({ lean: jest.fn().mockResolvedValue(null) });
       (crypto.randomBytes as jest.Mock).mockReturnValue({
         toString: jest.fn().mockReturnValue("new-random-key"),
       });
@@ -431,7 +433,7 @@ describe("authHelpers", () => {
     });
 
     it("devrait lever une erreur si la clé n'existe pas après création", async () => {
-      (KeysModel.findOne as jest.Mock).mockResolvedValue(null);
+      (KeysModel.findOne as jest.Mock).mockReturnValue({ lean: jest.fn().mockResolvedValue(null) });
       (crypto.randomBytes as jest.Mock).mockReturnValue({
         toString: jest.fn().mockReturnValue("new-random-key"),
       });

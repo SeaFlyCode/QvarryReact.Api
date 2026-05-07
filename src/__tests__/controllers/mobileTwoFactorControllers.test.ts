@@ -190,7 +190,7 @@ describe("mobileTwoFactorControllers", () => {
         save: jest.fn().mockResolvedValue(true),
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       // Mock TOTP validation
       (TOTP as any).mockImplementation(() => ({
@@ -217,7 +217,7 @@ describe("mobileTwoFactorControllers", () => {
         two_factor_secret: "encrypted-secret",
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       // Mock TOTP validation échoue
       (TOTP as any).mockImplementation(() => ({
@@ -252,7 +252,7 @@ describe("mobileTwoFactorControllers", () => {
         two_factor_enabled: true,
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       await mobileVerifyAndEnableTwoFactor(req as Request, res as Response);
 
@@ -290,7 +290,7 @@ describe("mobileTwoFactorControllers", () => {
         save: jest.fn().mockResolvedValue(true),
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       // Mock TOTP validation
       (TOTP as any).mockImplementation(() => ({
@@ -327,7 +327,7 @@ describe("mobileTwoFactorControllers", () => {
         two_factor_enabled: true,
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
       (bcrypt.compare as jest.Mock).mockResolvedValue(false);
 
       await mobileDisableTwoFactor(req as Request, res as Response);
@@ -345,7 +345,7 @@ describe("mobileTwoFactorControllers", () => {
         two_factor_enabled: false,
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       await mobileDisableTwoFactor(req as Request, res as Response);
 
@@ -397,7 +397,7 @@ describe("mobileTwoFactorControllers", () => {
         two_factor_secret: "encrypted-secret",
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       // Mock TOTP validation
       (TOTP as any).mockImplementation(() => ({
@@ -440,7 +440,7 @@ describe("mobileTwoFactorControllers", () => {
         two_factor_secret: "encrypted-secret",
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       // Mock TOTP validation échoue
       (TOTP as any).mockImplementation(() => ({
@@ -471,7 +471,7 @@ describe("mobileTwoFactorControllers", () => {
         save: jest.fn().mockResolvedValue(true),
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
       (bcrypt.compare as jest.Mock).mockResolvedValueOnce(true);
 
       await mobileVerifyTwoFactorLogin(req as Request, res as Response);
@@ -495,7 +495,7 @@ describe("mobileTwoFactorControllers", () => {
         two_factor_secret: "encrypted-secret",
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
       (TOTP as any).mockImplementation(() => ({
         validate: jest.fn().mockReturnValue(null),
       }));
@@ -530,7 +530,7 @@ describe("mobileTwoFactorControllers", () => {
         save: jest.fn().mockResolvedValue(true),
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       await mobileRegenerateRecoveryCodes(req as Request, res as Response);
 
@@ -562,7 +562,7 @@ describe("mobileTwoFactorControllers", () => {
         two_factor_enabled: false,
       };
 
-      (UserModel.findById as jest.Mock).mockResolvedValue(mockUser);
+      (UserModel.findById as jest.Mock).mockReturnValue({ select: jest.fn().mockResolvedValue(mockUser) });
 
       await mobileRegenerateRecoveryCodes(req as Request, res as Response);
 
