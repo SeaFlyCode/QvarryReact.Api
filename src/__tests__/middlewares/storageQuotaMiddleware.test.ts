@@ -12,6 +12,19 @@ import {
 
 const { GB } = TEST_CONSTANTS;
 
+// V7r4: mock logger requis sinon `logger.child(...)` retourne undefined et
+// le middleware crash sur `quotaLogger.error(...)` dans le catch.
+jest.mock("../../services/loggerService", () => ({
+  logger: {
+    child: () => ({
+      info: jest.fn(),
+      warn: jest.fn(),
+      error: jest.fn(),
+      debug: jest.fn(),
+    }),
+  },
+}));
+
 // Mock du service de quota
 jest.mock("../../services/storageQuotaService");
 
@@ -23,8 +36,9 @@ describe("StorageQuotaMiddleware", () => {
   beforeEach(() => {
     jest.clearAllMocks();
 
+    // V7r4: middleware utilise req.user.id (posé par authMiddleware), pas req.userId.
     mockReq = {
-      userId: "user123",
+      user: { id: "user123" },
     } as any;
 
     mockRes = {

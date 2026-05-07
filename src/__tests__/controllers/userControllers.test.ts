@@ -324,7 +324,7 @@ describe("userControllers", () => {
     beforeEach(() => {
       req = mockRequest({
         params: { id: "user123" },
-        user: { id: "user123", is_admin: false },
+        user: { id: "user123", isAdmin: false },
       });
       res = mockResponse();
 
@@ -372,7 +372,7 @@ describe("userControllers", () => {
     });
 
     it("devrait rejeter un accès non autorisé", async () => {
-      req.user = { id: "other-user", is_admin: false };
+      req.user = { id: "other-user", isAdmin: false };
 
       await handleGetUserById(req as Request, res as Response);
 
@@ -395,7 +395,7 @@ describe("userControllers", () => {
     });
 
     it("devrait autoriser un admin à voir n'importe quel profil", async () => {
-      req.user = { id: "admin-id", is_admin: true };
+      req.user = { id: "admin-id", isAdmin: true };
 
       await handleGetUserById(req as Request, res as Response);
 

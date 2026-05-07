@@ -29,6 +29,18 @@ jest.mock("../../utils/logUtils", () => ({
   maskDeviceId: jest.fn((id: string) => id),
 }));
 
+// V7r4: mock AppVersionModel pour éviter la connexion Mongo réelle dans
+// checkAppVersion. Retour null → fallback sur env vars MIN_IOS_VERSION /
+// MIN_ANDROID_VERSION (défaut "1.0.0").
+jest.mock("../../models/appVersion", () => ({
+  __esModule: true,
+  default: {
+    findOne: jest.fn().mockReturnValue({
+      lean: jest.fn().mockResolvedValue(null),
+    }),
+  },
+}));
+
 import { Request, Response, NextFunction } from "express";
 import {
   verifyMobilePlatform,
