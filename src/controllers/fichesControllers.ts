@@ -246,6 +246,23 @@ export async function handleUpdateFiche(req: Request, res: Response) {
       return res.status(404).json({ message: "Fiche non trouvée." });
     }
 
+    // §P2 §4.2.2 — Optimistic concurrency control
+    // Si le client envoie sa version, vérifier qu'elle correspond au serveur.
+    // Évite l'écrasement silencieux lorsque deux devices modifient la même
+    // fiche en simultané (cf. mobileSyncService.applyChange qui fait pareil).
+    if (typeof updateData.version === "number") {
+      const serverVersion = (fiche as any).version || 0;
+      if (updateData.version < serverVersion) {
+        return res.status(409).json({
+          message:
+            "Cette fiche a été modifiée entre-temps. Veuillez recharger.",
+          code: "VERSION_CONFLICT",
+          clientVersion: updateData.version,
+          serverVersion,
+        });
+      }
+    }
+
     // Validation stricte des enums sur les champs envoyés (alignée mobile)
     const parsedUpdate = ficheUpdateSchema.safeParse(updateData);
     if (!parsedUpdate.success) {
@@ -288,6 +305,11 @@ export async function handleUpdateFiche(req: Request, res: Response) {
 
     // Mettre à jour la date de modification
     fiche.date_modification = new Date();
+
+    // §P2 §4.2.2 — Incrément version pour le prochain check optimistic concurrency
+    // (le sync DB incrémentera aussi en authHelpers:1155, mais l'écho WS qui
+    // suit doit déjà refléter la nouvelle version).
+    (fiche as any).version = ((fiche as any).version || 0) + 1;
 
     // Stocker les modifications en mémoire
     memoryStorage.storeFiche(userId, fiche);

@@ -304,13 +304,29 @@ export async function handleUpdateList(req: Request, res: Response) {
     // Snapshot avant mutation pour rollback éventuel (cf. fix.md backend #1).
     const listSnapshot = memoryStorage.getListById(userId, listId);
 
+    // §P2 §4.2.2 — Optimistic concurrency control
+    if (typeof req.body.version === "number" && listSnapshot) {
+      const serverVersion = (listSnapshot as any).version || 0;
+      if (req.body.version < serverVersion) {
+        return res.status(409).json({
+          message:
+            "Cette liste a été modifiée entre-temps. Veuillez recharger.",
+          code: "VERSION_CONFLICT",
+          clientVersion: req.body.version,
+          serverVersion,
+        });
+      }
+    }
+
     const updatedList = memoryStorage.updateList(userId, listId, {
       name,
       description,
       points,
       color,
       icon,
-    });
+      // §P2 §4.2.2 — Incrément version pour le prochain check optimistic concurrency
+      version: ((listSnapshot as any)?.version || 0) + 1,
+    } as any);
 
     if (!updatedList) {
       return res.status(404).json({ message: "Liste non trouvée" });

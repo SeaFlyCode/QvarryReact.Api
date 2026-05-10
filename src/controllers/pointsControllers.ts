@@ -696,6 +696,21 @@ export async function handleUpdatePoint(req: Request, res: Response) {
       return res.status(404).json({ message: "Point non trouvé" });
     }
 
+    // §P2 §4.2.2 — Optimistic concurrency control
+    // Si le client envoie sa version, vérifier qu'elle correspond au serveur.
+    if (typeof req.body.version === "number") {
+      const serverVersion = (point as any).version || 0;
+      if (req.body.version < serverVersion) {
+        return res.status(409).json({
+          message:
+            "Ce point a été modifié entre-temps. Veuillez recharger.",
+          code: "VERSION_CONFLICT",
+          clientVersion: req.body.version,
+          serverVersion,
+        });
+      }
+    }
+
     // Snapshot deep-copy AVANT toute mutation pour rollback éventuel
     // (cf. fix.md backend #1).
     const pointSnapshot = JSON.parse(JSON.stringify(point));
@@ -780,6 +795,9 @@ export async function handleUpdatePoint(req: Request, res: Response) {
 
     // Mettre à jour le timestamp de modification
     point.updatedAt = new Date();
+
+    // §P2 §4.2.2 — Incrément version pour optimistic concurrency
+    (point as any).version = ((point as any).version || 0) + 1;
 
     // Stocker les modifications en mémoire
     memoryStorage.storePoint(userId, point);
