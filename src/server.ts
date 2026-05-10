@@ -191,14 +191,23 @@ serverLogger.info("Express Server démarré", {
 
 const clientUrl = process.env.CLIENT_URL || "http://localhost:3001";
 
+// V8 Phase 2: allowlist élargie en dev pour couvrir les ports Next.js auto-incrémentés
+// (3000 conflit avec backend → Next bascule sur 3001, 3002, 3005...). Permet les
+// E2E Playwright et le dev quotidien sans toucher à CLIENT_URL. En prod, seul
+// CLIENT_URL est autorisé.
 const allowedOrigins =
   NODE_ENV === "production"
     ? [clientUrl]
     : [
         "http://localhost:3000",
         "http://localhost:3001",
+        "http://localhost:3002",
+        "http://localhost:3003",
+        "http://localhost:3004",
+        "http://localhost:3005",
         "https://localhost:3000",
         "https://localhost:3001",
+        "https://localhost:3005",
         "https://dev.qvarry.fr",
         clientUrl,
       ];
