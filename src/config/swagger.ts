@@ -37,6 +37,80 @@ const options: swaggerJsdoc.Options = {
           description: "Token JWT dans le cookie",
         },
       },
+      // V8 Phase 1 : schémas réutilisables référencés via $ref
+      schemas: {
+        Fiche: {
+          type: "object",
+          properties: {
+            _id: { type: "string", example: "6a00e1d8556f9ee6354b5c73" },
+            userId: { type: "string" },
+            name: { type: "string" },
+            ville: { type: "string" },
+            type: { type: "string", enum: ["Grotte", "Mine", "Aven", "Doline", "Carrière", "Tunnel", "Autre"] },
+            etat: { type: "string" },
+            praticite_souterrain: {
+              oneOf: [
+                { type: "string" },
+                { type: "array", items: { type: "string" } },
+              ],
+            },
+            equipement_conseille: { type: "array", items: { type: "string" } },
+            surface: { type: "array", items: { type: "string" } },
+            type_galeries: { type: "array", items: { type: "string" } },
+            points_ids: { type: "array", items: { type: "string" } },
+            center_cavite: {
+              type: "object",
+              properties: {
+                type: { type: "string", enum: ["Point"] },
+                coordinates: { type: "array", items: { type: "number" } },
+              },
+            },
+            date_creation: { type: "string", format: "date-time" },
+            date_modification: { type: "string", format: "date-time" },
+            deletedAt: { type: "string", format: "date-time", nullable: true },
+            version: { type: "integer", description: "§V9 Optimistic concurrency" },
+          },
+        },
+        User: {
+          type: "object",
+          properties: {
+            _id: { type: "string" },
+            name: { type: "string" },
+            surname: { type: "string" },
+            email: { type: "string", format: "email" },
+            pseudo: { type: "string" },
+            contact_code: { type: "integer" },
+            is_admin: { type: "boolean" },
+            is_verified: { type: "boolean" },
+            is_admin_validated: { type: "boolean" },
+            two_factor_enabled: { type: "boolean" },
+            creation_date: { type: "string", format: "date-time" },
+            last_connection: { type: "string", format: "date-time" },
+          },
+        },
+        ErrorResponse: {
+          type: "object",
+          properties: {
+            error: { type: "string" },
+            code: {
+              type: "string",
+              description: "Codes documentés: INVALID_CREDENTIALS, BLOCKED, UNVERIFIED, PENDING_VALIDATION, UNAUTHORIZED, VERSION_CONFLICT, RATE_LIMITED, NO_TOKEN, INVALID_REFRESH_TOKEN, etc.",
+            },
+            message: { type: "string" },
+          },
+        },
+        AuthLoginResponse: {
+          type: "object",
+          properties: {
+            accessToken: { type: "string" },
+            refreshToken: { type: "string", description: "Présent uniquement si le client n'utilise pas les cookies httpOnly (mobile)." },
+            user: { $ref: "#/components/schemas/User" },
+            requires2FA: { type: "boolean" },
+            tempToken: { type: "string", description: "Présent si requires2FA=true" },
+            tokenId: { type: "string", description: "§V9 jti du JWT pour synchronisation côté client" },
+          },
+        },
+      },
     },
     security: [{ bearerAuth: [] }, { cookieAuth: [] }],
     tags: [
@@ -60,7 +134,15 @@ const options: swaggerJsdoc.Options = {
     ],
   },
   // Chemins vers les fichiers contenant les annotations JSDoc
-  apis: ["./src/routes/*.ts", "./src/controllers/*.ts", "./src/models/*.ts"],
+  // V8 Phase 1 : ajout server.ts (endpoints /health + /health/ready) et middlewares.
+  apis: [
+    "./src/routes/*.ts",
+    "./src/controllers/*.ts",
+    "./src/controllers/**/*.ts",
+    "./src/models/*.ts",
+    "./src/middlewares/*.ts",
+    "./src/server.ts",
+  ],
 };
 
 /**

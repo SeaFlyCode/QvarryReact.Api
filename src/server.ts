@@ -781,12 +781,20 @@ app.use("/api", generalLimiter);
     }
 
     // ═══════════════════════════════════════════════════════════════════════════
-    // SWAGGER - Documentation API (uniquement en développement)
+    // SWAGGER - Documentation API
     // ═══════════════════════════════════════════════════════════════════════════
-    if (NODE_ENV !== "production" && process.env.ENABLE_SWAGGER === "true") {
+    // V8 Phase 1 : actif par défaut en dev (debug + ide tooling), opt-in en prod
+    // via ENABLE_SWAGGER=true (à n'activer que pour staging/preview, JAMAIS en
+    // prod publique sauf endpoint protégé par auth/IP allowlist).
+    const swaggerEnabled =
+      NODE_ENV !== "production" || process.env.ENABLE_SWAGGER === "true";
+    if (swaggerEnabled) {
       const { setupSwagger } = await import("./config/swagger");
       setupSwagger(app);
-      serverLogger.info("[SWAGGER] Documentation API activée");
+      serverLogger.info("[SWAGGER] Documentation API activée", {
+        url: `http://localhost:${PORT}/api-docs`,
+        spec: `http://localhost:${PORT}/api-docs.json`,
+      });
     }
 
     // Démarrer les jobs cron
@@ -886,6 +894,26 @@ app.use("/api", generalLimiter);
     //   → 200 si DB connectée + Redis joignable (ou désactivé en dev) → 503 sinon.
     // Utilisés par load balancers, monitoring (Atlas, GCP, AWS ELB), uptime checks.
     // ═══════════════════════════════════════════════════════════════════════════
+    /**
+     * @swagger
+     * /health:
+     *   get:
+     *     summary: Liveness probe (Vague 9)
+     *     description: Endpoint public sans auth. Toujours 200 si le process Node tourne.
+     *     tags: [Maintenance]
+     *     responses:
+     *       200:
+     *         description: Service vivant
+     *         content:
+     *           application/json:
+     *             schema:
+     *               type: object
+     *               properties:
+     *                 status: { type: string, example: ok }
+     *                 service: { type: string, example: qvarry-api }
+     *                 timestamp: { type: string, format: date-time }
+     *                 uptime: { type: number, description: secondes depuis boot }
+     */
     const healthHandler = (_req: any, res: any) => {
       res.status(200).json({
         status: "ok",
@@ -897,6 +925,21 @@ app.use("/api", generalLimiter);
     app.get("/api/health", healthHandler);
     app.get("/api/v1/health", healthHandler);
 
+    /**
+     * @swagger
+     * /health/ready:
+     *   get:
+     *     summary: Readiness probe (Vague 9)
+     *     description: |
+     *       Public sans auth. 200 si DB connectée + Redis joignable (ou désactivé en dev).
+     *       503 si l'un des checks échoue. Utilisé par load balancers (K8s, AWS ELB).
+     *     tags: [Maintenance]
+     *     responses:
+     *       200:
+     *         description: Service prêt à servir du trafic
+     *       503:
+     *         description: Au moins un check critique en échec (DB ou Redis indispo)
+     */
     app.get("/api/health/ready", async (_req, res) => {
       const mongooseModule = await import("mongoose");
       const dbReady = mongooseModule.default.connection.readyState === 1;
