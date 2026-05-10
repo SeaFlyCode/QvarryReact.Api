@@ -62,11 +62,15 @@ async function main() {
   }
 
   console.log(`[smoke] Connexion MongoDB...`);
+  // FIX: spécifier dbName=QvarryStorage (sinon connecte à la DB "test" default
+  // Atlas et le user créé n'est jamais vu par le backend qui cible QvarryStorage).
+  const dbName = process.env.DB_NAME || "QvarryStorage";
   await mongoose.connect(process.env.DB_CONN_STRING, {
+    dbName,
     serverSelectionTimeoutMS: 5000,
     connectTimeoutMS: 5000,
   });
-  console.log(`[smoke] Connecté.`);
+  console.log(`[smoke] Connecté à DB: ${dbName}`);
 
   const emailHash = hashEmail(SMOKE_EMAIL);
   const existing = await UserModel.findOne({ emailHash }).select("+_id");
