@@ -878,6 +878,42 @@ app.use("/api", generalLimiter);
     // ═══════════════════════════════════════════════════════════════════════════
     app.use("/api/webhooks/vonage", webhookRoutes);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // HEALTHCHECK ENDPOINTS (publics, sans auth)
+    // ═══════════════════════════════════════════════════════════════════════════
+    // /api/health: liveness probe (le service répond) → 200 si app démarrée.
+    // /api/health/ready: readiness probe (le service est prêt à servir du trafic)
+    //   → 200 si DB connectée + Redis joignable (ou désactivé en dev) → 503 sinon.
+    // Utilisés par load balancers, monitoring (Atlas, GCP, AWS ELB), uptime checks.
+    // ═══════════════════════════════════════════════════════════════════════════
+    const healthHandler = (_req: any, res: any) => {
+      res.status(200).json({
+        status: "ok",
+        service: "qvarry-api",
+        timestamp: new Date().toISOString(),
+        uptime: process.uptime(),
+      });
+    };
+    app.get("/api/health", healthHandler);
+    app.get("/api/v1/health", healthHandler);
+
+    app.get("/api/health/ready", async (_req, res) => {
+      const mongooseModule = await import("mongoose");
+      const dbReady = mongooseModule.default.connection.readyState === 1;
+      const redisEnabled = process.env.REDIS_ENABLED !== "false";
+      const redisReady = !redisEnabled || redisPubSubService.isEnabled();
+      const ready = dbReady && redisReady;
+      res.status(ready ? 200 : 503).json({
+        status: ready ? "ok" : "degraded",
+        service: "qvarry-api",
+        timestamp: new Date().toISOString(),
+        checks: {
+          database: dbReady ? "ok" : "unavailable",
+          redis: redisEnabled ? (redisReady ? "ok" : "unavailable") : "disabled",
+        },
+      });
+    });
+
     // MED-09 FIX: API versioning — Middleware de rétrocompatibilité /api/ → /api/v1/
     // Les routes sont montées sur /api/v1/ et /api/ redirige pour rétrocompatibilité
     app.use("/api", (req, res, next) => {
