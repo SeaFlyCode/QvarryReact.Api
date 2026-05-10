@@ -618,9 +618,30 @@ export async function decryptFicheOptimized(fiche: any, userKey: string) {
     const acces_souterrain = fiche.acces_souterrain
       ? decryptWithKey(fiche.acces_souterrain, userKey)
       : undefined;
-    const praticite_souterrain = fiche.praticite_souterrain
-      ? decryptWithKey(fiche.praticite_souterrain, userKey)
-      : undefined;
+    // §V8 contrats : le sync stocke `praticite_souterrain` comme String (model
+    // Mongoose). Si le client a envoyé un array, on a JSON.stringify avant
+    // encrypt (cf. sync). Au decrypt, on tente de parser le JSON pour restaurer
+    // l'array — fallback string brute si le contenu n'était pas du JSON.
+    let praticite_souterrain: any = undefined;
+    if (fiche.praticite_souterrain) {
+      const decryptedPraticite = decryptWithKey(
+        fiche.praticite_souterrain,
+        userKey,
+      );
+      if (
+        typeof decryptedPraticite === "string" &&
+        decryptedPraticite.startsWith("[") &&
+        decryptedPraticite.endsWith("]")
+      ) {
+        try {
+          praticite_souterrain = JSON.parse(decryptedPraticite);
+        } catch {
+          praticite_souterrain = decryptedPraticite;
+        }
+      } else {
+        praticite_souterrain = decryptedPraticite;
+      }
+    }
     const etat_general = fiche.etat_general
       ? decryptWithKey(fiche.etat_general, userKey)
       : undefined;
@@ -1047,9 +1068,18 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       }
 
       if (fiche.praticite_souterrain) {
+        // §V8 contrats : le schema Zod accepte union(string | array) pour
+        // rétro-compat, mais le model Mongoose est String. Si on reçoit un
+        // array (cas mobile multi-select), on JSON.stringify avant encrypt
+        // (pattern existant côté mobile cf. types/sync.ts:36 "JSON string
+        // d'un tableau, ou string simple"). Le decrypt côté lecture parse
+        // back via la même convention.
+        const praticiteValue = Array.isArray(fiche.praticite_souterrain)
+          ? JSON.stringify(fiche.praticite_souterrain)
+          : fiche.praticite_souterrain;
         ficheFromDB.praticite_souterrain = await encryptUserData(
           userKey,
-          fiche.praticite_souterrain,
+          praticiteValue,
         );
       }
 
