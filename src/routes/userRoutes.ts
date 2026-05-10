@@ -19,6 +19,32 @@ import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
 
 const router = express.Router();
 
+/**
+ * @swagger
+ * /users:
+ *   post:
+ *     summary: Création de compte (inscription)
+ *     description: Public. Nécessite token Cloudflare Turnstile (cf-turnstile-response).
+ *     tags: [Users]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [email, password, name, surname]
+ *             properties:
+ *               email: { type: string, format: email }
+ *               password: { type: string, minLength: 12, description: "12+ chars, maj/min/chiffre/spécial" }
+ *               name: { type: string }
+ *               surname: { type: string }
+ *               cf-turnstile-response: { type: string, description: Token Cloudflare Turnstile }
+ *     responses:
+ *       201: { description: Compte créé (en attente vérif email + validation admin) }
+ *       400: { description: Validation échouée (email blocklist, password faible, etc.) }
+ *       409: { description: Email déjà utilisé }
+ *       429: { description: Trop de tentatives (Retry-After header) }
+ */
 // Création de compte avec vérification Cloudflare Turnstile (anti-bot)
 // PUBLIC - Nécessaire pour l'inscription
 router.post("/", verifyTurnstile, handleCreateUser);
@@ -28,6 +54,68 @@ router.post("/", verifyTurnstile, handleCreateUser);
 router.post("/verify-email", handleVerifyEmailByCode);
 router.post("/resend-verification", handleResendVerificationEmail);
 
+/**
+ * @swagger
+ * /users/me:
+ *   get:
+ *     summary: Profil de l'utilisateur connecté
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: User (sans champs sensibles, IPs filtrées)
+ *         content:
+ *           application/json:
+ *             schema:
+ *               $ref: '#/components/schemas/User'
+ *       401: { description: Non authentifié }
+ *
+ * /users/{id}:
+ *   get:
+ *     summary: Profil d'un utilisateur par ID
+ *     description: Self ou admin uniquement (SEC-033)
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { $ref: '#/components/schemas/User' }
+ *       401: { description: Non authentifié }
+ *       403: { description: Pas autorisé à voir ce profil }
+ *       404: { description: User non trouvé }
+ *   put:
+ *     summary: Met à jour son profil
+ *     tags: [Users]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               name: { type: string }
+ *               surname: { type: string }
+ *               pseudo: { type: string }
+ *               showPseudo: { type: boolean }
+ *               password: { type: string, description: "Nouveau password (requires currentPassword)" }
+ *               currentPassword: { type: string }
+ *     responses:
+ *       200: { description: Profil mis à jour }
+ *       400: { description: Mot de passe actuel incorrect ou validation }
+ *       401: { description: Non authentifié }
+ *       404: { description: User non trouvé }
+ */
 // Profil de l'utilisateur connecté - AVANT /:id pour que "me" ne soit pas capturé par le param
 // PROTÉGÉE - Nécessite authentification
 router.get("/me", authMiddleware, handleGetMe);

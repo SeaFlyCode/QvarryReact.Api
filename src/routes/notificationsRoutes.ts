@@ -22,6 +22,91 @@ if (process.env.NODE_ENV !== "production") {
   router.post("/test", createTestNotification);
 }
 
+/**
+ * @swagger
+ * /notifications:
+ *   get:
+ *     summary: Récupère toutes les notifications de l'utilisateur
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: query
+ *         name: limit
+ *         schema: { type: integer, default: 50 }
+ *       - in: query
+ *         name: page
+ *         schema: { type: integer, default: 1 }
+ *     responses:
+ *       200: { description: Liste paginée }
+ *       401: { description: Non authentifié }
+ *
+ * /notifications/unread-count:
+ *   get:
+ *     summary: Nombre de notifications non lues
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Compteur
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 count: { type: integer }
+ *
+ * /notifications/read-all:
+ *   patch:
+ *     summary: Marque toutes les notifications comme lues
+ *     description: §V3 broadcast WS notification_read avec notificationId="all" pour multi-device sync.
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Toutes marquées comme lues }
+ *
+ * /notifications/{notificationId}/read:
+ *   patch:
+ *     summary: Marque une notification comme lue
+ *     description: §V3 broadcast WS notification_read multi-device.
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: notificationId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Marquée comme lue }
+ *       404: { description: Notification non trouvée }
+ *
+ * /notifications/read:
+ *   delete:
+ *     summary: Supprime toutes les notifications lues
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Supprimées }
+ *
+ * /notifications/{notificationId}:
+ *   delete:
+ *     summary: Supprime une notification précise
+ *     tags: [Notifications]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - in: path
+ *         name: notificationId
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Supprimée }
+ *       404: { description: Notification non trouvée }
+ */
 // GET /api/notifications - Récupérer toutes les notifications
 router.get("/", getNotifications);
 
