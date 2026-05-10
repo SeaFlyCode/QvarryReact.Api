@@ -762,6 +762,10 @@ export async function handleMobileRefreshToken(req: Request, res: Response) {
       refreshToken: newRefreshToken,
       tokenExpiresIn: jwtMaxAge,
       refreshTokenExpiresIn: refreshMaxAge,
+      // §V4 client : retourne le nouveau tokenId (jti) pour que le client mobile
+      // synchronise sa session storage. Permet au handler WS session_revoked
+      // de matcher après rotation du refresh token. Cf. Vague 4 §4.1.7.
+      tokenId: newTokenId,
     });
   } catch (error) {
     mobileAuthLogger.error("Erreur refresh", {

@@ -615,6 +615,12 @@ export async function handleRefreshToken(req: Request, res: Response) {
     res.status(200).json({
       success: true,
       tokenExpiresIn: getCookieConfig().jwtMaxAgeMinutes * 60,
+      // §V4 client : retourner le nouveau tokenId pour que mobile/web puissent
+      // synchroniser leur sessionStorage. Permet au handler WS session_revoked
+      // de matcher correctement après rotation du refresh token (sinon le
+      // client gardait le tokenId d'origine et ne se déconnectait pas sur
+      // un revoke ciblé). Cf. Vague 4 §4.1.7 limite documentée.
+      tokenId: newTokenId,
       message: "Token renouvelé avec succès",
     });
   } catch (error: unknown) {
