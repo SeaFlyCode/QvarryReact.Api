@@ -7,7 +7,6 @@
 
 import express, { Request, Response, NextFunction } from "express";
 import {
-  handleMobileLogin,
   handleMobileRegister,
   handleMobileForgotPassword,
   handleMobileRefreshToken,
@@ -189,18 +188,6 @@ router.post(
   mobileSecurityMiddleware,
   markAsMobile,
   handleUnifiedLogin,
-);
-
-// Rétro-compat : ancien handler mobile dédié, gardé pour permettre une bascule
-// progressive (l'app mobile pourra basculer sur /api/v1/auth/login dans une PR
-// suivante). À supprimer après migration.
-router.post(
-  "/login-legacy",
-  appCheckMiddleware,
-  mobileAttestationLimiter,
-  mobileAttestationByDeviceLimiter,
-  mobileSecurityMiddleware,
-  handleMobileLogin,
 );
 
 /**

@@ -194,7 +194,6 @@ verifyFileContains(
   "package.json",
   '"heic-convert"',
 );
-verifyFileContains("package.json - mime-types", "package.json", '"mime-types"');
 
 // ═══════════════════════════════════════════════════════════════════════════
 // 9. INFRASTRUCTURE

@@ -10,7 +10,6 @@ import {
   mobileSetupTwoFactor,
   mobileVerifyAndEnableTwoFactor,
   mobileDisableTwoFactor,
-  mobileVerifyTwoFactorLogin,
   mobileRegenerateRecoveryCodes,
   mobileGetTwoFactorStatus,
 } from "../controllers/mobileTwoFactorControllers";
@@ -284,14 +283,6 @@ router.post(
   appCheckMiddleware,
   markAsMobile,
   handleUnifiedComplete2FA,
-);
-
-// Rétro-compat : ancien handler 2FA mobile dédié. À supprimer après migration.
-router.post(
-  "/verify-login-legacy",
-  mobileSecurityMiddleware,
-  appCheckMiddleware,
-  mobileVerifyTwoFactorLogin,
 );
 
 export default router;

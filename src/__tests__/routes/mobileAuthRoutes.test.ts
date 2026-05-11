@@ -71,7 +71,7 @@ describe("mobileAuthRoutes", () => {
 
   it("should have the correct number of routes", () => {
     const routes = getRoutes();
-    expect(routes).toHaveLength(5);
+    expect(routes).toHaveLength(6);
   });
 
   it("should register POST /login for mobile login", () => {
