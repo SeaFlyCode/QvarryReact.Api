@@ -257,8 +257,17 @@ router.use(authMiddleware, adminMiddleware);
  *     responses: { 200: { description: Bloquée } }
  *
  * /admin/security/unblock-ip/{ipAddress}:
+ *   post:
+ *     summary: Débloque une IP (V8.4 — verbe canonique)
+ *     description: §V8.4 rename — POST sémantiquement correct (création d'une action d'unblock).
+ *     tags: [Admin]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: ipAddress, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Débloquée } }
  *   delete:
- *     summary: Débloque une IP
+ *     deprecated: true
+ *     summary: '[DEPRECATED V8.4] Débloque une IP (utiliser POST à la place)'
+ *     description: Alias rétro-compat — sera supprimé en V2.
  *     tags: [Admin]
  *     security: [{ bearerAuth: [] }]
  *     parameters: [{ in: path, name: ipAddress, required: true, schema: { type: string } }]
@@ -512,6 +521,8 @@ router.get("/audit/export", exportAuditLogs);
 router.get("/security/dashboard", getSecurityDashboard);
 router.get("/security/blocked-ips", listBlockedIps);
 router.post("/security/block-ip", blockIp);
+router.post("/security/unblock-ip/:ipAddress", unblockIp);
+// V8.4 — alias DELETE conservé 1 release pour rétro-compat clients (à supprimer V2)
 router.delete("/security/unblock-ip/:ipAddress", unblockIp);
 router.get("/security/threat-score/:ipAddress", getIpThreatScore);
 router.post("/security/test-alert", sendTestAlert);

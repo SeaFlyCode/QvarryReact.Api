@@ -88,7 +88,7 @@ describe("adminRoutes", () => {
 
   it("should have the correct number of routes", () => {
     const routes = getRoutes();
-    expect(routes.length).toBe(39);
+    expect(routes.length).toBe(48);
   });
 
   // STATISTIQUES
@@ -239,7 +239,15 @@ describe("adminRoutes", () => {
     });
   });
 
-  it("should register DELETE /security/unblock-ip/:ipAddress", () => {
+  it("should register POST /security/unblock-ip/:ipAddress (V8.4 canonical)", () => {
+    const routes = getRoutes();
+    expect(routes).toContainEqual({
+      method: "POST",
+      path: "/security/unblock-ip/:ipAddress",
+    });
+  });
+
+  it("should keep DELETE /security/unblock-ip/:ipAddress alias for backwards compat", () => {
     const routes = getRoutes();
     expect(routes).toContainEqual({
       method: "DELETE",
