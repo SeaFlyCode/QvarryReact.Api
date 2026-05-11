@@ -41,6 +41,176 @@ const router = express.Router();
 // Protéger toutes les routes avec l'authentification
 router.use(authMiddleware);
 
+/**
+ * @swagger
+ * /conversations:
+ *   get:
+ *     summary: Liste les conversations de l'utilisateur
+ *     tags: [Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Liste paginée }
+ *
+ * /conversations/archived:
+ *   get:
+ *     summary: Liste les conversations archivées
+ *     tags: [Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200: { description: Liste paginée }
+ *
+ * /conversations/private:
+ *   post:
+ *     summary: Crée une conversation privée (1-to-1)
+ *     tags: [Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [recipientId]
+ *             properties:
+ *               recipientId: { type: string }
+ *     responses:
+ *       201: { description: Conversation créée }
+ *       409: { description: Conversation existe déjà }
+ *
+ * /conversations/group:
+ *   post:
+ *     summary: Crée une conversation de groupe
+ *     description: §V3 broadcast WS group_member_added à chaque membre ajouté
+ *     tags: [Conversations]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, memberIds]
+ *             properties:
+ *               name: { type: string }
+ *               memberIds: { type: array, items: { type: string } }
+ *     responses:
+ *       201: { description: Groupe créé }
+ *
+ * /conversations/{id}:
+ *   get:
+ *     summary: Détails d'une conversation
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: path
+ *         name: id
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Conversation }
+ *       404: { description: Non trouvée ou non participant }
+ *   delete:
+ *     summary: Supprime une conversation (pour cet utilisateur)
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Supprimée } }
+ *
+ * /conversations/{id}/read:
+ *   patch:
+ *     summary: Marque tous les messages comme lus
+ *     description: §V3 broadcast WS message_read à tous les participants
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Lus } }
+ *
+ * /conversations/{id}/mute:
+ *   patch:
+ *     summary: Mute la conversation (notifications désactivées)
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               duration: { type: integer, description: "Durée en ms (default: indéfini)" }
+ *     responses: { 200: { description: Muted } }
+ *
+ * /conversations/{id}/archive:
+ *   patch:
+ *     summary: Archive la conversation
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Archivée } }
+ *
+ * /conversations/{id}/pin:
+ *   patch:
+ *     summary: Épingle la conversation en haut de la liste
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Épinglée } }
+ *
+ * /conversations/{id}/block:
+ *   patch:
+ *     summary: Bloque l'autre participant (conversation privée uniquement)
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     responses:
+ *       200: { description: Bloqué }
+ *       400: { description: Non applicable (groupe) }
+ *
+ * /conversations/{id}/members:
+ *   post:
+ *     summary: Ajoute des membres à un groupe
+ *     description: §V3 broadcast WS group_member_added pour chaque ajout
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [memberIds]
+ *             properties:
+ *               memberIds: { type: array, items: { type: string } }
+ *     responses: { 200: { description: Membres ajoutés } }
+ *
+ * /conversations/{id}/leave:
+ *   delete:
+ *     summary: Quitte un groupe
+ *     description: §V3 broadcast WS group_member_removed
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Quitté } }
+ *
+ * /conversations/{id}/name:
+ *   patch:
+ *     summary: Renomme un groupe
+ *     description: §V3 broadcast WS group_name_changed
+ *     tags: [Conversations]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name]
+ *             properties:
+ *               name: { type: string }
+ *     responses: { 200: { description: Renommé } }
+ */
 // Lister toutes les conversations de l'utilisateur
 router.get("/", listConversations);
 
