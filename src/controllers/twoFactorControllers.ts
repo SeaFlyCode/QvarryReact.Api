@@ -9,6 +9,7 @@ import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
 import { auditService } from "../services/auditService";
 import { logger } from "../services/loggerService";
 import * as totpMigrationService from "../services/totpMigrationService";
+import { getRedisClient } from "../services/redisSessionService";
 
 const twoFactorLogger = logger.child({ service: "two-factor" });
 
@@ -122,6 +123,70 @@ function generateRecoveryCodes(): string[] {
     codes.push(formattedCode);
   }
   return codes;
+}
+
+// ─────────────────────────────────────────────────────────────────────────
+// LOCK ATOMIQUE REDIS — PROTECTION REPLAY RECOVERY CODE
+// ─────────────────────────────────────────────────────────────────────────
+// AUDIT_2026-05-11 Phase C — Fix P1 #1
+// Empêche qu'un même recovery code soit consommé deux fois suite à une race
+// condition (deux requêtes parallèles refetchant l'user avant le save).
+//
+// Stratégie :
+//   - Clé Redis : `2fa:recovery:used:${userId}:${codeFingerprint}` où
+//     codeFingerprint = SHA-256(bcryptHashStocké) — on n'expose JAMAIS le code
+//     en clair, ni le hash bcrypt complet (privacy + taille).
+//   - Opération : SET NX EX 86400 (24h) — atomique. Si la clé existe déjà,
+//     un autre thread/process a déjà consommé ce code → reject.
+//
+// Fallback si Redis down (client null ou throw) :
+//   - Log warn, return true (allow). Le splice + save Mongoose reste la
+//     dernière ligne de défense. Cohérent avec le pattern utilisé dans
+//     redisSessionService (fallback mémoire/optimiste).
+// ─────────────────────────────────────────────────────────────────────────
+const RECOVERY_CODE_LOCK_TTL_SECONDS = 24 * 60 * 60; // 24h
+
+async function tryAcquireRecoveryCodeLock(
+  userId: string,
+  bcryptHashOfStoredCode: string,
+): Promise<boolean> {
+  const client = getRedisClient();
+  if (!client) {
+    twoFactorLogger.warn(
+      "Redis indisponible — fallback sans lock atomique recovery code",
+      { userId },
+    );
+    return true;
+  }
+
+  try {
+    // Fingerprint court du hash bcrypt — évite de stocker le hash complet
+    // (qui contient le salt) dans la clé Redis.
+    const fingerprint = crypto
+      .createHash("sha256")
+      .update(bcryptHashOfStoredCode)
+      .digest("hex")
+      .slice(0, 32);
+
+    const key = `2fa:recovery:used:${userId}:${fingerprint}`;
+    // ioredis : set(key, value, 'EX', seconds, 'NX')
+    const result = await (client as any).set(
+      key,
+      "1",
+      "EX",
+      RECOVERY_CODE_LOCK_TTL_SECONDS,
+      "NX",
+    );
+    // SET NX retourne "OK" si la clé est posée, null si elle existe déjà.
+    return result === "OK";
+  } catch (err) {
+    twoFactorLogger.warn("Erreur Redis lors du lock recovery code", {
+      userId,
+      error: err instanceof Error ? err.message : String(err),
+    });
+    // Fallback safe : on autorise (le splice + save protègent en aval)
+    return true;
+  }
 }
 
 // ─────────────────────────────────────────────────────────────────────────
@@ -384,6 +449,7 @@ export async function disableTwoFactor(
       // Essayer comme code de récupération
       const codeNormalized = code.replace(/-/g, "").toUpperCase();
       let recoveryCodeUsed = false;
+      let matchedRecoveryHash: string | null = null;
 
       if (user.two_factor_recovery_codes) {
         for (let i = 0; i < user.two_factor_recovery_codes.length; i++) {
@@ -393,6 +459,7 @@ export async function disableTwoFactor(
           );
           if (isMatch) {
             recoveryCodeUsed = true;
+            matchedRecoveryHash = user.two_factor_recovery_codes[i];
             break;
           }
         }
@@ -402,6 +469,29 @@ export async function disableTwoFactor(
         return res
           .status(400)
           .json({ error: "Code 2FA ou code de récupération invalide" });
+      }
+
+      // AUDIT_2026-05-11 Phase C — Fix P1 #1
+      // Lock atomique : empêche replay sur disable concurrents.
+      if (matchedRecoveryHash) {
+        const lockAcquired = await tryAcquireRecoveryCodeLock(
+          userId,
+          matchedRecoveryHash,
+        );
+        if (!lockAcquired) {
+          await auditService.log({
+            userId,
+            action: "2FA_RECOVERY_CODE_REPLAY_BLOCKED",
+            level: "warning",
+            ipAddress: req.ip || req.socket.remoteAddress,
+            userAgent: req.headers["user-agent"],
+            details: { reason: "recovery_code_already_used", context: "disable" },
+          });
+          return res.status(401).json({
+            error: "Code de récupération déjà utilisé",
+            code: "RECOVERY_CODE_ALREADY_USED",
+          });
+        }
       }
     }
 
@@ -533,6 +623,30 @@ export async function verifyTwoFactorLogin(
           details: { reason: "invalid_recovery_code" },
         });
         return res.status(400).json({ error: "Code de récupération invalide" });
+      }
+
+      // AUDIT_2026-05-11 Phase C — Fix P1 #1
+      // Lock atomique Redis pour empêcher le replay (race condition splice/save).
+      // Si le lock échoue, c'est qu'une autre requête a déjà consommé ce code.
+      const storedHash = user.two_factor_recovery_codes![recoveryCodeIndex];
+      const lockAcquired = await tryAcquireRecoveryCodeLock(userId, storedHash);
+      if (!lockAcquired) {
+        recordTwoFactorFailure(userId);
+        await auditService.log({
+          userId,
+          action: "2FA_RECOVERY_CODE_REPLAY_BLOCKED",
+          level: "warning",
+          ipAddress: req.ip || req.socket.remoteAddress,
+          userAgent: req.headers["user-agent"],
+          details: { reason: "recovery_code_already_used" },
+        });
+        twoFactorLogger.warn("Tentative de replay recovery code bloquée", {
+          userId,
+        });
+        return res.status(401).json({
+          error: "Code de récupération déjà utilisé",
+          code: "RECOVERY_CODE_ALREADY_USED",
+        });
       }
 
       // Supprimer le code utilisé

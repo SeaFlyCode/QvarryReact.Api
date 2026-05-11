@@ -6,8 +6,9 @@
 // Rate limiting basique pour éviter les abus
 // ═══════════════════════════════════════════════════════════════════════════
 
-import express from "express";
+import express, { Request } from "express";
 import rateLimit from "express-rate-limit";
+import { createHash } from "crypto";
 import { handleVonageDeliveryReceipt } from "../controllers/webhookControllers";
 import { validateVonageWebhook } from "../middlewares/vonageWebhookMiddleware"; // MED-003
 
@@ -18,19 +19,47 @@ const NODE_ENV = process.env.NODE_ENV || "development";
 // ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITER WEBHOOK
 // ═══════════════════════════════════════════════════════════════════════════
-// Limiter basique pour éviter les abus (pas d'auth sur ces routes)
-// En production: 100 req/min, en dev: 1000 req/min
+// AUDIT_2026-05-11 Phase C — Fix P1 #3
+// Vonage émet depuis un pool d'IP restreint. Un rate-limit IP-only laisse une
+// fenêtre de DoS si un attaquant rejoue des signatures HMAC volées vers le
+// même endpoint. On bascule sur une clé composite hash(messageId + msisdn) :
+//   - Un même message ne peut être rejoué que 50 fois/min (forte protection)
+//   - Si messageId absent (payload mal formé), fallback IP (signature HMAC
+//     validera ensuite et rejettera).
+//   - Limite abaissée à 50/min (au lieu de 100) pour réduire la marge
+//     d'erreur d'un attaquant tout en restant large pour Vonage légitime
+//     (qui ne renvoie pas le même messageId à 50/min en usage normal).
 // ═══════════════════════════════════════════════════════════════════════════
 
 const webhookLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 minute
-  max: NODE_ENV === "production" ? 100 : 1000,
+  max: NODE_ENV === "production" ? 50 : 1000, // 50/min/message en prod
   message: {
     error: "Trop de requêtes webhook, veuillez réessayer plus tard.",
     code: "WEBHOOK_RATE_LIMIT_EXCEEDED",
   },
   standardHeaders: true,
   legacyHeaders: false,
+  keyGenerator: (req: Request): string => {
+    const body = (req.body as any) || {};
+    const messageId =
+      typeof body.messageId === "string" ? body.messageId.trim() : "";
+    const msisdn = typeof body.msisdn === "string" ? body.msisdn.trim() : "";
+
+    if (messageId.length > 0) {
+      // Hash composite — pas de PII brut dans Redis
+      const hash = createHash("sha256")
+        .update(`${messageId}|${msisdn}`)
+        .digest("hex");
+      return `vonage_msg:${hash}`;
+    }
+
+    // Fallback IP — hash pour normaliser IPv6 + privacy
+    const ipHash = createHash("sha256")
+      .update(req.ip || "unknown")
+      .digest("hex");
+    return `vonage_ip:${ipHash}`;
+  },
 });
 
 // ═══════════════════════════════════════════════════════════════════════════

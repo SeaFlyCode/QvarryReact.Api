@@ -265,9 +265,39 @@ export const csrfErrorHandler = (
 };
 
 /**
- * Middleware optionnel : Renouveler le token CSRF après chaque requête
- * Plus sécurisé mais peut causer des problèmes avec requêtes parallèles
- * À utiliser uniquement si nécessaire (niveau paranoia maximum)
+ * Middleware optionnel : Renouveler le token CSRF après une requête sensible.
+ *
+ * ## Rationale (AUDIT_2026-05-11 §4.1 — Fix P1 #4)
+ *
+ * L'audit a identifié un risque de rejeu CSRF sur 1h (durée de vie du cookie
+ * CSRF). La **rotation systématique sur toute requête mutante a été
+ * délibérément écartée** car :
+ *
+ *   1. Elle casse les clients qui n'observent pas `(res as any).newCsrfToken`
+ *      et tentent une requête suivante avec l'ancien token (rejeu côté
+ *      client → 403, mauvaise UX).
+ *   2. Les flows mobile + SDK tiers ne savent pas re-fetch le token rotated.
+ *   3. Sur requêtes concurrentes (SPA avec plusieurs onglets), une rotation
+ *      en cours invalide les tokens des autres tabs.
+ *
+ * ## Quand l'appliquer manuellement
+ *
+ * Ce middleware DOIT être inséré à la fin du pipeline (avant le handler de
+ * réponse) sur les routes "haute sensibilité" suivantes — la rotation y est
+ * justifiée car le client est attendu en flow synchrone (form classique) :
+ *
+ *   - `POST /auth/change-password` (changement mot de passe)
+ *   - `POST /auth/change-email` (changement email)
+ *   - `POST /2fa/setup`, `POST /2fa/disable`, `POST /2fa/regenerate-codes`
+ *   - `POST /admin/*` (toute mutation admin sensible)
+ *
+ * ## TODO call sites
+ *
+ * Au moment de l'écriture (2026-05-11), `rotateCsrfToken` n'est appelé nulle
+ * part. Les routes ci-dessus restent candidates ; à activer route par route
+ * après vérification que le client front lit bien `newCsrfToken`.
+ *
+ * Voir : `REFONTE_2026-05-04.md` et `AUDIT_2026-05-11.md` §4.1.
  */
 export const rotateCsrfToken = (
   req: Request,

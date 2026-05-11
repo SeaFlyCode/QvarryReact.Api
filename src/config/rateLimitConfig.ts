@@ -566,12 +566,20 @@ export const mobileAttestationByDeviceLimiter = rateLimit({
   store: makeStore("rl:mobileAttestationDevice:"),
 
   // ✅ Clé basée sur deviceId (avec hash pour privacy)
+  // AUDIT_2026-05-11 Phase C — Fix P1 #2
+  // Canonicalisation deviceId avant hash : trim() + toLowerCase() pour
+  // empêcher un bypass trivial via casse ou espaces (" devA" vs "devA").
+  // Le deviceId brut reste loggé dans les handlers (traçabilité).
   keyGenerator: (req: Request): string => {
-    const deviceId = (req.body as any)?.deviceId || "unknown";
+    const rawDeviceId = (req.body as any)?.deviceId;
+    const canonical =
+      typeof rawDeviceId === "string" && rawDeviceId.trim().length > 0
+        ? rawDeviceId.trim().toLowerCase()
+        : "unknown";
 
-    // Hash du deviceId pour ne pas stocker en clair dans Redis
+    // Hash du deviceId canonique pour ne pas stocker en clair dans Redis
     const hash = createHash("sha256")
-      .update(deviceId + (process.env.IP_HASH_SECRET || "default-salt"))
+      .update(canonical + (process.env.IP_HASH_SECRET || "default-salt"))
       .digest("hex");
 
     return `mobile_attestation_device:${hash}`;
