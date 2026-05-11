@@ -1,0 +1,7085 @@
+{
+  "openapi": "3.0.0",
+  "info": {
+    "title": "Qvarry API",
+    "version": "1.0.0",
+    "description": "Documentation de l'API Qvarry React",
+    "contact": {
+      "name": "Qvarry Team"
+    }
+  },
+  "servers": [
+    {
+      "url": "http://localhost:3000/api",
+      "description": "Serveur de développement"
+    }
+  ],
+  "components": {
+    "securitySchemes": {
+      "bearerAuth": {
+        "type": "http",
+        "scheme": "bearer",
+        "bearerFormat": "JWT",
+        "description": "Token JWT d'authentification"
+      },
+      "cookieAuth": {
+        "type": "apiKey",
+        "in": "cookie",
+        "name": "accessToken",
+        "description": "Token JWT dans le cookie"
+      }
+    },
+    "schemas": {
+      "Fiche": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string",
+            "example": "6a00e1d8556f9ee6354b5c73"
+          },
+          "userId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "ville": {
+            "type": "string"
+          },
+          "type": {
+            "type": "string",
+            "enum": [
+              "Grotte",
+              "Mine",
+              "Aven",
+              "Doline",
+              "Carrière",
+              "Tunnel",
+              "Autre"
+            ]
+          },
+          "etat": {
+            "type": "string"
+          },
+          "praticite_souterrain": {
+            "oneOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            ]
+          },
+          "equipement_conseille": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "surface": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "type_galeries": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "points_ids": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "center_cavite": {
+            "type": "object",
+            "properties": {
+              "type": {
+                "type": "string",
+                "enum": [
+                  "Point"
+                ]
+              },
+              "coordinates": {
+                "type": "array",
+                "items": {
+                  "type": "number"
+                }
+              }
+            }
+          },
+          "date_creation": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "date_modification": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "deletedAt": {
+            "type": "string",
+            "format": "date-time",
+            "nullable": true
+          },
+          "version": {
+            "type": "integer",
+            "description": "§V9 Optimistic concurrency"
+          }
+        }
+      },
+      "User": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "surname": {
+            "type": "string"
+          },
+          "email": {
+            "type": "string",
+            "format": "email"
+          },
+          "pseudo": {
+            "type": "string"
+          },
+          "contact_code": {
+            "type": "integer"
+          },
+          "is_admin": {
+            "type": "boolean"
+          },
+          "is_verified": {
+            "type": "boolean"
+          },
+          "is_admin_validated": {
+            "type": "boolean"
+          },
+          "two_factor_enabled": {
+            "type": "boolean"
+          },
+          "creation_date": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "last_connection": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "string"
+          },
+          "code": {
+            "type": "string",
+            "description": "Codes documentés: INVALID_CREDENTIALS, BLOCKED, UNVERIFIED, PENDING_VALIDATION, UNAUTHORIZED, VERSION_CONFLICT, RATE_LIMITED, NO_TOKEN, INVALID_REFRESH_TOKEN, etc."
+          },
+          "message": {
+            "type": "string"
+          }
+        }
+      },
+      "AuthLoginResponse": {
+        "type": "object",
+        "properties": {
+          "accessToken": {
+            "type": "string"
+          },
+          "refreshToken": {
+            "type": "string",
+            "description": "Présent uniquement si le client n'utilise pas les cookies httpOnly (mobile)."
+          },
+          "user": {
+            "$ref": "#/components/schemas/User"
+          },
+          "requires2FA": {
+            "type": "boolean"
+          },
+          "tempToken": {
+            "type": "string",
+            "description": "Présent si requires2FA=true"
+          },
+          "tokenId": {
+            "type": "string",
+            "description": "§V9 jti du JWT pour synchronisation côté client"
+          }
+        }
+      },
+      "Point": {
+        "type": "object",
+        "properties": {
+          "_id": {
+            "type": "string"
+          },
+          "userId": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "latitude": {
+            "type": "number"
+          },
+          "longitude": {
+            "type": "number"
+          },
+          "type": {
+            "type": "string"
+          },
+          "createdAt": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updatedAt": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      }
+    }
+  },
+  "security": [
+    {
+      "bearerAuth": []
+    },
+    {
+      "cookieAuth": []
+    }
+  ],
+  "tags": [
+    {
+      "name": "Auth",
+      "description": "Authentification et gestion des sessions"
+    },
+    {
+      "name": "Users",
+      "description": "Gestion des utilisateurs"
+    },
+    {
+      "name": "2FA",
+      "description": "Authentification à deux facteurs"
+    },
+    {
+      "name": "Points",
+      "description": "Gestion des points géographiques"
+    },
+    {
+      "name": "Fiches",
+      "description": "Gestion des fiches"
+    },
+    {
+      "name": "Lists",
+      "description": "Gestion des listes"
+    },
+    {
+      "name": "Contacts",
+      "description": "Gestion des contacts"
+    },
+    {
+      "name": "Messages",
+      "description": "Messagerie"
+    },
+    {
+      "name": "Conversations",
+      "description": "Gestion des conversations"
+    },
+    {
+      "name": "Notifications",
+      "description": "Notifications utilisateur"
+    },
+    {
+      "name": "DataShare",
+      "description": "Partage de données"
+    },
+    {
+      "name": "Security",
+      "description": "Sécurité et audit"
+    },
+    {
+      "name": "Admin",
+      "description": "Administration"
+    },
+    {
+      "name": "Maintenance",
+      "description": "Mode maintenance"
+    },
+    {
+      "name": "Mobile Auth",
+      "description": "Authentification mobile"
+    },
+    {
+      "name": "Mobile Sync",
+      "description": "Synchronisation mobile"
+    },
+    {
+      "name": "Mobile 2FA",
+      "description": "2FA mobile"
+    }
+  ],
+  "paths": {
+    "/admin/stats": {
+      "get": {
+        "summary": "Stats globales (users, fiches, points, lists, sessions)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Stats agrégées"
+          }
+        }
+      }
+    },
+    "/admin/stats/registrations": {
+      "get": {
+        "summary": "Stats inscriptions par jour/semaine/mois",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Timeline"
+          }
+        }
+      }
+    },
+    "/admin/stats/activity": {
+      "get": {
+        "summary": "Stats activité (logins, requêtes, devices actifs)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Timeline"
+          }
+        }
+      }
+    },
+    "/admin/users": {
+      "get": {
+        "summary": "Liste paginée users",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 20
+            }
+          },
+          {
+            "in": "query",
+            "name": "search",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ users, total, page }"
+          }
+        }
+      }
+    },
+    "/admin/users/pending": {
+      "get": {
+        "summary": "Liste users en attente de validation (PENDING_VALIDATION)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste"
+          }
+        }
+      }
+    },
+    "/admin/users/pending/count": {
+      "get": {
+        "summary": "Nombre users en attente (badge)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ count }"
+          }
+        }
+      }
+    },
+    "/admin/users/storage": {
+      "get": {
+        "summary": "Storage usage de tous les users (paginated)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste avec quotaBytes / usedBytes"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}": {
+      "get": {
+        "summary": "Détails complets user (admin)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/schemas/User"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/block": {
+      "post": {
+        "summary": "Bloque un user (status=BLOCKED)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bloqué + sessions révoquées"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/unblock": {
+      "post": {
+        "summary": "Débloque un user",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Débloqué"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/promote": {
+      "post": {
+        "summary": "Promote en admin (isAdmin=true)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Promu"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/demote": {
+      "post": {
+        "summary": "Demote depuis admin",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Demote"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/force-logout": {
+      "post": {
+        "summary": "Force déconnexion (révoque toutes les sessions actives)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sessions révoquées + WS session_revoked diffusé"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/reset-password": {
+      "post": {
+        "summary": "Reset password (envoie email reset au user)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Email envoyé"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/approve": {
+      "post": {
+        "summary": "Approuve un user en attente (PENDING → ACTIVE)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Approuvé + email envoyé"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/reject": {
+      "post": {
+        "summary": "Rejette un user en attente",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Rejeté + email envoyé"
+          }
+        }
+      }
+    },
+    "/admin/audit/logs": {
+      "get": {
+        "summary": "Logs d'audit (actions sensibles)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "from",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "in": "query",
+            "name": "to",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          {
+            "in": "query",
+            "name": "action",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Logs paginés"
+          }
+        }
+      }
+    },
+    "/admin/audit/stats": {
+      "get": {
+        "summary": "Stats audit (top actions, top users)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Agrégats"
+          }
+        }
+      }
+    },
+    "/admin/audit/export": {
+      "get": {
+        "summary": "Export CSV des logs d'audit",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "CSV (text/csv)"
+          }
+        }
+      }
+    },
+    "/admin/security/dashboard": {
+      "get": {
+        "summary": "Dashboard sécurité (threats détectés, IPs suspectes)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Métriques temps réel"
+          }
+        }
+      }
+    },
+    "/admin/security/blocked-ips": {
+      "get": {
+        "summary": "Liste IPs bloquées",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste avec reason + bloquéLe"
+          }
+        }
+      }
+    },
+    "/admin/security/block-ip": {
+      "post": {
+        "summary": "Bloque une IP manuellement",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "ipAddress"
+                ],
+                "properties": {
+                  "ipAddress": {
+                    "type": "string"
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "duration": {
+                    "type": "integer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Bloquée"
+          }
+        }
+      }
+    },
+    "/admin/security/unblock-ip/{ipAddress}": {
+      "post": {
+        "summary": "Débloque une IP (V8.4 — verbe canonique)",
+        "description": "§V8.4 rename — POST sémantiquement correct (création d'une action d'unblock).",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ipAddress",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Débloquée"
+          }
+        }
+      },
+      "delete": {
+        "deprecated": true,
+        "summary": "[DEPRECATED V8.4] Débloque une IP (utiliser POST à la place)",
+        "description": "Alias rétro-compat — sera supprimé en V2.",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ipAddress",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Débloquée"
+          }
+        }
+      }
+    },
+    "/admin/security/threat-score/{ipAddress}": {
+      "get": {
+        "summary": "Score de menace d'une IP (0-100)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "ipAddress",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ score, signals[] }"
+          }
+        }
+      }
+    },
+    "/admin/security/test-alert": {
+      "post": {
+        "summary": "Envoie une alerte de test (Discord/Slack webhook)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Alerte envoyée"
+          }
+        }
+      }
+    },
+    "/admin/sos/dashboard": {
+      "get": {
+        "summary": "Dashboard SOS temps réel (sessions actives + escalades)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Vue agrégée"
+          }
+        }
+      }
+    },
+    "/admin/sos/active": {
+      "get": {
+        "summary": "Sessions SOS actives (toutes users)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}": {
+      "get": {
+        "summary": "Détails session SOS (timeline, heartbeats, participants)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Détails complets"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/cancel": {
+      "post": {
+        "summary": "Annule une session (admin override, marque CANCELLED)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Annulée"
+          }
+        }
+      }
+    },
+    "/admin/sos/history": {
+      "get": {
+        "summary": "Historique sessions (toutes users, filtrable)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée"
+          }
+        }
+      }
+    },
+    "/admin/sos/stats": {
+      "get": {
+        "summary": "Stats SOS agrégées (taux escalade, durées moyennes)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Métriques"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/heartbeat": {
+      "post": {
+        "summary": "Heartbeat admin (DROIT ABSOLU — bypass owner check)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Timer prolongé"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/extend": {
+      "post": {
+        "summary": "Extension manuelle admin",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Étendue"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/force-escalation": {
+      "post": {
+        "summary": "Force passage stage suivant (1→2→3)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Escalade déclenchée"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/activate": {
+      "post": {
+        "summary": "Active une session SOS pour un user (override)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Session créée"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/confirm-safe": {
+      "post": {
+        "summary": "Confirme user en sécurité (admin)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résolue"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/add-participant": {
+      "post": {
+        "summary": "Ajoute participant (admin, bypass créateur)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Ajouté"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/remove-participant": {
+      "post": {
+        "summary": "Retire participant (admin)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Retiré"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/trigger-sms": {
+      "post": {
+        "summary": "Force envoi SMS escalade (Twilio)",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "SMS envoyés"
+          }
+        }
+      }
+    },
+    "/admin/sos/sessions/{sessionId}/send-notification": {
+      "post": {
+        "summary": "Force envoi notif push aux contacts",
+        "tags": [
+          "Admin",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Notifs envoyées"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/storage": {
+      "get": {
+        "summary": "Détails stockage user (breakdown par type)",
+        "tags": [
+          "Admin",
+          "Storage"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Détails"
+          }
+        }
+      }
+    },
+    "/admin/users/{userId}/quota": {
+      "patch": {
+        "summary": "Update quota (calcul auto bytes depuis multiplicateur)",
+        "tags": [
+          "Admin",
+          "Storage"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mis à jour"
+          }
+        }
+      },
+      "post": {
+        "summary": "Set quota en bytes directement (Vague 9 — interface admin web)",
+        "tags": [
+          "Admin",
+          "Storage"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "userId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "quotaBytes"
+                ],
+                "properties": {
+                  "quotaBytes": {
+                    "type": "integer",
+                    "minimum": 0
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Set"
+          }
+        }
+      }
+    },
+    "/admin/storage/stats": {
+      "get": {
+        "summary": "Stats globales stockage",
+        "tags": [
+          "Admin",
+          "Storage"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ totalUsedBytes, totalQuotaBytes, byType }"
+          }
+        }
+      }
+    },
+    "/admin/storage/cleanup": {
+      "post": {
+        "summary": "Cleanup fichiers orphelins (S3 sans ref DB)",
+        "tags": [
+          "Admin",
+          "Storage"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ deletedCount, freedBytes }"
+          }
+        }
+      }
+    },
+    "/admin/app-version": {
+      "get": {
+        "summary": "Config version min app mobile (kill switch)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ minIos, minAndroid, latestIos, latestAndroid }"
+          }
+        }
+      },
+      "put": {
+        "summary": "Update config version (force update users)",
+        "tags": [
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "minIos": {
+                    "type": "string"
+                  },
+                  "minAndroid": {
+                    "type": "string"
+                  },
+                  "latestIos": {
+                    "type": "string"
+                  },
+                  "latestAndroid": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mis à jour"
+          }
+        }
+      }
+    },
+    "/auth/login": {
+      "post": {
+        "summary": "Connexion utilisateur",
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email",
+                    "example": "user@example.com"
+                  },
+                  "password": {
+                    "type": "string",
+                    "format": "password",
+                    "example": "MonMotDePasse123!"
+                  },
+                  "turnstileToken": {
+                    "type": "string",
+                    "description": "Token Cloudflare Turnstile (optionnel)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Connexion réussie",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string",
+                      "example": "Connexion réussie"
+                    },
+                    "user": {
+                      "type": "object",
+                      "properties": {
+                        "id": {
+                          "type": "string"
+                        },
+                        "email": {
+                          "type": "string"
+                        },
+                        "username": {
+                          "type": "string"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Identifiants invalides"
+          },
+          "429": {
+            "description": "Trop de tentatives de connexion"
+          }
+        }
+      }
+    },
+    "/auth/refresh": {
+      "post": {
+        "summary": "Rafraîchir le token d'accès",
+        "tags": [
+          "Auth"
+        ],
+        "description": "Utilise le refresh token stocké dans les cookies pour obtenir un nouveau access token",
+        "responses": {
+          "200": {
+            "description": "Token rafraîchi avec succès"
+          },
+          "401": {
+            "description": "Refresh token invalide ou expiré"
+          }
+        }
+      }
+    },
+    "/auth/logout": {
+      "post": {
+        "summary": "Déconnexion utilisateur",
+        "tags": [
+          "Auth"
+        ],
+        "description": "Nettoie les cookies d'authentification même si le token est invalide (évite les boucles après reload serveur)",
+        "responses": {
+          "200": {
+            "description": "Déconnexion réussie"
+          }
+        }
+      }
+    },
+    "/auth/sync": {
+      "post": {
+        "summary": "Synchronisation manuelle des données",
+        "tags": [
+          "Auth"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Synchronisation réussie"
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/auth/sync/refresh": {
+      "get": {
+        "summary": "Refresh incrémental - récupère les changements depuis le mobile",
+        "tags": [
+          "Sync"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résultat du refresh"
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "409": {
+            "description": "Session mémoire non initialisée"
+          }
+        }
+      }
+    },
+    "/auth/check": {
+      "get": {
+        "summary": "Vérifier l'état d'authentification",
+        "tags": [
+          "Auth"
+        ],
+        "responses": {
+          "200": {
+            "description": "État de l'authentification",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "authenticated": {
+                      "type": "boolean"
+                    },
+                    "user": {
+                      "type": "object",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/auth/me": {
+      "get": {
+        "summary": "Récupérer le profil de l'utilisateur connecté",
+        "tags": [
+          "Auth"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Profil utilisateur complet (champs sensibles exclus)"
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "404": {
+            "description": "Utilisateur non trouvé"
+          }
+        }
+      }
+    },
+    "/auth/ws-token": {
+      "get": {
+        "summary": "Obtenir un token WebSocket temporaire",
+        "tags": [
+          "Auth"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Token WebSocket généré",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string"
+                    },
+                    "expiresIn": {
+                      "type": "number"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/auth/forgot-password": {
+      "post": {
+        "summary": "Demander une réinitialisation de mot de passe",
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Email de réinitialisation envoyé (si le compte existe)"
+          },
+          "429": {
+            "description": "Trop de tentatives"
+          }
+        }
+      }
+    },
+    "/auth/reset-password": {
+      "post": {
+        "summary": "Réinitialiser le mot de passe",
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token",
+                  "newPassword"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string"
+                  },
+                  "newPassword": {
+                    "type": "string",
+                    "format": "password"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Mot de passe réinitialisé avec succès"
+          },
+          "400": {
+            "description": "Token invalide ou expiré"
+          }
+        }
+      }
+    },
+    "/auth/complete-2fa-login": {
+      "post": {
+        "summary": "Compléter la connexion après vérification 2FA",
+        "tags": [
+          "Auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "tempToken",
+                  "totpCode"
+                ],
+                "properties": {
+                  "tempToken": {
+                    "type": "string",
+                    "description": "Token temporaire reçu lors du login"
+                  },
+                  "totpCode": {
+                    "type": "string",
+                    "description": "Code TOTP à 6 chiffres"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Connexion 2FA complétée"
+          },
+          "401": {
+            "description": "Code TOTP invalide"
+          },
+          "429": {
+            "description": "Trop de tentatives"
+          }
+        }
+      }
+    },
+    "/contacts": {
+      "get": {
+        "summary": "Liste les contacts de l'utilisateur",
+        "tags": [
+          "Contacts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "status",
+            "schema": {
+              "type": "string",
+              "enum": [
+                "pending",
+                "accepted"
+              ]
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée"
+          }
+        }
+      },
+      "post": {
+        "summary": "Ajoute un contact via son code @XXXXXX",
+        "description": "Émet push P2 au destinataire (channel notifications).",
+        "tags": [
+          "Contacts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contactCode"
+                ],
+                "properties": {
+                  "contactCode": {
+                    "type": "string",
+                    "pattern": "^@[0-9]{6}$",
+                    "example": "@129876"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Demande envoyée"
+          },
+          "404": {
+            "description": "Contact code non trouvé"
+          },
+          "409": {
+            "description": "Déjà contact"
+          }
+        }
+      }
+    },
+    "/contacts/{contactId}": {
+      "get": {
+        "summary": "Détails d'un contact",
+        "tags": [
+          "Contacts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contactId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Contact"
+          },
+          "404": {
+            "description": "Non trouvé"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprime un contact",
+        "tags": [
+          "Contacts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contactId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supprimé"
+          }
+        }
+      }
+    },
+    "/contacts/{contactId}/accept": {
+      "post": {
+        "summary": "Accepte une demande de contact (quick action notif Vague 0)",
+        "tags": [
+          "Contacts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contactId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Accepté"
+          }
+        }
+      }
+    },
+    "/contacts/{contactId}/refuse": {
+      "post": {
+        "summary": "Refuse une demande de contact (quick action notif)",
+        "tags": [
+          "Contacts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contactId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Refusé"
+          }
+        }
+      }
+    },
+    "/contacts/{contactId}/block": {
+      "patch": {
+        "summary": "Bloque/débloque un contact",
+        "tags": [
+          "Contacts"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "contactId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "isBlocked"
+                ],
+                "properties": {
+                  "isBlocked": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Statut mis à jour"
+          }
+        }
+      }
+    },
+    "/conversations": {
+      "get": {
+        "summary": "Liste les conversations de l'utilisateur",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée"
+          }
+        }
+      }
+    },
+    "/conversations/archived": {
+      "get": {
+        "summary": "Liste les conversations archivées",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée"
+          }
+        }
+      }
+    },
+    "/conversations/private": {
+      "post": {
+        "summary": "Crée une conversation privée (1-to-1)",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "recipientId"
+                ],
+                "properties": {
+                  "recipientId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Conversation créée"
+          },
+          "409": {
+            "description": "Conversation existe déjà"
+          }
+        }
+      }
+    },
+    "/conversations/group": {
+      "post": {
+        "summary": "Crée une conversation de groupe",
+        "description": "§V3 broadcast WS group_member_added à chaque membre ajouté",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "memberIds"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "memberIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Groupe créé"
+          }
+        }
+      }
+    },
+    "/conversations/{id}": {
+      "get": {
+        "summary": "Détails d'une conversation",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Conversation"
+          },
+          "404": {
+            "description": "Non trouvée ou non participant"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprime une conversation (pour cet utilisateur)",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supprimée"
+          }
+        }
+      }
+    },
+    "/conversations/{id}/read": {
+      "patch": {
+        "summary": "Marque tous les messages comme lus",
+        "description": "§V3 broadcast WS message_read à tous les participants",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Lus"
+          }
+        }
+      }
+    },
+    "/conversations/{id}/mute": {
+      "patch": {
+        "summary": "Mute la conversation (notifications désactivées)",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "duration": {
+                    "type": "integer",
+                    "description": "Durée en ms (default: indéfini)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Muted"
+          }
+        }
+      }
+    },
+    "/conversations/{id}/archive": {
+      "patch": {
+        "summary": "Archive la conversation",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Archivée"
+          }
+        }
+      }
+    },
+    "/conversations/{id}/pin": {
+      "patch": {
+        "summary": "Épingle la conversation en haut de la liste",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Épinglée"
+          }
+        }
+      }
+    },
+    "/conversations/{id}/block": {
+      "patch": {
+        "summary": "Bloque l'autre participant (conversation privée uniquement)",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Bloqué"
+          },
+          "400": {
+            "description": "Non applicable (groupe)"
+          }
+        }
+      }
+    },
+    "/conversations/{id}/members": {
+      "post": {
+        "summary": "Ajoute des membres à un groupe",
+        "description": "§V3 broadcast WS group_member_added pour chaque ajout",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "memberIds"
+                ],
+                "properties": {
+                  "memberIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Membres ajoutés"
+          }
+        }
+      }
+    },
+    "/conversations/{id}/leave": {
+      "delete": {
+        "summary": "Quitte un groupe",
+        "description": "§V3 broadcast WS group_member_removed",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Quitté"
+          }
+        }
+      }
+    },
+    "/conversations/{id}/name": {
+      "patch": {
+        "summary": "Renomme un groupe",
+        "description": "§V3 broadcast WS group_name_changed",
+        "tags": [
+          "Conversations"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Renommé"
+          }
+        }
+      }
+    },
+    "/share": {
+      "post": {
+        "summary": "Partage une fiche/point/list avec un autre utilisateur",
+        "description": "§V0 — Notif P2 envoyée au destinataire avec quick actions accept/decline.\nCron `shareExpirationService` 9h/9h05 envoie rappel à expiration.\n",
+        "tags": [
+          "DataShare"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "recipientId",
+                  "resourceType",
+                  "resourceId"
+                ],
+                "properties": {
+                  "recipientId": {
+                    "type": "string"
+                  },
+                  "resourceType": {
+                    "type": "string",
+                    "enum": [
+                      "fiche",
+                      "point",
+                      "list"
+                    ]
+                  },
+                  "resourceId": {
+                    "type": "string"
+                  },
+                  "expiresAt": {
+                    "type": "string",
+                    "format": "date-time"
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 500
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Partage créé + notif envoyée"
+          },
+          "400": {
+            "description": "Validation échouée"
+          },
+          "404": {
+            "description": "Resource non trouvée"
+          }
+        }
+      }
+    },
+    "/share/received": {
+      "get": {
+        "summary": "Liste les partages reçus (en attente d'accept/decline)",
+        "tags": [
+          "DataShare"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée"
+          }
+        }
+      }
+    },
+    "/share/sent": {
+      "get": {
+        "summary": "Liste les partages envoyés",
+        "tags": [
+          "DataShare"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée"
+          }
+        }
+      }
+    },
+    "/share/{shareId}": {
+      "get": {
+        "summary": "Récupère le contenu d'un partage accepté",
+        "description": "Déchiffre les données pour le destinataire (clé RSA partagée).",
+        "tags": [
+          "DataShare"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shareId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Resource déchiffrée"
+          },
+          "403": {
+            "description": "Pas destinataire ou pas accepté"
+          },
+          "404": {
+            "description": "Partage non trouvé ou expiré"
+          }
+        }
+      }
+    },
+    "/share/{shareId}/status": {
+      "patch": {
+        "summary": "Accepte ou refuse un partage (quick action notif)",
+        "tags": [
+          "DataShare"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "shareId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "status"
+                ],
+                "properties": {
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "accepted",
+                      "refused"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Statut mis à jour"
+          },
+          "400": {
+            "description": "Status invalide"
+          }
+        }
+      }
+    },
+    "/fiches": {
+      "get": {
+        "summary": "Liste toutes les fiches de l'utilisateur connecté",
+        "tags": [
+          "Fiches"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste des fiches (déchiffrées + paginées)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": {
+                      "type": "array",
+                      "items": {
+                        "$ref": "#/components/schemas/Fiche"
+                      }
+                    },
+                    "pagination": {
+                      "type": "object",
+                      "properties": {
+                        "page": {
+                          "type": "integer"
+                        },
+                        "limit": {
+                          "type": "integer"
+                        },
+                        "total": {
+                          "type": "integer"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      },
+      "post": {
+        "summary": "Crée une nouvelle fiche",
+        "tags": [
+          "Fiches"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "schema": {
+              "type": "string"
+            },
+            "description": "deviceId origine (filtré dans broadcasts sync_update WS)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "type",
+                  "etat",
+                  "difficulte_acces",
+                  "risque_oxygene",
+                  "acces_souterrain",
+                  "praticite_souterrain",
+                  "etat_general"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "ville": {
+                    "type": "string",
+                    "maxLength": 100
+                  },
+                  "type": {
+                    "type": "string",
+                    "enum": [
+                      "Grotte",
+                      "Mine",
+                      "Aven",
+                      "Doline",
+                      "Carrière",
+                      "Tunnel",
+                      "Autre"
+                    ]
+                  },
+                  "etat": {
+                    "type": "string",
+                    "enum": [
+                      "Ouvert",
+                      "Fermé",
+                      "Restreint"
+                    ]
+                  },
+                  "difficulte_acces": {
+                    "type": "string"
+                  },
+                  "risque_oxygene": {
+                    "type": "string"
+                  },
+                  "acces_souterrain": {
+                    "type": "string"
+                  },
+                  "praticite_souterrain": {
+                    "oneOf": [
+                      {
+                        "type": "string"
+                      },
+                      {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    ],
+                    "description": "Union single | array (V9 fix syncService accepte les 2 formats)"
+                  },
+                  "etat_general": {
+                    "type": "string"
+                  },
+                  "equipement_conseille": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "surface": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "type_galeries": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "points_ids": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "center_cavite": {
+                    "type": "object",
+                    "properties": {
+                      "type": {
+                        "type": "string",
+                        "enum": [
+                          "Point"
+                        ]
+                      },
+                      "coordinates": {
+                        "type": "array",
+                        "items": {
+                          "type": "number"
+                        },
+                        "minItems": 2,
+                        "maxItems": 2
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Fiche créée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "message": {
+                      "type": "string"
+                    },
+                    "ficheId": {
+                      "type": "string"
+                    },
+                    "persisted": {
+                      "type": "boolean"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Validation échouée"
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "503": {
+            "description": "Sync DB échouée (rollback mémoire)"
+          }
+        }
+      }
+    },
+    "/fiches/{id}": {
+      "get": {
+        "summary": "Récupère une fiche par ID",
+        "tags": [
+          "Fiches"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fiche"
+          },
+          "404": {
+            "description": "Fiche non trouvée"
+          }
+        }
+      },
+      "put": {
+        "summary": "Met à jour une fiche",
+        "tags": [
+          "Fiches"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "integer",
+                    "description": "§V9 Optimistic concurrency. Si < serverVersion → 409 VERSION_CONFLICT."
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Fiche mise à jour"
+          },
+          "404": {
+            "description": "Fiche non trouvée"
+          },
+          "409": {
+            "description": "Conflit de version (modif concurrente détectée)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "type": "string",
+                      "example": "VERSION_CONFLICT"
+                    },
+                    "clientVersion": {
+                      "type": "integer"
+                    },
+                    "serverVersion": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprime une fiche (soft-delete)",
+        "tags": [
+          "Fiches"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fiche supprimée"
+          },
+          "404": {
+            "description": "Fiche non trouvée"
+          }
+        }
+      }
+    },
+    "/lists": {
+      "get": {
+        "summary": "Liste toutes les listes de l'utilisateur connecté",
+        "tags": [
+          "Lists"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée"
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      },
+      "post": {
+        "summary": "Crée une nouvelle liste",
+        "tags": [
+          "Lists"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "schema": {
+              "type": "string"
+            },
+            "description": "deviceId origine (filtré dans broadcasts sync_update)"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "maxLength": 200
+                  },
+                  "description": {
+                    "type": "string",
+                    "maxLength": 1000
+                  },
+                  "color": {
+                    "type": "string"
+                  },
+                  "icon": {
+                    "type": "string"
+                  },
+                  "points": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Liste créée"
+          },
+          "400": {
+            "description": "Validation échouée"
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/lists/{id}": {
+      "get": {
+        "summary": "Récupère une liste par ID",
+        "tags": [
+          "Lists"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste"
+          },
+          "404": {
+            "description": "Liste non trouvée"
+          }
+        }
+      },
+      "put": {
+        "summary": "Met à jour une liste",
+        "tags": [
+          "Lists"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "header",
+            "name": "x-device-id",
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "version": {
+                    "type": "integer",
+                    "description": "§V9 Optimistic concurrency"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Liste mise à jour"
+          },
+          "404": {
+            "description": "Liste non trouvée"
+          },
+          "409": {
+            "description": "VERSION_CONFLICT"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprime une liste (soft-delete)",
+        "tags": [
+          "Lists"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste supprimée"
+          },
+          "404": {
+            "description": "Liste non trouvée"
+          }
+        }
+      }
+    },
+    "/lists/{listId}/points/{pointId}": {
+      "post": {
+        "summary": "Ajoute un point à une liste",
+        "tags": [
+          "Lists"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "listId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pointId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Point ajouté"
+          },
+          "404": {
+            "description": "Liste ou point non trouvé"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Retire un point d'une liste",
+        "tags": [
+          "Lists"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "listId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "path",
+            "name": "pointId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Point retiré"
+          }
+        }
+      }
+    },
+    "/maintenance/status": {
+      "get": {
+        "summary": "Statut maintenance (public)",
+        "description": "Endpoint public consulté par tous les clients au boot pour afficher\nune bannière maintenance ou bloquer l'usage de l'app.\n",
+        "tags": [
+          "Maintenance"
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "isActive": {
+                      "type": "boolean"
+                    },
+                    "message": {
+                      "type": "string"
+                    },
+                    "estimatedEndTime": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/maintenance/activate": {
+      "post": {
+        "summary": "Active le mode maintenance (admin)",
+        "description": "Affiche la bannière maintenance sur web + mobile. Les requêtes sont\nbloquées par maintenanceMiddleware sauf /maintenance/* et /admin/*.\n",
+        "tags": [
+          "Maintenance",
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  },
+                  "estimatedEndTime": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Activé"
+          }
+        }
+      }
+    },
+    "/maintenance/deactivate": {
+      "post": {
+        "summary": "Désactive le mode maintenance (admin)",
+        "tags": [
+          "Maintenance",
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Désactivé"
+          }
+        }
+      }
+    },
+    "/maintenance/message": {
+      "put": {
+        "summary": "Update message maintenance (admin)",
+        "tags": [
+          "Maintenance",
+          "Admin"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "message"
+                ],
+                "properties": {
+                  "message": {
+                    "type": "string"
+                  },
+                  "estimatedEndTime": {
+                    "type": "string",
+                    "format": "date-time"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Message mis à jour"
+          }
+        }
+      }
+    },
+    "/messages": {
+      "post": {
+        "summary": "Envoie un message dans une conversation",
+        "description": "§V3 broadcast WS new_message à tous les participants (filtre sender côté serveur).",
+        "tags": [
+          "Messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "conversationId",
+                  "content"
+                ],
+                "properties": {
+                  "conversationId": {
+                    "type": "string"
+                  },
+                  "content": {
+                    "type": "string",
+                    "description": "Chiffré côté client recommandé"
+                  },
+                  "replyTo": {
+                    "type": "string",
+                    "description": "ID du message parent (thread)"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Message envoyé"
+          },
+          "403": {
+            "description": "Non participant à la conversation"
+          }
+        }
+      }
+    },
+    "/messages/{conversationId}": {
+      "get": {
+        "summary": "Liste les messages d'une conversation",
+        "tags": [
+          "Messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "conversationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "in": "query",
+            "name": "before",
+            "schema": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Cursor pagination"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée chronologique"
+          },
+          "403": {
+            "description": "Non participant"
+          }
+        }
+      }
+    },
+    "/messages/read-batch": {
+      "post": {
+        "summary": "Marque plusieurs messages comme lus",
+        "description": "§V3 broadcast WS message_read à tous les participants",
+        "tags": [
+          "Messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "messageIds"
+                ],
+                "properties": {
+                  "messageIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Marqués lus"
+          }
+        }
+      }
+    },
+    "/messages/{messageId}/read": {
+      "patch": {
+        "summary": "Marque un message comme lu",
+        "tags": [
+          "Messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Marqué lu"
+          }
+        }
+      }
+    },
+    "/messages/{messageId}/reply": {
+      "post": {
+        "summary": "Répond à un message (thread)",
+        "tags": [
+          "Messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "content"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Réponse envoyée"
+          }
+        }
+      }
+    },
+    "/messages/{messageId}": {
+      "patch": {
+        "summary": "Édite un message (auteur uniquement)",
+        "tags": [
+          "Messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "content"
+                ],
+                "properties": {
+                  "content": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Édité"
+          },
+          "403": {
+            "description": "Pas l'auteur"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprime un message (auteur uniquement, soft-delete)",
+        "tags": [
+          "Messages"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "messageId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supprimé"
+          },
+          "403": {
+            "description": "Pas l'auteur"
+          }
+        }
+      }
+    },
+    "/mobile/app-version/check": {
+      "get": {
+        "summary": "Vérifie si l'app mobile est à jour (force update / soft update)",
+        "description": "Compare X-App-Version vs MIN_APP_VERSION_IOS / MIN_APP_VERSION_ANDROID\n(env). Réponse indique si update obligatoire (kill switch) ou recommandée.\n",
+        "tags": [
+          "Mobile"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Platform",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ios",
+                "android"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-App-Version",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "example": "1.2.3"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "forceUpdate": {
+                      "type": "boolean",
+                      "description": "Bloque l'app si true (kill switch)"
+                    },
+                    "recommendUpdate": {
+                      "type": "boolean"
+                    },
+                    "latestVersion": {
+                      "type": "string"
+                    },
+                    "storeUrl": {
+                      "type": "string"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Headers manquants"
+          }
+        }
+      }
+    },
+    "/mobile/auth/login": {
+      "post": {
+        "summary": "Login mobile (alias handler unifié /auth/login)",
+        "description": "§V1 — Parité totale avec POST /auth/login (même handler). Différence :\nmiddlewares mobile en amont (App Check Firebase + attestation iOS App\nAttest / Android Play Integrity + rate limit par IP + par deviceId).\nRéponse identique : { accessToken, refreshToken, user, requires2FA?, tempToken?, tokenId }\n",
+        "tags": [
+          "Mobile Auth"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Platform",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ios",
+                "android"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Device-ID",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "description": "UUID device"
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Firebase-AppCheck",
+            "schema": {
+              "type": "string",
+              "description": "Token App Check (si APP_CHECK_ENABLED=true)"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/schemas/AuthLoginResponse"
+          },
+          "400": {
+            "description": "Validation échouée"
+          },
+          "401": {
+            "description": "Credentials invalides"
+          },
+          "403": {
+            "description": "Codes : BLOCKED / UNVERIFIED / PENDING_VALIDATION / UNAUTHORIZED"
+          },
+          "429": {
+            "description": "Rate limit (3/h par IP",
+            "5/jour par deviceId)": null
+          }
+        }
+      }
+    },
+    "/mobile/auth/register": {
+      "post": {
+        "summary": "Inscription mobile",
+        "tags": [
+          "Mobile Auth"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Platform",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ios",
+                "android"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Device-ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "201": {
+            "description": "Compte créé"
+          },
+          "400": {
+            "description": "Validation"
+          },
+          "409": {
+            "description": "Email déjà utilisé"
+          }
+        }
+      }
+    },
+    "/mobile/auth/forgot-password": {
+      "post": {
+        "summary": "Demande reset password (envoie email)",
+        "tags": [
+          "Mobile Auth"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Email envoyé (idempotent)"
+          }
+        }
+      }
+    },
+    "/mobile/auth/refresh": {
+      "post": {
+        "summary": "Rotation access + refresh tokens",
+        "description": "§V9 retourne `tokenId` (nouveau jti) pour sync sessionStorage client.",
+        "tags": [
+          "Mobile Auth"
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Platform",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ios",
+                "android"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Device-ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "refreshToken"
+                ],
+                "properties": {
+                  "refreshToken": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "accessToken": {
+                      "type": "string"
+                    },
+                    "refreshToken": {
+                      "type": "string"
+                    },
+                    "tokenExpiresIn": {
+                      "type": "integer"
+                    },
+                    "refreshTokenExpiresIn": {
+                      "type": "integer"
+                    },
+                    "tokenId": {
+                      "type": "string",
+                      "description": "§V9 jti nouveau JWT"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Refresh token invalide ou expiré"
+          }
+        }
+      }
+    },
+    "/mobile/auth/logout": {
+      "post": {
+        "summary": "Logout mobile (révoque le refresh token)",
+        "tags": [
+          "Mobile Auth"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Déconnecté"
+          }
+        }
+      }
+    },
+    "/mobile/auth/me": {
+      "get": {
+        "summary": "Profil utilisateur connecté (mobile)",
+        "tags": [
+          "Mobile Auth"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/schemas/User"
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/mobile/push-tokens": {
+      "post": {
+        "summary": "Enregistre/met à jour un push token FCM ou Expo",
+        "description": "Upsert par (userId, deviceId). Utilisé par notificationsService pour\nenvoyer les push P0/P1/P2 (auth_revoked, contact_request, share_received…).\n",
+        "tags": [
+          "Mobile",
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Platform",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ios",
+                "android"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Device-ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "token"
+                ],
+                "properties": {
+                  "token": {
+                    "type": "string",
+                    "example": "ExponentPushToken[xxxx]"
+                  },
+                  "deviceInfo": {
+                    "type": "object",
+                    "properties": {
+                      "model": {
+                        "type": "string"
+                      },
+                      "osVersion": {
+                        "type": "string"
+                      },
+                      "appVersion": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Token enregistré"
+          },
+          "400": {
+            "description": "MISSING_TOKEN ou INVALID_TOKEN_FORMAT"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprime le push token (logout)",
+        "tags": [
+          "Mobile",
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "header",
+            "name": "X-Platform",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "enum": [
+                "ios",
+                "android"
+              ]
+            }
+          },
+          {
+            "in": "header",
+            "name": "X-Device-ID",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supprimé"
+          },
+          "404": {
+            "description": "TOKEN_NOT_FOUND"
+          }
+        }
+      }
+    },
+    "/mobile/sos/activate": {
+      "post": {
+        "summary": "Active une session SOS (dead-man's-switch)",
+        "description": "Crée une session SOS qui expirera après `expectedDuration`. Heartbeat\ntoutes les 60s pour la prolonger. Sans heartbeat → escalade auto\n(Stage 1 push contacts, Stage 2 SMS, Stage 3 secours). Voir\nsosEscalationService cron 60s.\n",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "expectedDuration"
+                ],
+                "properties": {
+                  "expectedDuration": {
+                    "type": "integer",
+                    "minimum": 15,
+                    "maximum": 480
+                  },
+                  "note": {
+                    "type": "string"
+                  },
+                  "siteName": {
+                    "type": "string"
+                  },
+                  "zone": {
+                    "type": "string"
+                  },
+                  "depth": {
+                    "type": "integer"
+                  },
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lng": {
+                    "type": "number"
+                  },
+                  "accuracy": {
+                    "type": "number"
+                  },
+                  "participantIds": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "sessionContacts": {
+                    "type": "object",
+                    "properties": {
+                      "permanentContactIds": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "additionalContacts": {
+                        "type": "array",
+                        "items": {
+                          "type": "object"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session créée"
+          },
+          "409": {
+            "description": "SESSION_ALREADY_ACTIVE"
+          },
+          "429": {
+            "description": "Rate limit Redis"
+          }
+        }
+      }
+    },
+    "/mobile/sos/heartbeat": {
+      "post": {
+        "summary": "Heartbeat (signe de vie, +15min auto)",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "sessionId": {
+                    "type": "string"
+                  },
+                  "lat": {
+                    "type": "number"
+                  },
+                  "lng": {
+                    "type": "number"
+                  },
+                  "accuracy": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Timer prolongé + heartbeatCount"
+          },
+          "404": {
+            "description": "NO_ACTIVE_SESSION"
+          }
+        }
+      }
+    },
+    "/mobile/sos/extend": {
+      "post": {
+        "summary": "Prolongation manuelle (15-480 min)",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Timer étendu"
+          }
+        }
+      }
+    },
+    "/mobile/sos/deactivate": {
+      "post": {
+        "summary": "Désactivation manuelle (user en sécurité)",
+        "description": "scope=self (quitte seul) | all (résout pour tous, défaut).",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session résolue"
+          }
+        }
+      }
+    },
+    "/mobile/sos/status": {
+      "get": {
+        "summary": "Statut session active",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ active, session?, isGroupSession, participants[] }"
+          }
+        }
+      }
+    },
+    "/mobile/sos/history": {
+      "get": {
+        "summary": "Historique sessions + stats agrégées",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "maximum": 50,
+              "default": 20
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sessions enrichies actualDuration/durationOverrun + stats"
+          }
+        }
+      }
+    },
+    "/mobile/sos/active": {
+      "get": {
+        "summary": "Sessions visibles en escalade (dashboard cross-user)",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sessions d'autres users en stage 1+"
+          }
+        }
+      }
+    },
+    "/mobile/sos/{sessionId}/deactivate": {
+      "post": {
+        "summary": "Désactive une session via path param",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résolue"
+          }
+        }
+      }
+    },
+    "/mobile/sos/{sessionId}/confirm-safe": {
+      "post": {
+        "summary": "Confirme qu'un autre user est en sécurité (cross-user)",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Résolue par tiers"
+          }
+        }
+      }
+    },
+    "/mobile/sos/contacts": {
+      "get": {
+        "summary": "Liste contacts d'urgence",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste (max 5)"
+          }
+        }
+      },
+      "post": {
+        "summary": "Crée un contact d'urgence (max 5, phone E.164)",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "phone"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "phone": {
+                    "type": "string",
+                    "pattern": "^\\\\+[1-9][0-9]{1,14}$"
+                  },
+                  "relationship": {
+                    "type": "string"
+                  },
+                  "isDefault": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Créé"
+          },
+          "400": {
+            "description": "MAX_CONTACTS_REACHED ou INVALID_PHONE_FORMAT"
+          },
+          "409": {
+            "description": "DUPLICATE_PHONE"
+          }
+        }
+      }
+    },
+    "/mobile/sos/contacts/{id}": {
+      "put": {
+        "summary": "Modifie un contact d'urgence",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Mis à jour"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprime un contact d'urgence",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supprimé"
+          }
+        }
+      }
+    },
+    "/mobile/sos/add-participant": {
+      "post": {
+        "summary": "Ajoute un participant à une session de groupe",
+        "description": "Seul le créateur peut ajouter.",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "targetUserId"
+                ],
+                "properties": {
+                  "targetUserId": {
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Ajouté"
+          },
+          "403": {
+            "description": "FORBIDDEN (pas créateur)"
+          }
+        }
+      }
+    },
+    "/mobile/sos/remove-participant": {
+      "post": {
+        "summary": "Retire un participant (dernier → session résolue)",
+        "tags": [
+          "Mobile",
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "targetUserId"
+                ],
+                "properties": {
+                  "targetUserId": {
+                    "type": "string"
+                  },
+                  "sessionId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Retiré"
+          }
+        }
+      }
+    },
+    "/mobile/sync": {
+      "get": {
+        "summary": "Sync incrémentale offline-first (pull)",
+        "description": "§V0 — Retourne `{points,fiches,lists,sosContacts}` créés/modifiés/supprimés\ndepuis `since`. Si `since` absent → full sync. Sortie chiffrée côté serveur\npuis déchiffrée côté client (clé dérivée bcrypt session).\n",
+        "tags": [
+          "Mobile",
+          "Sync"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Données delta + lastSyncDate"
+          },
+          "400": {
+            "description": "INVALID_DATE_FORMAT"
+          }
+        }
+      },
+      "post": {
+        "summary": "Sync incrémentale offline-first (push)",
+        "description": "Push des changements offline. Détecte les conflits via version\n(optimistic concurrency). Retourne idMapping localId → serverId.\n",
+        "tags": [
+          "Mobile",
+          "Sync"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "changes"
+                ],
+                "properties": {
+                  "changes": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": [
+                        "type",
+                        "action",
+                        "timestamp"
+                      ],
+                      "properties": {
+                        "type": {
+                          "type": "string",
+                          "enum": [
+                            "point",
+                            "fiche",
+                            "list",
+                            "sosContact"
+                          ]
+                        },
+                        "action": {
+                          "type": "string",
+                          "enum": [
+                            "create",
+                            "update",
+                            "delete"
+                          ]
+                        },
+                        "id": {
+                          "type": "string"
+                        },
+                        "localId": {
+                          "type": "string"
+                        },
+                        "data": {
+                          "type": "object"
+                        },
+                        "timestamp": {
+                          "type": "string",
+                          "format": "date-time"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sync ok",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "synced": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "conflicts": {
+                      "type": "array",
+                      "items": {
+                        "type": "object"
+                      }
+                    },
+                    "idMapping": {
+                      "type": "object",
+                      "additionalProperties": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/sync/status": {
+      "get": {
+        "summary": "Check rapide changes dispo (badge)",
+        "tags": [
+          "Mobile",
+          "Sync"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "since",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "date-time"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "hasChanges + breakdown"
+          }
+        }
+      }
+    },
+    "/mobile/data/full": {
+      "get": {
+        "summary": "Download complet (nouveau device, reset, recovery)",
+        "tags": [
+          "Mobile",
+          "Sync"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Toutes les données chiffrées"
+          }
+        }
+      }
+    },
+    "/mobile/2fa/status": {
+      "get": {
+        "summary": "Statut 2FA mobile",
+        "tags": [
+          "Mobile",
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "confirmedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "nullable": true
+                    },
+                    "recoveryCodesRemaining": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/mobile/2fa/setup": {
+      "post": {
+        "summary": "Initie config 2FA mobile (QR + secret)",
+        "tags": [
+          "Mobile",
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "{ qrCode (data:image/png;base64), secret }"
+          }
+        }
+      }
+    },
+    "/mobile/2fa/verify-setup": {
+      "post": {
+        "summary": "Valide config 2FA + retourne recovery codes",
+        "tags": [
+          "Mobile",
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "code"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 6
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{ recoveryCodes: string[10] }"
+          }
+        }
+      }
+    },
+    "/mobile/2fa/disable": {
+      "post": {
+        "summary": "Désactive 2FA mobile",
+        "tags": [
+          "Mobile",
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Désactivée"
+          }
+        }
+      }
+    },
+    "/mobile/2fa/regenerate-codes": {
+      "post": {
+        "summary": "Régénère les recovery codes",
+        "tags": [
+          "Mobile",
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "{ recoveryCodes: string[10] }"
+          }
+        }
+      }
+    },
+    "/mobile/2fa/verify-login": {
+      "post": {
+        "summary": "Complète le flow login 2FA (alias handler unifié)",
+        "description": "§V1 — Parité avec POST /auth/complete-2fa.",
+        "tags": [
+          "Mobile",
+          "2FA"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "tempToken",
+                  "code"
+                ],
+                "properties": {
+                  "tempToken": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string"
+                  },
+                  "isRecoveryCode": {
+                    "type": "boolean"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "$ref": "#/components/schemas/AuthLoginResponse"
+          },
+          "400": {
+            "description": "Code invalide"
+          },
+          "429": {
+            "description": "Rate limit (Retry-After)"
+          }
+        }
+      }
+    },
+    "/notifications": {
+      "get": {
+        "summary": "Récupère toutes les notifications de l'utilisateur",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "type": "integer",
+              "default": 50
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "type": "integer",
+              "default": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste paginée"
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/notifications/unread-count": {
+      "get": {
+        "summary": "Nombre de notifications non lues",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Compteur",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/notifications/read-all": {
+      "patch": {
+        "summary": "Marque toutes les notifications comme lues",
+        "description": "§V3 broadcast WS notification_read avec notificationId=\"all\" pour multi-device sync.",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Toutes marquées comme lues"
+          }
+        }
+      }
+    },
+    "/notifications/{notificationId}/read": {
+      "patch": {
+        "summary": "Marque une notification comme lue",
+        "description": "§V3 broadcast WS notification_read multi-device.",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notificationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Marquée comme lue"
+          },
+          "404": {
+            "description": "Notification non trouvée"
+          }
+        }
+      }
+    },
+    "/notifications/read": {
+      "delete": {
+        "summary": "Supprime toutes les notifications lues",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supprimées"
+          }
+        }
+      }
+    },
+    "/notifications/{notificationId}": {
+      "delete": {
+        "summary": "Supprime une notification précise",
+        "tags": [
+          "Notifications"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "notificationId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Supprimée"
+          },
+          "404": {
+            "description": "Notification non trouvée"
+          }
+        }
+      }
+    },
+    "/points": {
+      "post": {
+        "summary": "Créer un nouveau point",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "name",
+                  "latitude",
+                  "longitude"
+                ],
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Point créé avec succès",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Point"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      },
+      "get": {
+        "summary": "Récupérer tous les points de l'utilisateur",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste des points",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Point"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/points/search": {
+      "get": {
+        "summary": "Rechercher des points",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "query",
+            "name": "q",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Terme de recherche"
+          },
+          {
+            "in": "query",
+            "name": "type",
+            "schema": {
+              "type": "string"
+            },
+            "description": "Filtrer par type"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste des points correspondants",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/Point"
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/points/{id}": {
+      "get": {
+        "summary": "Récupérer un point par son ID",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID du point"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Détails du point",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Point"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "404": {
+            "description": "Point non trouvé"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprimer un point",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID du point"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Point supprimé"
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "404": {
+            "description": "Point non trouvé"
+          }
+        }
+      },
+      "put": {
+        "summary": "Mettre à jour un point",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID du point"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "description": {
+                    "type": "string"
+                  },
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  },
+                  "type": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Point mis à jour",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Point"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "404": {
+            "description": "Point non trouvé"
+          }
+        }
+      }
+    },
+    "/points/{pointId}/photo": {
+      "post": {
+        "summary": "Upload ou remplace la photo d'un point",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pointId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID du point"
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "photo": {
+                    "type": "string",
+                    "format": "binary"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Photo uploadée avec succès"
+          },
+          "404": {
+            "description": "Point non trouvé"
+          },
+          "507": {
+            "description": "Quota de stockage dépassé"
+          }
+        }
+      },
+      "get": {
+        "summary": "Récupère la photo d'un point",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pointId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID du point"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Photo du point",
+            "content": {
+              "image/jpeg": {
+                "schema": {
+                  "type": "string",
+                  "format": "binary"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Photo non trouvée"
+          }
+        }
+      },
+      "delete": {
+        "summary": "Supprime la photo d'un point",
+        "tags": [
+          "Points"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "pointId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            },
+            "description": "ID du point"
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Photo supprimée"
+          },
+          "404": {
+            "description": "Photo non trouvée"
+          }
+        }
+      }
+    },
+    "/user/storage": {
+      "get": {
+        "summary": "Récupère les informations de stockage de l'utilisateur",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Informations de stockage"
+          }
+        }
+      }
+    },
+    "/user/photos": {
+      "get": {
+        "summary": "Récupère toutes les photos de tous les points de l'utilisateur",
+        "tags": [
+          "User"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          },
+          {
+            "cookieAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste de toutes les photos avec métadonnées",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "photos": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "pointId": {
+                            "type": "string"
+                          },
+                          "pointName": {
+                            "type": "string"
+                          },
+                          "photoPath": {
+                            "type": "string"
+                          },
+                          "photoUrl": {
+                            "type": "string"
+                          },
+                          "size": {
+                            "type": "number"
+                          },
+                          "uploadedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "hasPhoto": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    },
+                    "stats": {
+                      "type": "object",
+                      "properties": {
+                        "total": {
+                          "type": "number"
+                        },
+                        "totalSize": {
+                          "type": "number"
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/quick-action/sos/confirm-safe": {
+      "post": {
+        "summary": "Action notif \"Je suis en sécurité\" (bouton push iOS/Android)",
+        "description": "Endpoint invoqué directement depuis la notif (action button) même si\nl'app est killed. Tant que le JWT SecureStore est valide, on résout\nla session sans ouvrir l'app. Si JWT expiré → fallback ouverture app\n(handled mobile-side).\n",
+        "tags": [
+          "QuickAction"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "sessionId"
+                ],
+                "properties": {
+                  "sessionId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Session résolue"
+          }
+        }
+      }
+    },
+    "/quick-action/contact/accept": {
+      "post": {
+        "summary": "Action notif \"Accepter\" demande contact",
+        "tags": [
+          "QuickAction"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contactId"
+                ],
+                "properties": {
+                  "contactId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Acceptée"
+          }
+        }
+      }
+    },
+    "/quick-action/contact/refuse": {
+      "post": {
+        "summary": "Action notif \"Refuser\" demande contact",
+        "tags": [
+          "QuickAction"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "contactId"
+                ],
+                "properties": {
+                  "contactId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Refusée"
+          }
+        }
+      }
+    },
+    "/quick-action/share/accept": {
+      "post": {
+        "summary": "Action notif \"Accepter\" partage de données",
+        "tags": [
+          "QuickAction"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "shareId"
+                ],
+                "properties": {
+                  "shareId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Accepté"
+          }
+        }
+      }
+    },
+    "/quick-action/share/refuse": {
+      "post": {
+        "summary": "Action notif \"Refuser\" partage de données",
+        "tags": [
+          "QuickAction"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "shareId"
+                ],
+                "properties": {
+                  "shareId": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Refusé"
+          }
+        }
+      }
+    },
+    "/security/sessions": {
+      "get": {
+        "summary": "Liste les sessions actives de l'utilisateur",
+        "tags": [
+          "Security"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste des sessions (avec isCurrent flag)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "count": {
+                      "type": "integer"
+                    },
+                    "sessions": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "tokenId": {
+                            "type": "string"
+                          },
+                          "ipAddress": {
+                            "type": "string"
+                          },
+                          "userAgent": {
+                            "type": "string"
+                          },
+                          "createdAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "lastUsedAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "expiresAt": {
+                            "type": "string",
+                            "format": "date-time"
+                          },
+                          "isCurrent": {
+                            "type": "boolean"
+                          }
+                        }
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/security/sessions/{tokenId}": {
+      "delete": {
+        "summary": "Révoque une session précise (force logout sur ce device)",
+        "description": "§Vague 4 — Le backend broadcast un event WS `session_revoked` sur tous les\nsockets du user. Le client dont le tokenId match se déconnecte\nimmédiatement (Alert RN / forceSessionExpiration web).\n",
+        "tags": [
+          "Security"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "tokenId",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{32}$"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session révoquée + event WS émis"
+          },
+          "400": {
+            "description": "tokenId invalide OU tentative de révoquer la session courante"
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "404": {
+            "description": "Session non trouvée"
+          }
+        }
+      }
+    },
+    "/security/sessions/revoke-all": {
+      "post": {
+        "summary": "Révoque toutes les sessions sauf la courante",
+        "description": "§Vague 4 — Broadcast WS session_revoked avec revokedTokenId=\"all\".\nLe device émetteur peut éviter sa propre déconnexion en posant un flag\nlocal \"ignore-next-session-revoked-all\" 5s avant l'appel (cf. Vague 9\nclient refinements).\n",
+        "tags": [
+          "Security"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string",
+                    "description": "Mot de passe pour confirmation"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Sessions révoquées + event WS émis",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "revokedCount": {
+                      "type": "integer"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Mot de passe incorrect ou non authentifié"
+          }
+        }
+      }
+    },
+    "/security/events": {
+      "get": {
+        "summary": "Liste les événements de sécurité récents",
+        "tags": [
+          "Security"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Liste des événements"
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/sos/start": {
+      "post": {
+        "summary": "Active une session SOS (broadcast Stage 1 multi-device)",
+        "description": "§V0 — Déclenche le broadcast SOS Stage 1 vers les contacts de\nl'utilisateur dans un rayon (SOS_BROADCAST_RADIUS_KM, default 50km).\nLe serveur applique : filtre géo, opt-out user, throttle anti-spam.\nÉmet push P0 (channel qvarry_sos_critical, son alarme, bypass DND).\n",
+        "tags": [
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "latitude",
+                  "longitude"
+                ],
+                "properties": {
+                  "latitude": {
+                    "type": "number",
+                    "minimum": -90,
+                    "maximum": 90
+                  },
+                  "longitude": {
+                    "type": "number",
+                    "minimum": -180,
+                    "maximum": 180
+                  },
+                  "message": {
+                    "type": "string",
+                    "maxLength": 500
+                  },
+                  "accuracy": {
+                    "type": "number",
+                    "description": "Précision GPS en mètres"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Session SOS créée",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "sessionId": {
+                      "type": "string"
+                    },
+                    "broadcastCount": {
+                      "type": "integer"
+                    },
+                    "status": {
+                      "type": "string",
+                      "enum": [
+                        "ACTIVE"
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Coordonnées invalides"
+          },
+          "403": {
+            "description": "User opt-out SOS"
+          },
+          "429": {
+            "description": "Throttle (déjà SOS actif récent)"
+          }
+        }
+      }
+    },
+    "/sos/sessions/{sessionId}/heartbeat": {
+      "post": {
+        "summary": "Heartbeat pendant SOS actif (mise à jour position)",
+        "tags": [
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "latitude": {
+                    "type": "number"
+                  },
+                  "longitude": {
+                    "type": "number"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Position mise à jour"
+          }
+        }
+      }
+    },
+    "/sos/sessions/{sessionId}/safe": {
+      "post": {
+        "summary": "Confirme retour en sécurité (clos session)",
+        "description": "Quick action button \"Je suis en sécurité\" notif iOS/Android.\nÉmet push aux participants pour info.\n",
+        "tags": [
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "sessionId",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session clos status SAFE"
+          },
+          "404": {
+            "description": "Session non trouvée"
+          }
+        }
+      }
+    },
+    "/sos/active": {
+      "get": {
+        "summary": "Liste les sessions SOS actives autour de l'utilisateur",
+        "description": "§V0 utilisé par mobile pour `qvarry://sos/active` deep link.",
+        "tags": [
+          "SOS"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Sessions actives ACTIVE/EXPIRED/ESCALATING"
+          }
+        }
+      }
+    },
+    "/2fa/status": {
+      "get": {
+        "summary": "Statut 2FA de l'utilisateur connecté",
+        "tags": [
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "enabled": {
+                      "type": "boolean"
+                    },
+                    "method": {
+                      "type": "string",
+                      "enum": [
+                        "totp"
+                      ],
+                      "description": "V1 supporte uniquement TOTP (authenticator app)"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/2fa/setup": {
+      "post": {
+        "summary": "Initie la config 2FA (génère secret TOTP + QR code)",
+        "description": "Le user doit ensuite scanner le QR avec Google Authenticator / 1Password / etc.",
+        "tags": [
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "qrCode": {
+                      "type": "string",
+                      "format": "byte",
+                      "description": "data:image/png;base64"
+                    },
+                    "secret": {
+                      "type": "string",
+                      "description": "Pour saisie manuelle si QR scan impossible"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "2FA déjà activé"
+          }
+        }
+      }
+    },
+    "/2fa/verify-setup": {
+      "post": {
+        "summary": "Valide la config 2FA (vérifie le 1er code TOTP)",
+        "tags": [
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "code"
+                ],
+                "properties": {
+                  "code": {
+                    "type": "string",
+                    "minLength": 6,
+                    "maxLength": 6
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "2FA activée + retour des codes de récupération",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "recoveryCodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      },
+                      "description": "10 codes one-time à imprimer/stocker safe"
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Code invalide"
+          }
+        }
+      }
+    },
+    "/2fa/disable": {
+      "post": {
+        "summary": "Désactive 2FA (password + code 2FA requis)",
+        "tags": [
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password",
+                  "code"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Code TOTP 6 chars OU recovery code"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "2FA désactivée"
+          },
+          "400": {
+            "description": "Code 2FA incorrect"
+          },
+          "401": {
+            "description": "Password incorrect"
+          }
+        }
+      }
+    },
+    "/2fa/regenerate-codes": {
+      "post": {
+        "summary": "Régénère les 10 codes de récupération (invalide les anciens)",
+        "tags": [
+          "2FA"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "password"
+                ],
+                "properties": {
+                  "password": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Nouveaux codes",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "recoveryCodes": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/2fa/verify": {
+      "post": {
+        "summary": "Vérifie le code 2FA pendant le flow login",
+        "description": "Endpoint legacy. Préférer POST /auth/complete-2fa (Vague 1 unifié) qui\nretourne {accessToken, refreshToken, user, tokenId} directement.\n",
+        "tags": [
+          "2FA"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "tempToken",
+                  "code"
+                ],
+                "properties": {
+                  "tempToken": {
+                    "type": "string"
+                  },
+                  "code": {
+                    "type": "string",
+                    "description": "Code TOTP OU recovery code"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "2FA validée + login complet"
+          },
+          "400": {
+            "description": "Code invalide"
+          },
+          "401": {
+            "description": "tempToken invalide ou expiré"
+          },
+          "429": {
+            "description": "Trop de tentatives (Retry-After)"
+          }
+        }
+      }
+    },
+    "/users": {
+      "post": {
+        "summary": "Création de compte (inscription)",
+        "description": "Public. Nécessite token Cloudflare Turnstile (cf-turnstile-response).",
+        "tags": [
+          "Users"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": [
+                  "email",
+                  "password",
+                  "name",
+                  "surname"
+                ],
+                "properties": {
+                  "email": {
+                    "type": "string",
+                    "format": "email"
+                  },
+                  "password": {
+                    "type": "string",
+                    "minLength": 12,
+                    "description": "12+ chars, maj/min/chiffre/spécial"
+                  },
+                  "name": {
+                    "type": "string"
+                  },
+                  "surname": {
+                    "type": "string"
+                  },
+                  "cf-turnstile-response": {
+                    "type": "string",
+                    "description": "Token Cloudflare Turnstile"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Compte créé (en attente vérif email + validation admin)"
+          },
+          "400": {
+            "description": "Validation échouée (email blocklist",
+            "password faible": null,
+            "etc.)": null
+          },
+          "409": {
+            "description": "Email déjà utilisé"
+          },
+          "429": {
+            "description": "Trop de tentatives (Retry-After header)"
+          }
+        }
+      }
+    },
+    "/users/me": {
+      "get": {
+        "summary": "Profil de l'utilisateur connecté",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "User (sans champs sensibles, IPs filtrées)",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/User"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Non authentifié"
+          }
+        }
+      }
+    },
+    "/users/{id}": {
+      "get": {
+        "summary": "Profil d'un utilisateur par ID",
+        "description": "Self ou admin uniquement (SEC-033)",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "$ref": "#/components/schemas/User"
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "403": {
+            "description": "Pas autorisé à voir ce profil"
+          },
+          "404": {
+            "description": "User non trouvé"
+          }
+        }
+      },
+      "put": {
+        "summary": "Met à jour son profil",
+        "tags": [
+          "Users"
+        ],
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string"
+                  },
+                  "surname": {
+                    "type": "string"
+                  },
+                  "pseudo": {
+                    "type": "string"
+                  },
+                  "showPseudo": {
+                    "type": "boolean"
+                  },
+                  "password": {
+                    "type": "string",
+                    "description": "Nouveau password (requires currentPassword)"
+                  },
+                  "currentPassword": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Profil mis à jour"
+          },
+          "400": {
+            "description": "Mot de passe actuel incorrect ou validation"
+          },
+          "401": {
+            "description": "Non authentifié"
+          },
+          "404": {
+            "description": "User non trouvé"
+          }
+        }
+      }
+    },
+    "/webhooks/vonage/delivery": {
+      "post": {
+        "summary": "Webhook delivery receipt SMS Vonage",
+        "description": "Endpoint appelé par Vonage (pas d'auth standard). Signature HMAC-SHA512\nvalidée par validateVonageWebhook (MED-003). Toujours retourne 200 même\nen erreur interne — l'échec est loggé pour éviter retry boucle.\n",
+        "tags": [
+          "Webhooks"
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "msisdn": {
+                    "type": "string",
+                    "description": "Numéro destination"
+                  },
+                  "to": {
+                    "type": "string"
+                  },
+                  "network-code": {
+                    "type": "string"
+                  },
+                  "messageId": {
+                    "type": "string"
+                  },
+                  "price": {
+                    "type": "string"
+                  },
+                  "status": {
+                    "type": "string",
+                    "enum": [
+                      "delivered",
+                      "failed",
+                      "expired",
+                      "accepted",
+                      "buffered",
+                      "unknown",
+                      "rejected"
+                    ]
+                  },
+                  "scts": {
+                    "type": "string"
+                  },
+                  "err-code": {
+                    "type": "string"
+                  },
+                  "message-timestamp": {
+                    "type": "string"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Toujours 200 (success ou erreur silencieuse)"
+          },
+          "401": {
+            "description": "Signature HMAC invalide (MED-003)"
+          },
+          "429": {
+            "description": "Rate limit (100/min prod)"
+          }
+        }
+      }
+    },
+    "/health": {
+      "get": {
+        "summary": "Liveness probe (Vague 9)",
+        "description": "Endpoint public sans auth. Toujours 200 si le process Node tourne.",
+        "tags": [
+          "Maintenance"
+        ],
+        "responses": {
+          "200": {
+            "description": "Service vivant",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "status": {
+                      "type": "string",
+                      "example": "ok"
+                    },
+                    "service": {
+                      "type": "string",
+                      "example": "qvarry-api"
+                    },
+                    "timestamp": {
+                      "type": "string",
+                      "format": "date-time"
+                    },
+                    "uptime": {
+                      "type": "number",
+                      "description": "secondes depuis boot"
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/health/ready": {
+      "get": {
+        "summary": "Readiness probe (Vague 9)",
+        "description": "Public sans auth. 200 si DB connectée + Redis joignable (ou désactivé en dev).\n503 si l'un des checks échoue. Utilisé par load balancers (K8s, AWS ELB).\n",
+        "tags": [
+          "Maintenance"
+        ],
+        "responses": {
+          "200": {
+            "description": "Service prêt à servir du trafic"
+          },
+          "503": {
+            "description": "Au moins un check critique en échec (DB ou Redis indispo)"
+          }
+        }
+      }
+    }
+  }
+}

@@ -18,6 +18,7 @@
     "verify:obfuscation": "node scripts/verify-obfuscation.js",
     "verify:obfuscation:verbose": "node scripts/verify-obfuscation.js -v",
     "verify:obfuscation:full": "node scripts/verify-obfuscation.js -v -s",
+    "export:openapi": "ts-node scripts/export-openapi.ts",
     "type-check": "tsc --noEmit",
     "type-check:watch": "tsc --noEmit --watch",
     "verify": "npm run type-check",
