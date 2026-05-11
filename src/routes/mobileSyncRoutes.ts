@@ -37,6 +37,83 @@ const mobileSyncMiddleware = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * @swagger
+ * /mobile/sync:
+ *   get:
+ *     summary: Sync incrémentale offline-first (pull)
+ *     description: |
+ *       §V0 — Retourne `{points,fiches,lists,sosContacts}` créés/modifiés/supprimés
+ *       depuis `since`. Si `since` absent → full sync. Sortie chiffrée côté serveur
+ *       puis déchiffrée côté client (clé dérivée bcrypt session).
+ *     tags: [Mobile, Sync]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: since
+ *         schema: { type: string, format: date-time }
+ *     responses:
+ *       200: { description: Données delta + lastSyncDate }
+ *       400: { description: INVALID_DATE_FORMAT }
+ *   post:
+ *     summary: Sync incrémentale offline-first (push)
+ *     description: |
+ *       Push des changements offline. Détecte les conflits via version
+ *       (optimistic concurrency). Retourne idMapping localId → serverId.
+ *     tags: [Mobile, Sync]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [changes]
+ *             properties:
+ *               changes:
+ *                 type: array
+ *                 items:
+ *                   type: object
+ *                   required: [type, action, timestamp]
+ *                   properties:
+ *                     type: { type: string, enum: [point, fiche, list, sosContact] }
+ *                     action: { type: string, enum: [create, update, delete] }
+ *                     id: { type: string }
+ *                     localId: { type: string }
+ *                     data: { type: object }
+ *                     timestamp: { type: string, format: date-time }
+ *     responses:
+ *       200:
+ *         description: Sync ok
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 synced: { type: array, items: { type: object } }
+ *                 conflicts: { type: array, items: { type: object } }
+ *                 idMapping: { type: object, additionalProperties: { type: string } }
+ *
+ * /mobile/sync/status:
+ *   get:
+ *     summary: Check rapide changes dispo (badge)
+ *     tags: [Mobile, Sync]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: query
+ *         name: since
+ *         required: true
+ *         schema: { type: string, format: date-time }
+ *     responses: { 200: { description: hasChanges + breakdown } }
+ *
+ * /mobile/data/full:
+ *   get:
+ *     summary: Download complet (nouveau device, reset, recovery)
+ *     tags: [Mobile, Sync]
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: Toutes les données chiffrées } }
+ */
+
+/**
  * GET /api/mobile/sync
  * Synchronisation incrémentale des données
  *

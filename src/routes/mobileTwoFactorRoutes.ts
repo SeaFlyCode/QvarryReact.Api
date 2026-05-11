@@ -38,6 +38,89 @@ function markAsMobile(req: Request, _res: Response, next: NextFunction) {
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * @swagger
+ * /mobile/2fa/status:
+ *   get:
+ *     summary: Statut 2FA mobile
+ *     tags: [Mobile, 2FA]
+ *     security: [{ bearerAuth: [] }]
+ *     responses:
+ *       200:
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 enabled: { type: boolean }
+ *                 confirmedAt: { type: string, format: date-time, nullable: true }
+ *                 recoveryCodesRemaining: { type: integer }
+ *
+ * /mobile/2fa/setup:
+ *   post:
+ *     summary: Initie config 2FA mobile (QR + secret)
+ *     tags: [Mobile, 2FA]
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: '{ qrCode (data:image/png;base64), secret }' } }
+ *
+ * /mobile/2fa/verify-setup:
+ *   post:
+ *     summary: Valide config 2FA + retourne recovery codes
+ *     tags: [Mobile, 2FA]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [code], properties: { code: { type: string, minLength: 6, maxLength: 6 } } }
+ *     responses: { 200: { description: '{ recoveryCodes: string[10] }' } }
+ *
+ * /mobile/2fa/disable:
+ *   post:
+ *     summary: Désactive 2FA mobile
+ *     tags: [Mobile, 2FA]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [password], properties: { password: { type: string }, code: { type: string } } }
+ *     responses: { 200: { description: Désactivée } }
+ *
+ * /mobile/2fa/regenerate-codes:
+ *   post:
+ *     summary: Régénère les recovery codes
+ *     tags: [Mobile, 2FA]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [password], properties: { password: { type: string } } }
+ *     responses: { 200: { description: '{ recoveryCodes: string[10] }' } }
+ *
+ * /mobile/2fa/verify-login:
+ *   post:
+ *     summary: Complète le flow login 2FA (alias handler unifié)
+ *     description: §V1 — Parité avec POST /auth/complete-2fa.
+ *     tags: [Mobile, 2FA]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [tempToken, code]
+ *             properties:
+ *               tempToken: { type: string }
+ *               code: { type: string }
+ *               isRecoveryCode: { type: boolean }
+ *     responses:
+ *       200: { $ref: '#/components/schemas/AuthLoginResponse' }
+ *       400: { description: Code invalide }
+ *       429: { description: Rate limit (Retry-After) }
+ */
+
+/**
  * GET /api/mobile/2fa/status
  * Obtenir le statut de la 2FA pour l'utilisateur connecté
  *

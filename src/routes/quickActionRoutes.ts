@@ -22,6 +22,74 @@ const router = express.Router();
 // Toutes les routes nécessitent une authentification standard JWT
 router.use(authMiddleware);
 
+/**
+ * @swagger
+ * /quick-action/sos/confirm-safe:
+ *   post:
+ *     summary: Action notif "Je suis en sécurité" (bouton push iOS/Android)
+ *     description: |
+ *       Endpoint invoqué directement depuis la notif (action button) même si
+ *       l'app est killed. Tant que le JWT SecureStore est valide, on résout
+ *       la session sans ouvrir l'app. Si JWT expiré → fallback ouverture app
+ *       (handled mobile-side).
+ *     tags: [QuickAction]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [sessionId], properties: { sessionId: { type: string } } }
+ *     responses: { 200: { description: Session résolue } }
+ *
+ * /quick-action/contact/accept:
+ *   post:
+ *     summary: Action notif "Accepter" demande contact
+ *     tags: [QuickAction]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [contactId], properties: { contactId: { type: string } } }
+ *     responses: { 200: { description: Acceptée } }
+ *
+ * /quick-action/contact/refuse:
+ *   post:
+ *     summary: Action notif "Refuser" demande contact
+ *     tags: [QuickAction]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [contactId], properties: { contactId: { type: string } } }
+ *     responses: { 200: { description: Refusée } }
+ *
+ * /quick-action/share/accept:
+ *   post:
+ *     summary: Action notif "Accepter" partage de données
+ *     tags: [QuickAction]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [shareId], properties: { shareId: { type: string } } }
+ *     responses: { 200: { description: Accepté } }
+ *
+ * /quick-action/share/refuse:
+ *   post:
+ *     summary: Action notif "Refuser" partage de données
+ *     tags: [QuickAction]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [shareId], properties: { shareId: { type: string } } }
+ *     responses: { 200: { description: Refusé } }
+ */
+
 // ─── SOS ─────────────────────────────────────────────────────────────────
 router.post("/sos/confirm-safe", handleQuickActionSosConfirmSafe);
 

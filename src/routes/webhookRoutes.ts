@@ -38,6 +38,38 @@ const webhookLimiter = rateLimit({
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * @swagger
+ * /webhooks/vonage/delivery:
+ *   post:
+ *     summary: Webhook delivery receipt SMS Vonage
+ *     description: |
+ *       Endpoint appelé par Vonage (pas d'auth standard). Signature HMAC-SHA512
+ *       validée par validateVonageWebhook (MED-003). Toujours retourne 200 même
+ *       en erreur interne — l'échec est loggé pour éviter retry boucle.
+ *     tags: [Webhooks]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             properties:
+ *               msisdn: { type: string, description: Numéro destination }
+ *               to: { type: string }
+ *               network-code: { type: string }
+ *               messageId: { type: string }
+ *               price: { type: string }
+ *               status: { type: string, enum: [delivered, failed, expired, accepted, buffered, unknown, rejected] }
+ *               scts: { type: string }
+ *               err-code: { type: string }
+ *               message-timestamp: { type: string }
+ *     responses:
+ *       200: { description: Toujours 200 (success ou erreur silencieuse) }
+ *       401: { description: Signature HMAC invalide (MED-003) }
+ *       429: { description: Rate limit (100/min prod) }
+ */
+
+/**
  * POST /api/webhooks/vonage/delivery
  * Recevoir une confirmation de livraison SMS de Vonage
  *

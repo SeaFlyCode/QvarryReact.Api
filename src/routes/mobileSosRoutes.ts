@@ -262,6 +262,180 @@ const sosActivateRateLimiter = async (
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * @swagger
+ * /mobile/sos/activate:
+ *   post:
+ *     summary: Active une session SOS (dead-man's-switch)
+ *     description: |
+ *       Crée une session SOS qui expirera après `expectedDuration`. Heartbeat
+ *       toutes les 60s pour la prolonger. Sans heartbeat → escalade auto
+ *       (Stage 1 push contacts, Stage 2 SMS, Stage 3 secours). Voir
+ *       sosEscalationService cron 60s.
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [expectedDuration]
+ *             properties:
+ *               expectedDuration: { type: integer, minimum: 15, maximum: 480 }
+ *               note: { type: string }
+ *               siteName: { type: string }
+ *               zone: { type: string }
+ *               depth: { type: integer }
+ *               lat: { type: number }
+ *               lng: { type: number }
+ *               accuracy: { type: number }
+ *               participantIds: { type: array, items: { type: string } }
+ *               sessionContacts:
+ *                 type: object
+ *                 properties:
+ *                   permanentContactIds: { type: array, items: { type: string } }
+ *                   additionalContacts: { type: array, items: { type: object } }
+ *     responses:
+ *       201: { description: Session créée }
+ *       409: { description: SESSION_ALREADY_ACTIVE }
+ *       429: { description: Rate limit Redis }
+ *
+ * /mobile/sos/heartbeat:
+ *   post:
+ *     summary: Heartbeat (signe de vie, +15min auto)
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       content:
+ *         application/json:
+ *           schema: { type: object, properties: { sessionId: { type: string }, lat: { type: number }, lng: { type: number }, accuracy: { type: number } } }
+ *     responses:
+ *       200: { description: Timer prolongé + heartbeatCount }
+ *       404: { description: NO_ACTIVE_SESSION }
+ *
+ * /mobile/sos/extend:
+ *   post:
+ *     summary: Prolongation manuelle (15-480 min)
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: Timer étendu } }
+ *
+ * /mobile/sos/deactivate:
+ *   post:
+ *     summary: Désactivation manuelle (user en sécurité)
+ *     description: scope=self (quitte seul) | all (résout pour tous, défaut).
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: Session résolue } }
+ *
+ * /mobile/sos/status:
+ *   get:
+ *     summary: Statut session active
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: '{ active, session?, isGroupSession, participants[] }' } }
+ *
+ * /mobile/sos/history:
+ *   get:
+ *     summary: Historique sessions + stats agrégées
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: query, name: limit, schema: { type: integer, maximum: 50, default: 20 } }]
+ *     responses: { 200: { description: Sessions enrichies actualDuration/durationOverrun + stats } }
+ *
+ * /mobile/sos/active:
+ *   get:
+ *     summary: Sessions visibles en escalade (dashboard cross-user)
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: Sessions d'autres users en stage 1+ } }
+ *
+ * /mobile/sos/{sessionId}/deactivate:
+ *   post:
+ *     summary: Désactive une session via path param
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Résolue } }
+ *
+ * /mobile/sos/{sessionId}/confirm-safe:
+ *   post:
+ *     summary: Confirme qu'un autre user est en sécurité (cross-user)
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: sessionId, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Résolue par tiers } }
+ *
+ * /mobile/sos/contacts:
+ *   get:
+ *     summary: Liste contacts d'urgence
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     responses: { 200: { description: Liste (max 5) } }
+ *   post:
+ *     summary: Crée un contact d'urgence (max 5, phone E.164)
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [name, phone]
+ *             properties:
+ *               name: { type: string }
+ *               phone: { type: string, pattern: '^\\+[1-9][0-9]{1,14}$' }
+ *               relationship: { type: string }
+ *               isDefault: { type: boolean }
+ *     responses:
+ *       201: { description: Créé }
+ *       400: { description: MAX_CONTACTS_REACHED ou INVALID_PHONE_FORMAT }
+ *       409: { description: DUPLICATE_PHONE }
+ *
+ * /mobile/sos/contacts/{id}:
+ *   put:
+ *     summary: Modifie un contact d'urgence
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Mis à jour } }
+ *   delete:
+ *     summary: Supprime un contact d'urgence
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters: [{ in: path, name: id, required: true, schema: { type: string } }]
+ *     responses: { 200: { description: Supprimé } }
+ *
+ * /mobile/sos/add-participant:
+ *   post:
+ *     summary: Ajoute un participant à une session de groupe
+ *     description: Seul le créateur peut ajouter.
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [targetUserId], properties: { targetUserId: { type: string }, sessionId: { type: string } } }
+ *     responses:
+ *       200: { description: Ajouté }
+ *       403: { description: FORBIDDEN (pas créateur) }
+ *
+ * /mobile/sos/remove-participant:
+ *   post:
+ *     summary: Retire un participant (dernier → session résolue)
+ *     tags: [Mobile, SOS]
+ *     security: [{ bearerAuth: [] }]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema: { type: object, required: [targetUserId], properties: { targetUserId: { type: string }, sessionId: { type: string } } }
+ *     responses: { 200: { description: Retiré } }
+ */
+
+/**
  * POST /api/mobile/sos/activate
  * Activer une session SOS avant de descendre sous terre
  *

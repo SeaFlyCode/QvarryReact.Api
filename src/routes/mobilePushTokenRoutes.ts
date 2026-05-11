@@ -39,6 +39,61 @@ const mobilePushTokenMiddleware = [
 // ═══════════════════════════════════════════════════════════════════════════
 
 /**
+ * @swagger
+ * /mobile/push-tokens:
+ *   post:
+ *     summary: Enregistre/met à jour un push token FCM ou Expo
+ *     description: |
+ *       Upsert par (userId, deviceId). Utilisé par notificationsService pour
+ *       envoyer les push P0/P1/P2 (auth_revoked, contact_request, share_received…).
+ *     tags: [Mobile, Notifications]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: header
+ *         name: X-Platform
+ *         required: true
+ *         schema: { type: string, enum: [ios, android] }
+ *       - in: header
+ *         name: X-Device-ID
+ *         required: true
+ *         schema: { type: string }
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token]
+ *             properties:
+ *               token: { type: string, example: 'ExponentPushToken[xxxx]' }
+ *               deviceInfo:
+ *                 type: object
+ *                 properties:
+ *                   model: { type: string }
+ *                   osVersion: { type: string }
+ *                   appVersion: { type: string }
+ *     responses:
+ *       200: { description: Token enregistré }
+ *       400: { description: MISSING_TOKEN ou INVALID_TOKEN_FORMAT }
+ *   delete:
+ *     summary: Supprime le push token (logout)
+ *     tags: [Mobile, Notifications]
+ *     security: [{ bearerAuth: [] }]
+ *     parameters:
+ *       - in: header
+ *         name: X-Platform
+ *         required: true
+ *         schema: { type: string, enum: [ios, android] }
+ *       - in: header
+ *         name: X-Device-ID
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200: { description: Supprimé }
+ *       404: { description: TOKEN_NOT_FOUND }
+ */
+
+/**
  * POST /api/mobile/push-tokens
  * Enregistrer ou mettre à jour un token de notification push
  *
