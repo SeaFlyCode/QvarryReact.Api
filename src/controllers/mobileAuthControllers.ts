@@ -17,7 +17,7 @@ import { redisSessionService } from "../services/redisSessionService";
 import { auditService } from "../services/auditService";
 import { decrypt, encrypt, hashEmail } from "../utils/masterEncryptionUtils";
 import { validatePasswordStrength } from "../utils/passwordUtils";
-import { validateEmail } from "../utils/emailUtils";
+import { validateEmail, EMAIL_REGEX } from "../utils/emailUtils";
 import { generateDeviceFingerprint } from "../utils/deviceFingerprint";
 import {
   sendWelcomeEmail,
@@ -77,8 +77,7 @@ export async function handleMobileLogin(req: Request, res: Response) {
       });
     }
 
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!EMAIL_REGEX.test(email)) {
       return res.status(400).json({
         error: "Format d'email invalide.",
         code: "INVALID_EMAIL_FORMAT",

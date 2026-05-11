@@ -40,6 +40,7 @@ import { serializeUserForApi } from "../../utils/userSerializer";
 import { sendForbidden } from "../../utils/authErrors";
 import { logger } from "../../services/loggerService";
 import { setRequestContext } from "../../middlewares/correlationMiddleware";
+import { EMAIL_REGEX } from "../../utils/emailUtils";
 
 import UserModel from "../../models/users";
 import MaintenanceModel from "../../models/maintenance";
@@ -59,7 +60,7 @@ const unifiedAuthLogger = logger.child({ service: "auth-unified" });
 
 const DUMMY_HASH =
   "$2b$12$LQv3c1yqBWVHxkd0LHAkCOYz6TtxMQJqhN8/X4.KPYWxv0Y2dwzOe";
-const EMAIL_REGEX = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+// EMAIL_REGEX importé depuis utils/emailUtils (Phase H §5.x — source unique).
 
 function getJwtExpiresInSeconds(): number {
   return (

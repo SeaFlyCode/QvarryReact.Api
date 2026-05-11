@@ -145,6 +145,7 @@ import { vonageService } from "./services/vonageService";
 import { webSocketService } from "./services/webSocketService";
 import { redisPubSubService } from "./services/redisPubSubService";
 import { webSocketReconnectionService } from "./services/webSocketReconnectionService";
+import { GRACEFUL_SHUTDOWN_TIMEOUT_MS } from "./config/shutdownConfig";
 
 // Initialiser Express
 const app = express();
@@ -1390,11 +1391,13 @@ app.use("/api", generalLimiter);
         });
       });
 
-      // Forcer l'arrêt après 10 secondes
+      // Forcer l'arrêt après timeout (par défaut 10s — cf. shutdownConfig.ts)
       setTimeout(() => {
-        serverLogger.error("Arrêt forcé après timeout");
+        serverLogger.error("Arrêt forcé après timeout", {
+          timeoutMs: GRACEFUL_SHUTDOWN_TIMEOUT_MS,
+        });
         process.exit(1);
-      }, 10000);
+      }, GRACEFUL_SHUTDOWN_TIMEOUT_MS);
     };
 
     process.on("SIGTERM", () => gracefulShutdown("SIGTERM"));

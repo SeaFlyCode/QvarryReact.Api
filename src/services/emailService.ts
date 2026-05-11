@@ -31,7 +31,8 @@ export type EmailTemplate =
   | "account-approved"
   | "account-rejected"
   | "admin-pending-validation"
-  | "sos-admin-alert";
+  | "sos-admin-alert"
+  | "totp-migration";
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SYSTÈME DE DÉDUPLICATION DES EMAILS
@@ -272,6 +273,8 @@ const getSubjectForTemplate = (
     "admin-pending-validation":
       "👤 Nouveau compte en attente de validation - QVARRY",
     "sos-admin-alert": `🆘 Alerte SOS ${variables.EVENT_TYPE || "CRITIQUE"} - QVARRY`,
+    "totp-migration":
+      "Action requise — Reconfigurez votre authentification 2FA - QVARRY",
   };
 
   return subjects[template] || "Notification QVARRY";
@@ -671,6 +674,30 @@ export const sendAccountRejectedEmail = async (
 };
 
 /**
+ * Envoie un email à l'utilisateur après migration TOTP (algo 2FA upgradé).
+ * Best-effort : si l'envoi échoue, la migration ne doit PAS être bloquée.
+ *
+ * @param to Adresse email destinataire (déchiffrée)
+ * @param userName Prénom/nom affiché dans l'email
+ */
+export const sendTotpMigrationEmail = async (
+  to: string,
+  userName: string,
+): Promise<boolean> => {
+  const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
+  return sendEmail({
+    to,
+    subject:
+      "Action requise — Reconfigurez votre authentification 2FA - QVARRY",
+    template: "totp-migration",
+    variables: {
+      USER_NAME: userName,
+      SECURE_ACCOUNT_LINK: `${frontendUrl}/profil/security`,
+    },
+  });
+};
+
+/**
  * Envoie un email aux admins pour un nouveau compte en attente de validation
  */
 export const sendAdminPendingValidationEmail = async (
@@ -716,6 +743,7 @@ export default {
   sendAccountApprovedEmail,
   sendAccountRejectedEmail,
   sendAdminPendingValidationEmail,
+  sendTotpMigrationEmail,
   generateVerificationCode,
   formatEmailDate,
   clearTemplateCache,

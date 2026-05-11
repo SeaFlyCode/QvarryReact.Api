@@ -10,6 +10,7 @@ import Redis, { Cluster } from "ioredis";
 import { logger } from "./loggerService";
 import UserModel from "../models/users";
 import { decrypt, encrypt } from "../utils/masterEncryptionUtils";
+import { sendTotpMigrationEmail } from "./emailService";
 
 const migrationLogger = logger.child({ service: "totp-migration" });
 
@@ -319,7 +320,28 @@ export async function batchMigrateUsers(): Promise<{
         userEmail: userEmail.substring(0, 3) + "***",
       });
 
-      // TODO: Envoyer email à l'utilisateur pour le notifier
+      // Phase H §5.x : notifier l'utilisateur que son authenticator doit être
+      // reconfiguré. Best-effort : un échec d'envoi ne doit PAS bloquer la
+      // migration (les codes restent valides en attendant le re-setup).
+      try {
+        const userName = decrypt(user.name);
+        const emailSent = await sendTotpMigrationEmail(userEmail, userName);
+        if (!emailSent) {
+          migrationLogger.warn(
+            "TOTP migration email not sent (transport returned false)",
+            { userId },
+          );
+        }
+      } catch (emailError) {
+        migrationLogger.warn("Failed to send TOTP migration email", {
+          userId,
+          error:
+            emailError instanceof Error
+              ? emailError.message
+              : String(emailError),
+        });
+      }
+
       // TODO: Fournir les nouveaux codes de backup de manière sécurisée
     } catch (error) {
       stats.failed++;

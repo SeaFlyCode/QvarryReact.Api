@@ -304,6 +304,7 @@ router.post(
   "/:pointId/photo",
   appCheckMiddleware,
   authMiddleware,
+  validateObjectId("pointId"),
   uploadRateLimit,
   upload.single("photo"),
   validateImageUpload,
@@ -338,7 +339,12 @@ router.post(
  *       404:
  *         description: Photo non trouvée
  */
-router.get("/:pointId/photo", authMiddleware, getPointPhoto);
+router.get(
+  "/:pointId/photo",
+  authMiddleware,
+  validateObjectId("pointId"),
+  getPointPhoto,
+);
 
 /**
  * @swagger
@@ -362,7 +368,12 @@ router.get("/:pointId/photo", authMiddleware, getPointPhoto);
  *       404:
  *         description: Photo non trouvée
  */
-router.delete("/:pointId/photo", authMiddleware, deletePointPhoto);
+router.delete(
+  "/:pointId/photo",
+  authMiddleware,
+  validateObjectId("pointId"),
+  deletePointPhoto,
+);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // INFORMATIONS DE STOCKAGE UTILISATEUR

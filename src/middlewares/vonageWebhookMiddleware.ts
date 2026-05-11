@@ -48,8 +48,12 @@ export const validateVonageWebhook = async (
       });
     }
 
-    // 2. Récupérer le secret Vonage
+    // 2. Récupérer le(s) secret(s) Vonage
+    // Phase H §5.x : support d'une clé fallback pour rotation gracieuse.
+    // Pendant la rotation, on configure VONAGE_SIGNATURE_SECRET_FALLBACK avec
+    // l'ANCIENNE clé. Une fois tous les emitters basculés, on retire la fallback.
     const secret = process.env.VONAGE_SIGNATURE_SECRET;
+    const fallbackSecret = process.env.VONAGE_SIGNATURE_SECRET_FALLBACK;
 
     // ✅ FIX: Fail-secure si le secret n'est pas configuré
     if (!secret) {
@@ -84,56 +88,62 @@ export const validateVonageWebhook = async (
     // Vonage utilise généralement le body brut pour la signature
     const payload = JSON.stringify(req.body);
 
-    // 4. Calculer HMAC-SHA512
-    const expectedSignature = crypto
-      .createHmac("sha512", secret)
-      .update(payload)
-      .digest("hex");
-
-    // 5. Comparaison timing-safe
     const bufferA = Buffer.from(signature);
-    const bufferB = Buffer.from(expectedSignature);
 
-    // Vérifier longueurs
-    if (bufferA.length !== bufferB.length) {
-      // Faire quand même une comparaison timing-safe avec un buffer factice
-      const dummyBuffer = Buffer.alloc(bufferA.length);
-      try {
-        crypto.timingSafeEqual(bufferA, dummyBuffer);
-      } catch {
-        // Ignore
+    // Helper : compare signature reçue à une signature calculée avec une clé donnée.
+    // Retourne true si match (longueur OK + timing-safe equal).
+    const verifyWithSecret = (key: string): boolean => {
+      const expected = crypto
+        .createHmac("sha512", key)
+        .update(payload)
+        .digest("hex");
+      const bufferB = Buffer.from(expected);
+      if (bufferA.length !== bufferB.length) {
+        return false;
+      }
+      return crypto.timingSafeEqual(bufferA, bufferB);
+    };
+
+    // 4. Tester d'abord la clé primaire
+    const matchedPrimary = verifyWithSecret(secret);
+
+    if (!matchedPrimary) {
+      // 5. Si fallback configuré, tester avec
+      const matchedFallback = fallbackSecret
+        ? verifyWithSecret(fallbackSecret)
+        : false;
+
+      if (matchedFallback) {
+        // ✅ Fallback OK : log info pour alerter ops à finir la rotation
+        vonageWebhookLogger.info(
+          "vonage_signature_fallback_used — terminer la rotation de clé",
+          {
+            ip: anonymizeIp(req.ip || ""),
+            path: req.path,
+          },
+        );
+
+        await auditService.log({
+          action: "VONAGE_SIGNATURE_FALLBACK_USED",
+          level: "warning",
+          ipAddress: req.ip,
+          userAgent: req.headers["user-agent"],
+          details: {
+            path: req.path,
+            method: req.method,
+            note: "Webhook validé avec la clé fallback. Finaliser la rotation de VONAGE_SIGNATURE_SECRET.",
+          },
+        });
+
+        // Signature valide via fallback → continuer
+        return next();
       }
 
-      vonageWebhookLogger.warn("Invalid Vonage webhook signature (length)", {
-        ip: anonymizeIp(req.ip || ""),
-        path: req.path,
-        expectedLength: bufferB.length,
-        receivedLength: bufferA.length,
-      });
-
-      await auditService.log({
-        action: "VONAGE_WEBHOOK_INVALID_SIGNATURE",
-        level: "warning",
-        ipAddress: req.ip,
-        userAgent: req.headers["user-agent"],
-        details: {
-          path: req.path,
-          method: req.method,
-          reason: "signature_length_mismatch",
-        },
-      });
-
-      return res.status(403).json({
-        error: "Invalid signature",
-        code: "VONAGE_WEBHOOK_INVALID_SIGNATURE",
-      });
-    }
-
-    // Comparaison timing-safe des signatures
-    if (!crypto.timingSafeEqual(bufferA, bufferB)) {
+      // ❌ Les 2 ont échoué (ou seulement la primaire si pas de fallback)
       vonageWebhookLogger.warn("Invalid Vonage webhook signature", {
         ip: anonymizeIp(req.ip || ""),
         path: req.path,
+        fallbackConfigured: !!fallbackSecret,
       });
 
       await auditService.log({
@@ -144,7 +154,9 @@ export const validateVonageWebhook = async (
         details: {
           path: req.path,
           method: req.method,
-          reason: "signature_mismatch",
+          reason: fallbackSecret
+            ? "signature_mismatch_primary_and_fallback"
+            : "signature_mismatch",
         },
       });
 
@@ -154,7 +166,7 @@ export const validateVonageWebhook = async (
       });
     }
 
-    // 6. Signature valide → continuer
+    // 6. Signature primaire valide → continuer
     vonageWebhookLogger.debug("Vonage webhook signature validée", {
       path: req.path,
     });

@@ -1,0 +1,41 @@
+<!-- Template: Notification migration TOTP (algorithme 2FA mis à jour) -->
+<!-- Variables: {{USER_NAME}}, {{SECURE_ACCOUNT_LINK}} -->
+
+<h1 class="greeting">Action requise — Reconfigurez votre 2FA 🔐</h1>
+
+<p class="text">
+    Bonjour {{USER_NAME}},
+</p>
+
+<p class="text">
+    Suite à une mise à jour de sécurité de QVARRY, l'algorithme utilisé
+    par votre authentification à deux facteurs (2FA) a été renforcé.
+</p>
+
+<div class="info-box">
+    <p class="info-box-title">📱 Ce que vous devez faire</p>
+    <p class="info-box-text">
+        Lors de votre prochaine connexion, vous serez invité à scanner
+        un nouveau QR code dans votre application d'authentification
+        (Google Authenticator, Authy, 1Password, etc.).
+        <br><br>
+        L'opération prend moins d'une minute.
+    </p>
+</div>
+
+<p class="text">
+    En attendant ce re-paramétrage, votre 2FA reste active : vos codes
+    actuels continuent de fonctionner pour vous connecter.
+</p>
+
+<div class="button-container">
+    <a href="{{SECURE_ACCOUNT_LINK}}" class="button">
+        🔧 Reconfigurer mon 2FA
+    </a>
+</div>
+
+<div class="security-notice">
+    <strong>🔒 Pourquoi ce changement ?</strong>
+    Nous renforçons en continu la sécurité de QVARRY. Cette migration
+    améliore la résistance de votre 2FA face aux attaques cryptographiques.
+</div>

@@ -35,6 +35,8 @@ import {
   WS_CLOSE_CODES,
   WS_CLOSE_REASONS,
 } from "../constants/wsCloseCodes";
+// Phase H §5.x : timeout shutdown centralisé
+import { WS_GRACEFUL_SHUTDOWN_TIMEOUT_MS } from "../config/shutdownConfig";
 
 /**
  * Ressources broadcastables via `sync_update`. Le client utilise ce champ
@@ -233,11 +235,8 @@ const WS_MESSAGE_ACK_TIMEOUT_MS = parseInt(
   10,
 );
 
-// PHASE 4: Timeout de shutdown gracieux
-const WS_GRACEFUL_SHUTDOWN_TIMEOUT_MS = parseInt(
-  process.env.WS_GRACEFUL_SHUTDOWN_TIMEOUT || "10000",
-  10,
-);
+// PHASE 4: Timeout de shutdown gracieux — centralisé dans
+// `src/config/shutdownConfig.ts` (Phase H §5.x).
 
 // ═══════════════════════════════════════════════════════════════════════════
 // PERF: HEARTBEAT ADAPTATIF SELON L'ACTIVITÉ

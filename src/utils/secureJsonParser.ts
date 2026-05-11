@@ -8,7 +8,6 @@
  * @security MED-007
  */
 
-import type { Request, Response, NextFunction } from "express";
 import secureJsonParse from "secure-json-parse";
 import { logger } from "../services/loggerService";
 
@@ -295,71 +294,6 @@ export function safeJsonStringify(
 }
 
 /**
- * Middleware Express pour sécuriser le body parsing JSON
- *
- * Remplace le body parser standard par une version sécurisée.
- * À utiliser avant les routes qui acceptent du JSON.
- *
- * @param options - Options de configuration
- * @returns Middleware Express
- *
- * @example
- * ```typescript
- * import express from 'express';
- * import { secureJsonBodyParser } from './utils/secureJsonParser';
- *
- * const app = express();
- *
- * // Remplace express.json()
- * app.use(secureJsonBodyParser({ maxDepth: 8, context: 'api' }));
- * ```
- */
-export function secureJsonBodyParser(options: SecureJsonParseOptions = {}) {
-  return (req: Request, res: Response, next: NextFunction) => {
-    if (req.headers["content-type"]?.includes("application/json")) {
-      let body = "";
-
-      req.on("data", (chunk: Buffer) => {
-        body += chunk.toString();
-      });
-
-      req.on("end", () => {
-        try {
-          req.body = safeJsonParse(body, {
-            ...options,
-            context: options.context || `${req.method} ${req.path}`,
-          });
-          next();
-        } catch (error) {
-          if (error instanceof PrototypePollutionError) {
-            res.status(400).json({
-              error: "Bad Request",
-              message: "Requête rejetée pour raisons de sécurité",
-              code: "PROTOTYPE_POLLUTION_DETECTED",
-            });
-          } else {
-            res.status(400).json({
-              error: "Bad Request",
-              message: "JSON invalide",
-              code: "INVALID_JSON",
-            });
-          }
-        }
-      });
-
-      req.on("error", (_error: Error) => {
-        res.status(500).json({
-          error: "Internal Server Error",
-          message: "Erreur lors du parsing du body",
-        });
-      });
-    } else {
-      next();
-    }
-  };
-}
-
-/**
  * Utilitaire pour vérifier si une chaîne contient des patterns suspects
  * (sans parser le JSON)
  *
@@ -382,7 +316,6 @@ export function containsSuspiciousPatterns(text: string): boolean {
 export default {
   safeJsonParse,
   safeJsonStringify,
-  secureJsonBodyParser,
   containsSuspiciousPatterns,
   PrototypePollutionError,
 };

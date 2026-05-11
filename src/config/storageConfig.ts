@@ -38,6 +38,16 @@ export const STORAGE_CONFIG = {
 } as const;
 
 /**
+ * Alias publics (Phase H §5.x) — source unique pour la taille max d'upload
+ * pré-compression, à utiliser dans les messages UI/erreur et les schémas.
+ *
+ * À préférer aux constantes dupliquées comme `10 * 1024 * 1024` ou
+ * `"10mb"` qui rendraient une modification de la limite incohérente.
+ */
+export const MAX_FILE_SIZE_BYTES = STORAGE_CONFIG.MAX_UPLOAD_SIZE_BYTES;
+export const MAX_FILE_SIZE_MB = STORAGE_CONFIG.MAX_UPLOAD_SIZE_MB;
+
+/**
  * Magic numbers pour validation stricte des MIME types
  * Utilisés pour détecter le vrai type de fichier indépendamment de l'extension
  */

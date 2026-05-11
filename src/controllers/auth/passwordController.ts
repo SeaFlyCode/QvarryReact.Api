@@ -55,7 +55,8 @@ export async function handleForgotPassword(req: Request, res: Response) {
     const resetExpires = new Date(Date.now() + 60 * 60 * 1000); // 1 heure
 
     // Stocker le hash bcrypt du code (jamais en clair) — token à usage unique
-    user.reset_password_token = await bcrypt.hash(resetCode, 10);
+    // Rounds = 12 : aligné sur la baseline projet (≥ 12). Cost ~250 ms sur Node 20.
+    user.reset_password_token = await bcrypt.hash(resetCode, 12);
     user.reset_password_expires = resetExpires;
     await user.save();
 

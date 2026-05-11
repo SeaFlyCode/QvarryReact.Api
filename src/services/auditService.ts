@@ -5,6 +5,7 @@ import crypto from "crypto";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
 import { logger } from "./loggerService";
 import { safeJsonParse } from "../utils/secureJsonParser";
+import { AUDIT_FLUSH_TIMEOUT_MS } from "../config/shutdownConfig";
 
 const auditLogger = logger.child({ service: "audit" });
 
@@ -70,7 +71,9 @@ interface PendingAuditDoc {
 const BATCH_FLUSH_INTERVAL_MS = 5_000;
 const BATCH_MAX_SIZE = 100;
 const BATCH_MAX_RETRIES = 3;
-const SHUTDOWN_FLUSH_TIMEOUT_MS = 5_000;
+// Phase H §5.x : timeout flush au shutdown — centralisé dans
+// `src/config/shutdownConfig.ts` (paramétrable via AUDIT_FLUSH_TIMEOUT_MS).
+const SHUTDOWN_FLUSH_TIMEOUT_MS = AUDIT_FLUSH_TIMEOUT_MS;
 
 class AuditService {
   /**

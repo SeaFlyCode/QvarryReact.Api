@@ -34,6 +34,7 @@ import {
 import { logger } from "../../services/loggerService";
 import { setRequestContext } from "../../middlewares/correlationMiddleware";
 import { buildForbidden } from "../../utils/authErrors";
+import { EMAIL_REGEX } from "../../utils/emailUtils";
 
 // SEC-044: Champs sensibles à exclure des réponses /auth/me
 // §4.1.5 B: utilise SENSITIVE_FIELDS canoniques de userSerializer (cohérence cross-repo).
@@ -65,8 +66,7 @@ export async function handleLoginUser(req: Request, res: Response) {
     }
 
     // Validation du format email
-    const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-    if (!emailRegex.test(email)) {
+    if (!EMAIL_REGEX.test(email)) {
       loginLogger.warn("[AUTH] Format d'email invalide", {
         email: maskEmail(email),
       });
