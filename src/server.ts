@@ -1349,6 +1349,24 @@ app.use("/api", generalLimiter);
       }
 
       // ═══════════════════════════════════════════════════════════════════════
+      // AUDIT BATCHER: flush du buffer pending avant arrêt (P1 DoS fix Phase G)
+      // ═══════════════════════════════════════════════════════════════════════
+      try {
+        const { auditService: auditSvc } = await import(
+          "./services/auditService"
+        );
+        await auditSvc.shutdown();
+      } catch (auditErr) {
+        serverLogger.warn(
+          "Erreur lors du flush audit batch durant le shutdown (ignoré)",
+          {
+            error:
+              auditErr instanceof Error ? auditErr.message : String(auditErr),
+          },
+        );
+      }
+
+      // ═══════════════════════════════════════════════════════════════════════
       // Continuer avec l'arrêt normal
       // ═══════════════════════════════════════════════════════════════════════
 
