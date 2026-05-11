@@ -201,7 +201,7 @@ export class CircuitBreakerFactory {
    * Retourne les stats de tous les circuit breakers
    */
   static getAllStats() {
-    const stats: Record<string, any> = {};
+    const stats: Record<string, ReturnType<CircuitBreaker["getStats"]>> = {};
     Array.from(this.breakers.entries()).forEach(([name, breaker]) => {
       stats[name] = breaker.getStats();
     });

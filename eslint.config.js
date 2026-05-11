@@ -40,10 +40,16 @@ module.exports = [
       "no-unused-expressions": "off",
 
       // TypeScript specific
-      // NOTE (audit Phase E §5.3) : tentative de passage en `error` a remonté
-      // 684 violations (~660 `no-explicit-any` + 24 `no-unused-vars`). Hors
-      // scope ROI haut — un chantier dédié est nécessaire pour les
-      // remplacer par `unknown` / types précis avant de monter la sévérité.
+      // NOTE (audit Phase E §5.3, Phase F §cleanup ciblé) :
+      // - Phase E : tentative de passage en `error` a remonté 684 violations
+      //   (~660 `no-explicit-any` + 24 `no-unused-vars`).
+      // - Phase F : cleanup ciblé sur les 5 top utils (secureJsonParser,
+      //   requestLogger, sanitizeUtils, userSerializer, circuitBreaker) →
+      //   baseline `no-explicit-any` 858 → 831 (-27, 1 seul disable justifié
+      //   sur le default generic public `safeJsonParse<T = any>`).
+      // - Reste 831 violations diffuses sur ~600 fichiers : un chantier
+      //   par couche (services/, controllers/, models/) est nécessaire
+      //   avant de monter la sévérité à `error`.
       "@typescript-eslint/no-unused-vars": [
         "warn",
         {

@@ -53,7 +53,7 @@ export interface ApiUser {
   is_admin_validated?: boolean;
   creation_date?: Date | string;
   last_connection?: Date | string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 /**
@@ -85,15 +85,24 @@ function safeDecrypt(value: unknown): string | undefined {
 /**
  * Convertit n'importe quelle représentation utilisateur (IUser doc, lean
  * object, plain object) en objet API-safe avec champs déchiffrés.
+ *
+ * Accepte `unknown` pour rester compatible avec les nombreux call-sites
+ * passant des `IUser` Mongoose, des objets `.lean()`, ou des plain objects.
  */
-export function serializeUserForApi(user: any): ApiUser {
-  if (!user) {
+export function serializeUserForApi(user: unknown): ApiUser {
+  if (!user || typeof user !== "object") {
     return { _id: "", name: "" };
   }
 
   // Normaliser : doc Mongoose → plain object
-  const raw =
-    typeof user.toObject === "function" ? user.toObject() : { ...user };
+  const userObj = user as { toObject?: () => Record<string, unknown> } & Record<
+    string,
+    unknown
+  >;
+  const raw: Record<string, unknown> =
+    typeof userObj.toObject === "function"
+      ? userObj.toObject()
+      : { ...userObj };
 
   // Filtrer les champs sensibles
   for (const field of SENSITIVE_FIELDS) {
@@ -114,7 +123,7 @@ export function serializeUserForApi(user: any): ApiUser {
 
   // Normaliser _id en string
   if (raw._id && typeof raw._id !== "string") {
-    raw._id = raw._id.toString();
+    raw._id = (raw._id as { toString: () => string }).toString();
   }
 
   // Garantir le contrat ApiUser
@@ -128,6 +137,6 @@ export function serializeUserForApi(user: any): ApiUser {
 /**
  * Variante batch pour mapper une liste d'utilisateurs.
  */
-export function serializeUsersForApi(users: any[]): ApiUser[] {
+export function serializeUsersForApi(users: unknown[]): ApiUser[] {
   return users.map((u) => serializeUserForApi(u));
 }

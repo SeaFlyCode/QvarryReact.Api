@@ -8,6 +8,7 @@
  * @security MED-007
  */
 
+import type { Request, Response, NextFunction } from "express";
 import secureJsonParse from "secure-json-parse";
 import { logger } from "../services/loggerService";
 
@@ -63,7 +64,7 @@ const DANGEROUS_KEYS_REGEX = /"(__proto__|constructor)"\s*:/gi;
  * @returns true si valide, false sinon
  */
 function validateDepth(
-  obj: any,
+  obj: unknown,
   maxDepth: number,
   currentDepth: number = 0,
 ): boolean {
@@ -79,7 +80,7 @@ function validateDepth(
     return obj.every((item) => validateDepth(item, maxDepth, currentDepth + 1));
   }
 
-  return Object.values(obj).every((value) =>
+  return Object.values(obj as Record<string, unknown>).every((value) =>
     validateDepth(value, maxDepth, currentDepth + 1),
   );
 }
@@ -91,7 +92,7 @@ function validateDepth(
  * @param path - Chemin actuel (usage interne)
  * @returns Liste des chemins vers les clés dangereuses
  */
-function findDangerousKeys(obj: any, path: string = ""): string[] {
+function findDangerousKeys(obj: unknown, path: string = ""): string[] {
   const found: string[] = [];
 
   if (obj === null || typeof obj !== "object") {
@@ -105,7 +106,8 @@ function findDangerousKeys(obj: any, path: string = ""): string[] {
     return found;
   }
 
-  for (const key of Object.keys(obj)) {
+  const record = obj as Record<string, unknown>;
+  for (const key of Object.keys(record)) {
     const currentPath = path ? `${path}.${key}` : key;
 
     // Vérifier si la clé elle-même est dangereuse
@@ -114,7 +116,7 @@ function findDangerousKeys(obj: any, path: string = ""): string[] {
     }
 
     // Vérifier récursivement les valeurs
-    found.push(...findDangerousKeys(obj[key], currentPath));
+    found.push(...findDangerousKeys(record[key], currentPath));
   }
 
   return found;
@@ -146,6 +148,7 @@ function findDangerousKeys(obj: any, path: string = ""): string[] {
  * const malicious = safeJsonParse('{"__proto__":{"isAdmin":true}}');
  * ```
  */
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function safeJsonParse<T = any>(
   text: string,
   options: SecureJsonParseOptions = {},
@@ -189,7 +192,9 @@ export function safeJsonParse<T = any>(
   }
 
   // Parse avec secure-json-parse (protection supplémentaire)
-  let parsed: any;
+  // `secure-json-parse` retourne un `unknown` après validation ; on cast côté
+  // appelant via le generic `<T>` au point de retour.
+  let parsed: unknown;
   try {
     parsed = secureJsonParse.parse(text);
   } catch (error) {
@@ -261,7 +266,10 @@ export function safeJsonParse<T = any>(
  * const jsonPretty = safeJsonStringify(data, 2); // Indenté
  * ```
  */
-export function safeJsonStringify(value: any, space?: number | string): string {
+export function safeJsonStringify(
+  value: unknown,
+  space?: number | string,
+): string {
   const seen = new WeakSet();
 
   return JSON.stringify(
@@ -307,7 +315,7 @@ export function safeJsonStringify(value: any, space?: number | string): string {
  * ```
  */
 export function secureJsonBodyParser(options: SecureJsonParseOptions = {}) {
-  return (req: any, res: any, next: any) => {
+  return (req: Request, res: Response, next: NextFunction) => {
     if (req.headers["content-type"]?.includes("application/json")) {
       let body = "";
 
@@ -339,7 +347,7 @@ export function secureJsonBodyParser(options: SecureJsonParseOptions = {}) {
         }
       });
 
-      req.on("error", (error: Error) => {
+      req.on("error", (_error: Error) => {
         res.status(500).json({
           error: "Internal Server Error",
           message: "Erreur lors du parsing du body",

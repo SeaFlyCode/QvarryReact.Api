@@ -1,7 +1,7 @@
 // src/utils/requestLogger.ts
 // Utilitaire pour logger les requêtes HTTP entrantes de manière structurée
 
-import { Request } from "express";
+import type { NextFunction, Request, Response } from "express";
 import { logger } from "../services/loggerService";
 import { anonymizeIp } from "./logUtils";
 
@@ -20,7 +20,7 @@ export interface RequestLogOptions {
   /** Message custom (par défaut: "Incoming request") */
   message?: string;
   /** Contexte additionnel */
-  context?: Record<string, any>;
+  context?: Record<string, unknown>;
 }
 
 /**
@@ -48,9 +48,9 @@ export interface RequestMetadata {
   /** Origin du client */
   origin?: string;
   /** Query parameters (si includeQuery = true) */
-  query?: Record<string, any>;
+  query?: Record<string, unknown>;
   /** Body de la requête (si includeBody = true, sanitisé) */
-  body?: Record<string, any>;
+  body?: Record<string, unknown>;
   /** Headers sélectionnés (si includeHeaders = true) */
   headers?: Record<string, string>;
 }
@@ -107,7 +107,7 @@ export function extractRequestMetadata(
 
   // Ajouter les query parameters si demandé
   if (includeQuery && req.query && Object.keys(req.query).length > 0) {
-    metadata.query = req.query as Record<string, any>;
+    metadata.query = req.query as Record<string, unknown>;
   }
 
   // Ajouter le body si demandé (sera sanitisé automatiquement par le logger)
@@ -194,9 +194,9 @@ export function logResponse(
   req: Request,
   statusCode: number,
   duration?: number,
-  context?: Record<string, any>,
+  context?: Record<string, unknown>,
 ): void {
-  const metadata: Record<string, any> = {
+  const metadata: Record<string, unknown> = {
     method: req.method,
     url: req.url,
     requestId: req.id || req.correlationId,
@@ -232,7 +232,7 @@ export function logResponse(
  * }));
  */
 export function createRequestLoggerMiddleware(options: RequestLogOptions = {}) {
-  return (req: Request, res: any, next: any): void => {
+  return (req: Request, res: Response, next: NextFunction): void => {
     // Logger la requête entrante
     logRequest(req, options);
 
@@ -241,7 +241,7 @@ export function createRequestLoggerMiddleware(options: RequestLogOptions = {}) {
 
     // Intercepter la réponse pour logger à la fin
     const originalSend = res.send;
-    res.send = function (body: any) {
+    res.send = function (body: unknown) {
       const duration = Date.now() - startTime;
       logResponse(req, res.statusCode, duration);
       return originalSend.call(this, body);
@@ -269,7 +269,7 @@ export function createRequestLoggerMiddleware(options: RequestLogOptions = {}) {
 export function logRequestError(
   req: Request,
   error: Error | unknown,
-  context?: Record<string, any>,
+  context?: Record<string, unknown>,
 ): void {
   const errorMessage = error instanceof Error ? error.message : String(error);
   const errorName = error instanceof Error ? error.name : "UnknownError";

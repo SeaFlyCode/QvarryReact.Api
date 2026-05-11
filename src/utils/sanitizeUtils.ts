@@ -10,7 +10,7 @@ import { safeJsonParse } from "./secureJsonParser";
  * Sanitise un objet en supprimant les clés commençant par $ (opérateurs MongoDB)
  * et en limitant la taille totale des données
  */
-export function sanitizeMixed(data: any, maxSize: number = 10000): any {
+export function sanitizeMixed(data: unknown, maxSize: number = 10000): unknown {
   if (data === null || data === undefined) return data;
 
   const json = JSON.stringify(data);
@@ -19,23 +19,27 @@ export function sanitizeMixed(data: any, maxSize: number = 10000): any {
   }
 
   // Parse avec protection Prototype Pollution
-  const parsed = safeJsonParse(json, {
+  const parsed = safeJsonParse<unknown>(json, {
     context: "sanitize-mixed",
     maxDepth: 10,
   });
 
   // Appliquer le reviver manuellement pour supprimer les opérateurs MongoDB
-  function removeMongoOperators(obj: any): any {
+  function removeMongoOperators(obj: unknown): unknown {
     if (obj === null || typeof obj !== "object") return obj;
 
     if (Array.isArray(obj)) {
       return obj.map(removeMongoOperators);
     }
 
-    const result: any = {};
-    for (const key in obj) {
-      if (obj.hasOwnProperty(key) && !key.startsWith("$")) {
-        result[key] = removeMongoOperators(obj[key]);
+    const source = obj as Record<string, unknown>;
+    const result: Record<string, unknown> = {};
+    for (const key in source) {
+      if (
+        Object.prototype.hasOwnProperty.call(source, key) &&
+        !key.startsWith("$")
+      ) {
+        result[key] = removeMongoOperators(source[key]);
       }
     }
     return result;
