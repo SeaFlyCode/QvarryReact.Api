@@ -1,0 +1,58 @@
+# CI Backend (Node.js + TypeScript + Jest)
+#
+# Pipeline minimale : install -> lint -> type-check -> tests Jest.
+# Pas de build Docker, pas d'obfuscation, pas de tests load/clustering/resilience
+# (lourds, à activer plus tard sur runner dédié ou cron job).
+#
+# TODO secrets GitHub à configurer (Settings > Secrets and variables > Actions) :
+#   - JWT_SECRET, JWT_REFRESH_SECRET (valeurs de test, NE PAS reuse celles de prod)
+#   - MONGODB_URI_TEST (instance Mongo dédiée tests ou utiliser memory-server)
+#   - REDIS_URL_TEST (optionnel, mock par défaut)
+#   - SENTRY_DSN (optionnel, peut rester vide en CI)
+# Les exposer dans le step `npm test` via `env:` quand nécessaire.
+
+name: CI
+
+on:
+  push:
+    branches: [main, dev]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint-typecheck-test:
+    name: Lint + Type-check + Tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          # engines.node absent du package.json : Node 20 LTS par défaut
+          # (compatible Express 5, Sentry 10, mongoose 8).
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint (ESLint)
+        run: npm run lint:check
+
+      - name: Type-check (tsc --noEmit)
+        run: npm run type-check
+
+      - name: Tests (Jest)
+        run: npm test -- --ci --maxWorkers=2
+        env:
+          NODE_ENV: test
+          # TODO: ajouter ici les secrets depuis GitHub Secrets quand requis
+          # JWT_SECRET: ${{ secrets.JWT_SECRET_TEST }}
+          # JWT_REFRESH_SECRET: ${{ secrets.JWT_REFRESH_SECRET_TEST }}
+          # MONGODB_URI: ${{ secrets.MONGODB_URI_TEST }}
