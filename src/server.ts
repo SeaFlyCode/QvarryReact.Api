@@ -25,6 +25,16 @@ if (fs.existsSync(rootEnvLocalPath)) {
 dotenv.config({ path: envFile });
 
 // ═══════════════════════════════════════════════════════════════════════════
+// 📡 OpenTelemetry — DOIT être init AVANT les imports Express / Mongoose /
+// ioredis pour que les auto-instrumentations puissent hooker les modules
+// avant leur chargement (cf. AUDIT_2026-05-11 §3.6).
+// No-op gracieux si OTEL_EXPORTER_TYPE n'est pas défini. Voir
+// docs/observability.md pour l'activation et la stack recommandée.
+// ═══════════════════════════════════════════════════════════════════════════
+import { initTelemetry } from "./config/telemetry";
+initTelemetry();
+
+// ═══════════════════════════════════════════════════════════════════════════
 // Validation des variables d'environnement APRÈS dotenv et AVANT tout autre
 // import — cf. fix.md backend #5. En cas d'absence d'une variable critique
 // (JWT_SECRET, DB_CONN_STRING, etc.), le serveur refuse de démarrer.

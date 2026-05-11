@@ -1,5 +1,5 @@
 // server/src/services/auditService.ts
-import AuditLog from "../models/auditLogs";
+import AuditLog, { DEFAULT_RETENTION_SECONDS } from "../models/auditLogs";
 import mongoose from "mongoose";
 import crypto from "crypto";
 import { encrypt, decrypt } from "../utils/masterEncryptionUtils";
@@ -43,6 +43,13 @@ interface AuditOptions {
   ipAddress?: string;
   userAgent?: string;
   details?: any;
+  /**
+   * Si true, exempte ce log du TTL (rétention indéfinie).
+   * Cf. docs/audit-retention.md — réservé aux events sécurité critiques
+   * (security breach, fraude avérée, accès non-autorisé prouvé, etc.).
+   * Défaut : false → expiration après DEFAULT_RETENTION_SECONDS (2 ans).
+   */
+  permanent?: boolean;
 }
 
 class AuditService {
@@ -126,6 +133,14 @@ class AuditService {
         ? this.encryptIfPresent(JSON.stringify(options.details))
         : undefined;
 
+      // Calcul de l'expiration TTL (cf. docs/audit-retention.md).
+      // permanent=true → expiresAt=null → jamais supprimé.
+      const now = new Date();
+      const isPermanent = options.permanent === true;
+      const expiresAt = isPermanent
+        ? null
+        : new Date(now.getTime() + DEFAULT_RETENTION_SECONDS * 1000);
+
       const log = new AuditLog({
         userId: options.userId
           ? new mongoose.Types.ObjectId(options.userId as string)
@@ -135,7 +150,9 @@ class AuditService {
         ipAddress: encryptedIp,
         userAgent: encryptedUserAgent,
         details: encryptedDetails,
-        timestamp: new Date(),
+        timestamp: now,
+        expiresAt,
+        permanent: isPermanent,
       });
 
       await log.save();

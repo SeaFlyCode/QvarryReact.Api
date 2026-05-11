@@ -102,6 +102,8 @@ describe("AuditService", () => {
         userAgent: "encrypted_Mozilla/5.0",
         details: 'encrypted_{"success":true}',
         timestamp: expect.any(Date),
+        expiresAt: expect.any(Date),
+        permanent: false,
       });
 
       const mockInstance = (AuditLog as unknown as jest.Mock).mock.results[0]
@@ -152,6 +154,46 @@ describe("AuditService", () => {
           ipAddress: undefined,
           userAgent: undefined,
           details: undefined,
+        }),
+      );
+    });
+
+    it("should set expiresAt = now + 2 years and permanent=false by default (RGPD)", async () => {
+      process.env.IP_HASH_SECRET = "a".repeat(32);
+      const TWO_YEARS_SECONDS = 60 * 60 * 24 * 365 * 2;
+      const before = Date.now();
+
+      await auditService.log({ action: "user.view" });
+
+      const after = Date.now();
+      const callArg = (AuditLog as unknown as jest.Mock).mock.calls[0][0];
+
+      expect(callArg.permanent).toBe(false);
+      expect(callArg.expiresAt).toBeInstanceOf(Date);
+      const expiresAtMs = (callArg.expiresAt as Date).getTime();
+      // expiresAt doit être entre (before + 2 ans) et (after + 2 ans)
+      expect(expiresAtMs).toBeGreaterThanOrEqual(
+        before + TWO_YEARS_SECONDS * 1000,
+      );
+      expect(expiresAtMs).toBeLessThanOrEqual(
+        after + TWO_YEARS_SECONDS * 1000,
+      );
+    });
+
+    it("should set expiresAt=null when permanent=true (security breach exemption)", async () => {
+      process.env.IP_HASH_SECRET = "a".repeat(32);
+
+      await auditService.log({
+        userId: mockUserId,
+        action: "security_breach_attempt",
+        level: "critical",
+        permanent: true,
+      });
+
+      expect(AuditLog).toHaveBeenCalledWith(
+        expect.objectContaining({
+          permanent: true,
+          expiresAt: null,
         }),
       );
     });
