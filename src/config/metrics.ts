@@ -16,6 +16,7 @@ import {
   Histogram,
   register,
 } from "prom-client";
+import mongoose from "mongoose";
 
 // Préfixe par défaut pour différencier les métriques de cette API si on
 // pousse plusieurs services dans le même Prometheus.
@@ -63,6 +64,146 @@ export const mongoSyncFailuresCounter = new Counter({
   help: "Nombre de syncs Mongo échoués (cf. fix.md backend #1)",
   labelNames: ["resource"],
 });
+
+// ─────────────────────────────────────────────────────────────────────────
+// Métriques pool MongoDB (audit §4.4 P1)
+//
+// Audit en prod : maxPoolSize=50, mais aucune métrique exposée si saturation.
+// On expose les compteurs natifs du driver mongodb (v6.x via Mongoose 8) :
+//   - totalConnectionCount    = available + pending + currentCheckedOut
+//   - availableConnectionCount = sockets idle prêts à servir
+//   - pendingConnectionCount   = sockets en cours d'handshake
+//   - currentCheckedOutCount   = sockets actuellement utilisés par une op
+//   - waitQueueSize            = opérations qui attendent un socket
+//
+// Si le pool sature : `waitQueueSize > 0` et `currentCheckedOut == maxPoolSize`.
+// ─────────────────────────────────────────────────────────────────────────
+export const mongoPoolSizeGauge = new Gauge({
+  name: `${PREFIX}mongo_pool_size`,
+  help: "Nombre total de connexions dans le pool MongoDB (available + pending + checked out)",
+});
+
+export const mongoPoolAvailableGauge = new Gauge({
+  name: `${PREFIX}mongo_pool_available`,
+  help: "Nombre de connexions MongoDB idle disponibles immédiatement",
+});
+
+export const mongoPoolPendingGauge = new Gauge({
+  name: `${PREFIX}mongo_pool_pending`,
+  help: "Nombre de connexions MongoDB en cours d'établissement (handshake)",
+});
+
+export const mongoPoolCheckedOutGauge = new Gauge({
+  name: `${PREFIX}mongo_pool_checked_out`,
+  help: "Nombre de connexions MongoDB actuellement utilisées par une opération",
+});
+
+export const mongoPoolWaitQueueGauge = new Gauge({
+  name: `${PREFIX}mongo_pool_wait_queue`,
+  help: "Nombre d'opérations en attente d'une connexion MongoDB libre",
+});
+
+export const mongoConnectionReadyStateGauge = new Gauge({
+  name: `${PREFIX}mongo_connection_ready_state`,
+  help: "État de la connexion Mongoose (0=disconnected, 1=connected, 2=connecting, 3=disconnecting)",
+});
+
+/**
+ * Interface minimale du pool exposée par le driver mongodb 6.x.
+ * On ne déclare que ce qu'on lit ici — évite de typer toute la lib.
+ */
+interface MongoCmapPool {
+  totalConnectionCount: number;
+  availableConnectionCount: number;
+  pendingConnectionCount: number;
+  currentCheckedOutCount: number;
+  waitQueueSize: number;
+}
+
+/**
+ * Lit le pool CMAP du driver mongodb via le topology Mongoose.
+ *
+ * Chemin (Mongoose 8 + mongodb 6.x) :
+ *   mongoose.connection.client.topology.s.servers (Map<address, Server>)
+ *   chaque Server expose un `.pool` avec les getters CMAP.
+ *
+ * On agrège tous les serveurs (utile en replica set / sharded).
+ * Si l'API change ou que le topology n'est pas prêt, on retourne null
+ * et on se rabat sur `readyState` uniquement.
+ */
+function readMongoPoolStats(): MongoCmapPool | null {
+  try {
+    // Mongoose 8 n'expose pas le MongoClient ni la topology dans ses types
+    // publics — on accède via un cast `unknown -> Record`. Le path concret
+    // est : connection.client (MongoClient) → topology → s.servers (Map).
+    const conn = mongoose.connection as unknown as {
+      client?: { topology?: { s?: { servers?: Map<string, unknown> } } };
+    };
+    const servers = conn.client?.topology?.s?.servers;
+    if (!servers || servers.size === 0) {
+      return null;
+    }
+
+    const agg: MongoCmapPool = {
+      totalConnectionCount: 0,
+      availableConnectionCount: 0,
+      pendingConnectionCount: 0,
+      currentCheckedOutCount: 0,
+      waitQueueSize: 0,
+    };
+
+    for (const server of servers.values()) {
+      const pool = (server as { pool?: Partial<MongoCmapPool> })?.pool;
+      if (!pool) continue;
+      if (typeof pool.totalConnectionCount === "number") {
+        agg.totalConnectionCount += pool.totalConnectionCount;
+      }
+      if (typeof pool.availableConnectionCount === "number") {
+        agg.availableConnectionCount += pool.availableConnectionCount;
+      }
+      if (typeof pool.pendingConnectionCount === "number") {
+        agg.pendingConnectionCount += pool.pendingConnectionCount;
+      }
+      if (typeof pool.currentCheckedOutCount === "number") {
+        agg.currentCheckedOutCount += pool.currentCheckedOutCount;
+      }
+      if (typeof pool.waitQueueSize === "number") {
+        agg.waitQueueSize += pool.waitQueueSize;
+      }
+    }
+
+    return agg;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Update les gauges du pool MongoDB. Appelée juste avant `register.metrics()`
+ * pour avoir des valeurs fraîches au scrape (Prometheus scrape ~ toutes les
+ * 15s — pas la peine d'un setInterval séparé).
+ *
+ * Si le pool n'est pas accessible (API driver modifiée, connexion KO), on
+ * expose uniquement `mongo_connection_ready_state` — fallback documenté
+ * dans la tâche.
+ */
+export function collectMongoMetrics(): void {
+  const readyState = mongoose.connection.readyState;
+  mongoConnectionReadyStateGauge.set(readyState);
+
+  const stats = readMongoPoolStats();
+  if (!stats) {
+    // Fallback : on ne touche pas les autres gauges, prom-client gardera la
+    // dernière valeur connue (ou 0 si jamais set).
+    return;
+  }
+
+  mongoPoolSizeGauge.set(stats.totalConnectionCount);
+  mongoPoolAvailableGauge.set(stats.availableConnectionCount);
+  mongoPoolPendingGauge.set(stats.pendingConnectionCount);
+  mongoPoolCheckedOutGauge.set(stats.currentCheckedOutCount);
+  mongoPoolWaitQueueGauge.set(stats.waitQueueSize);
+}
 
 /**
  * Middleware Express qui mesure la durée et le code retour de chaque requête.
@@ -201,6 +342,9 @@ export async function metricsHandler(
   res: import("express").Response,
 ) {
   try {
+    // Refresh des gauges Mongo juste avant le scrape — coût négligeable
+    // (lecture de getters synchrones), évite un setInterval supplémentaire.
+    collectMongoMetrics();
     res.setHeader("Content-Type", register.contentType);
     res.send(await register.metrics());
   } catch (err) {

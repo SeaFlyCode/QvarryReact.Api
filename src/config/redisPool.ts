@@ -44,13 +44,34 @@ class RedisConnectionPool {
     const redisTLS = process.env.REDIS_TLS === "true";
     const redisCluster = process.env.REDIS_CLUSTER === "true";
 
+    /**
+     * Backoff exponentiel avec jitter (audit §5.5 P2).
+     *
+     * Avant : `Math.min(times * 50, 2000)` — backoff linéaire capé à 2s.
+     * Conséquence : si Redis tombe 1 min, ioredis spamme une reconnexion
+     * toutes les ~2s → logs saturés, charge inutile sur le DNS / réseau.
+     *
+     * Après : exponentiel x2 chaque retry, cap 30s, +0-200ms de jitter pour
+     * éviter le thundering herd quand plusieurs instances reconnectent en
+     * même temps.
+     *
+     *   retry 1 →   50ms +  jitter
+     *   retry 2 →  100ms +  jitter
+     *   retry 3 →  200ms +  jitter
+     *   ...
+     *   retry 10 → 25 600ms + jitter
+     *   retry 11+ → 30 000ms + jitter (cap)
+     *
+     * À 30s/retry, on log au max 2 fois/min après stabilisation.
+     */
     const baseConfig: RedisOptions = {
       host: redisHost,
       port: redisPort,
       password: redisPassword,
       retryStrategy: (times: number) => {
-        const delay = Math.min(times * 50, 2000);
-        return delay;
+        const base = Math.min(50 * Math.pow(2, times - 1), 30_000);
+        const jitter = Math.random() * 200;
+        return base + jitter;
       },
       maxRetriesPerRequest: 3,
       enableReadyCheck: true,
