@@ -74,17 +74,26 @@ function getRefreshExpiresInSeconds(): number {
 
 /**
  * Détermine le client à utiliser pour la génération de tokens et les sessions.
- * - mobile : si la requête a un mobileContext (header X-Platform validé), un
- *   header X-Device-ID, ou si la route est explicitement mobile.
+ * - mobile : si la route mobile a explicitement posé `req.clientType`, ou si
+ *   `mobileSecurityMiddleware` a validé un contexte mobile (`mobileContext`).
  * - web : sinon.
+ *
+ * NOTE — l'heuristique « header `x-device-id` présent → mobile » a été retirée
+ * (était présente jusqu'à Vague 4 incluse). Le frontend web envoie désormais
+ * `x-device-id` sur toutes les requêtes mutantes (cf. `client.ts:50-56`,
+ * filtrage des broadcasts WS sync_update/notification_read/session_revoked),
+ * ce qui faisait classer les logins web comme `mobile` et stockait le JTI
+ * sous la clé `${userId}:mobile` alors que `checkAuth` (et autres GET non
+ * mutants sans `x-device-id`) cherchaient sous `${userId}:web` → mismatch
+ * systématique → 401 « JTI invalide » 2 s après chaque login web.
+ * Les vrais clients mobiles passent par `mobileSecurityMiddleware` qui pose
+ * `mobileContext` à partir de signaux fiables (`x-platform`, etc.).
  */
 function detectClient(req: Request): "web" | "mobile" {
   // Set explicitement par la route mobile
   if ((req as any).clientType === "mobile") return "mobile";
   // mobileContext est posé par mobileSecurityMiddleware
   if ((req as any).mobileContext) return "mobile";
-  // Heuristique : header x-device-id présent → mobile
-  if (req.headers["x-device-id"]) return "mobile";
   return "web";
 }
 
