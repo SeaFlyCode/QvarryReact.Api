@@ -59,7 +59,7 @@ export interface DecryptedPoint {
     type: "Point";
     coordinates: [number, number];
   } | null;
-  ficheId?: string;
+  fiches_ids?: string[];
   accessType?: string;
   createdAt: string;
   updatedAt: string;
@@ -204,7 +204,9 @@ class MobileSyncService {
         name,
         description,
         location,
-        ficheId: point.ficheId?.toString(),
+        fiches_ids: Array.isArray((point as any).fiches_ids)
+          ? (point as any).fiches_ids.map((f: any) => f.toString())
+          : [],
         accessType: point.accessType,
         createdAt: point.createdAt?.toISOString() || new Date().toISOString(),
         updatedAt: point.updatedAt?.toISOString() || new Date().toISOString(),
@@ -811,9 +813,17 @@ class MobileSyncService {
           name: encryptedName,
           description: encryptedDescription,
           location_encrypted: encryptedLocation,
-          ficheId: data.ficheId
-            ? new mongoose.Types.ObjectId(data.ficheId)
-            : null,
+          fiches_ids: Array.isArray((data as any).fiches_ids)
+            ? (data as any).fiches_ids
+                .filter((fid: any) =>
+                  mongoose.Types.ObjectId.isValid(String(fid)),
+                )
+                .map((fid: any) => new mongoose.Types.ObjectId(String(fid)))
+            : (data as any).ficheId
+              ? mongoose.Types.ObjectId.isValid((data as any).ficheId)
+                ? [new mongoose.Types.ObjectId((data as any).ficheId)]
+                : []
+              : [],
           accessType: data.accessType || "",
           version: 1,
         });

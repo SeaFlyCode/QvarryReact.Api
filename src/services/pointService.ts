@@ -13,7 +13,7 @@ interface CreatePointData {
   name: string;
   description?: string;
   location_encrypted: string;
-  ficheId?: string; // Ajout de l'ID de fiche optionnel
+  fiches_ids?: string[]; // IDs de fiches associées (N-N)
 }
 
 // Création d'un point
@@ -21,7 +21,7 @@ export const createPoint = async (pointData: CreatePointData) => {
   log.info("Création d'un nouveau point", {
     userId: pointData.userId,
     name: pointData.name,
-    ficheId: pointData.ficheId,
+    fichesCount: pointData.fiches_ids?.length || 0,
   });
 
   try {
@@ -33,7 +33,11 @@ export const createPoint = async (pointData: CreatePointData) => {
           name: pointData.name,
           description: pointData.description,
           location_encrypted: pointData.location_encrypted,
-          ficheId: pointData.ficheId || null,
+          fiches_ids: Array.isArray(pointData.fiches_ids)
+            ? pointData.fiches_ids
+                .filter((fid) => mongoose.Types.ObjectId.isValid(fid))
+                .map((fid) => new mongoose.Types.ObjectId(fid))
+            : [],
         });
         return await point.save();
       },
@@ -189,13 +193,13 @@ export async function updatePoint(
   }
 }
 
-// Récupération des points liés à une fiche spécifique
+// Récupération des points liés à une fiche spécifique (via fiches_ids array)
 export async function getPointsByFicheId(ficheId: string): Promise<any[]> {
   if (!mongoose.Types.ObjectId.isValid(ficheId)) {
     throw new Error("L'ID de la fiche n'est pas valide.");
   }
   return PointModel.find({
-    ficheId,
+    fiches_ids: new mongoose.Types.ObjectId(ficheId),
     is_active: true,
   })
     .sort({ created_at: -1 })
@@ -203,7 +207,7 @@ export async function getPointsByFicheId(ficheId: string): Promise<any[]> {
     .maxTimeMS(5000);
 }
 
-// Associer un point existant à une fiche
+// Associer un point existant à une fiche (ajout dans fiches_ids sans doublon)
 export async function linkPointToFiche(
   pointId: string,
   ficheId: string,
@@ -215,20 +219,34 @@ export async function linkPointToFiche(
     throw new Error("L'ID du point ou de la fiche n'est pas valide.");
   }
 
-  return PointModel.findByIdAndUpdate(pointId, { ficheId }, { new: true });
+  return PointModel.findByIdAndUpdate(
+    pointId,
+    { $addToSet: { fiches_ids: new mongoose.Types.ObjectId(ficheId) } },
+    { new: true },
+  );
 }
 
-// Dissocier un point d'une fiche
+// Dissocier un point d'une fiche (retrait du tableau fiches_ids)
 export async function unlinkPointFromFiche(
   pointId: string,
+  ficheId?: string,
 ): Promise<IPoint | null> {
   if (!mongoose.Types.ObjectId.isValid(pointId)) {
     throw new Error("L'ID du point n'est pas valide.");
   }
 
+  if (ficheId && mongoose.Types.ObjectId.isValid(ficheId)) {
+    return PointModel.findByIdAndUpdate(
+      pointId,
+      { $pull: { fiches_ids: new mongoose.Types.ObjectId(ficheId) } },
+      { new: true },
+    );
+  }
+
+  // Sans ficheId, vider tout le tableau (legacy behavior)
   return PointModel.findByIdAndUpdate(
     pointId,
-    { ficheId: null },
+    { fiches_ids: [] },
     { new: true },
   );
 }

@@ -357,11 +357,19 @@ async function getListWithPoints(
     };
   });
 
+  // listData peut être un Document Mongoose (lecture mémoire) ou un POJO.
+  // Le spread d'un Document ne copie pas ses propriétés (ce sont des getters),
+  // ce qui ferait perdre color/icon/_id à la sérialisation JSON du partage.
+  const listObj =
+    typeof (listData as any).toObject === "function"
+      ? (listData as any).toObject()
+      : listData;
+
   return {
     list: {
-      ...listData,
-      name: listData.name || "",
-      description: listData.description || "",
+      ...listObj,
+      name: listObj.name || "",
+      description: listObj.description || "",
     },
     points: pointsDecrypted,
   };
@@ -1080,13 +1088,18 @@ async function copySharedDataToReceiver(
         : "";
 
       // Créer le GeoJSON pour les requêtes géospatiales
+      // L'index 2dsphere rejette les coordinates non-numériques : ne construire
+      // le champ que si lat/lng sont des nombres finis, sinon laisser absent.
       const parsedLoc = parseLocation(locationDecrypted);
-      const geoJsonLocation = parsedLoc
-        ? {
-            type: "Point" as const,
-            coordinates: [parsedLoc.lng, parsedLoc.lat] as [number, number],
-          }
-        : undefined;
+      const geoJsonLocation =
+        parsedLoc &&
+        Number.isFinite(parsedLoc.lat) &&
+        Number.isFinite(parsedLoc.lng)
+          ? {
+              type: "Point" as const,
+              coordinates: [parsedLoc.lng, parsedLoc.lat] as [number, number],
+            }
+          : undefined;
 
       const newPoint = new PointModel({
         userId: receiverId,
@@ -1159,13 +1172,21 @@ async function copySharedDataToReceiver(
             : "";
 
           // Créer le GeoJSON pour les requêtes géospatiales
+          // L'index 2dsphere rejette les coordinates non-numériques : ne construire
+          // le champ que si lat/lng sont des nombres finis, sinon laisser absent.
           const parsedLoc = parseLocation(locationDecrypted);
-          const geoJsonLocation = parsedLoc
-            ? {
-                type: "Point" as const,
-                coordinates: [parsedLoc.lng, parsedLoc.lat] as [number, number],
-              }
-            : undefined;
+          const geoJsonLocation =
+            parsedLoc &&
+            Number.isFinite(parsedLoc.lat) &&
+            Number.isFinite(parsedLoc.lng)
+              ? {
+                  type: "Point" as const,
+                  coordinates: [parsedLoc.lng, parsedLoc.lat] as [
+                    number,
+                    number,
+                  ],
+                }
+              : undefined;
 
           const newPoint = new PointModel({
             userId: receiverId,
@@ -1319,17 +1340,20 @@ async function copySharedDataToReceiver(
 
       await newFiche.save();
 
-      // Mettre à jour les points avec la référence à la fiche
+      // Mettre à jour les points : pousser la fiche dans leur tableau fiches_ids
       await PointModel.updateMany(
         { _id: { $in: newPointIds } },
-        { ficheId: newFiche._id },
+        { $addToSet: { fiches_ids: newFiche._id } },
       );
 
       // Ajouter au memoryStorage si session active (avec données déchiffrées)
       if (hasSession) {
         // Ajouter les points
         for (let i = 0; i < newPointsForMemory.length; i++) {
-          newPointsForMemory[i].ficheId = newFiche._id;
+          const existing = Array.isArray(newPointsForMemory[i].fiches_ids)
+            ? newPointsForMemory[i].fiches_ids
+            : [];
+          newPointsForMemory[i].fiches_ids = [...existing, newFiche._id];
           memoryStorage.storePoint(receiverIdStr, newPointsForMemory[i] as any);
         }
         // Ajouter la fiche (données déchiffrées pour le memoryStorage)
@@ -1406,13 +1430,21 @@ async function copySharedDataToReceiver(
             : "";
 
           // Créer le GeoJSON pour les requêtes géospatiales
+          // L'index 2dsphere rejette les coordinates non-numériques : ne construire
+          // le champ que si lat/lng sont des nombres finis, sinon laisser absent.
           const parsedLoc = parseLocation(locationDecrypted);
-          const geoJsonLocation = parsedLoc
-            ? {
-                type: "Point" as const,
-                coordinates: [parsedLoc.lng, parsedLoc.lat] as [number, number],
-              }
-            : undefined;
+          const geoJsonLocation =
+            parsedLoc &&
+            Number.isFinite(parsedLoc.lat) &&
+            Number.isFinite(parsedLoc.lng)
+              ? {
+                  type: "Point" as const,
+                  coordinates: [parsedLoc.lng, parsedLoc.lat] as [
+                    number,
+                    number,
+                  ],
+                }
+              : undefined;
 
           const newPoint = new PointModel({
             userId: receiverId,

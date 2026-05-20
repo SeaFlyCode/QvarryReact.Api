@@ -381,16 +381,23 @@ export async function handleDeleteFiche(req: Request, res: Response) {
       return res.status(404).json({ message: "Fiche non trouvée." });
     }
 
-    // Pour chaque point associé à la fiche, supprimer le lien ficheId
+    // Pour chaque point associé à la fiche, retirer ficheId de son fiches_ids
     if (fiche.points_ids && fiche.points_ids.length > 0) {
       for (const pointIdObj of fiche.points_ids) {
         const pointId = pointIdObj.toString();
         const point = memoryStorage.getPointById(userId, pointId);
 
-        if (point && (point as any).ficheId) {
-          // Supprimer la référence à la fiche dans le point
-          (point as any).ficheId = undefined;
-          memoryStorage.storePoint(userId, point);
+        if (point) {
+          const ids: any[] = Array.isArray((point as any).fiches_ids)
+            ? (point as any).fiches_ids
+            : [];
+          const filtered = ids.filter(
+            (fid) => fid?.toString() !== ficheId,
+          );
+          if (filtered.length !== ids.length) {
+            (point as any).fiches_ids = filtered;
+            memoryStorage.storePoint(userId, point);
+          }
         }
       }
     }
@@ -832,9 +839,14 @@ export async function handleGetFicheByPointId(req: Request, res: Response) {
       return res.status(404).json({ message: "Point non trouvé" });
     }
 
-    // Tentative d'obtenir la ficheId directement du point
-    if ((point as any).ficheId) {
-      const ficheIdStr = (point as any).ficheId.toString();
+    // Cette route retourne UNE fiche associée au point (legacy). Avec la migration
+    // N-N, on prend la 1ʳᵉ du tableau fiches_ids. Pour la liste complète, utiliser
+    // une autre route (GET /points/:id renvoie déjà fiches_ids).
+    const ficheIdsOnPoint: any[] = Array.isArray((point as any).fiches_ids)
+      ? (point as any).fiches_ids
+      : [];
+    if (ficheIdsOnPoint.length > 0) {
+      const ficheIdStr = ficheIdsOnPoint[0].toString();
       const fiche = memoryStorage.getFicheById(userId, ficheIdStr);
 
       if (fiche) {
@@ -842,24 +854,30 @@ export async function handleGetFicheByPointId(req: Request, res: Response) {
       }
     }
 
-    // Méthode alternative - parcourir toutes les fiches
+    // Méthode alternative - parcourir toutes les fiches et réparer l'association
     const fiches = memoryStorage.getAllFiches(userId);
     const associatedFiche = fiches.find((fiche) =>
       fiche.points_ids.some((id) => id.toString() === pointId),
     );
 
     if (associatedFiche) {
-      // Mise à jour du point avec l'ID de la fiche comme ObjectID
+      // Réparer le lien : ajouter la fiche dans le tableau fiches_ids du point
       try {
         const objectIdFicheId = new mongoose.Types.ObjectId(
           String((associatedFiche as any)._id),
         );
-        Object.assign(point, { ficheId: objectIdFicheId });
-        memoryStorage.storePoint(userId, point);
+        const existing: any[] = Array.isArray((point as any).fiches_ids)
+          ? (point as any).fiches_ids
+          : [];
+        const alreadyIn = existing.some(
+          (fid) => fid?.toString() === objectIdFicheId.toString(),
+        );
+        if (!alreadyIn) {
+          (point as any).fiches_ids = [...existing, objectIdFicheId];
+          memoryStorage.storePoint(userId, point);
+        }
       } catch (_error) {
-        // Fallback en cas d'erreur
-        Object.assign(point, { ficheId: String((associatedFiche as any)._id) });
-        memoryStorage.storePoint(userId, point);
+        // Best effort, on continue
       }
 
       return res.status(200).json(associatedFiche);

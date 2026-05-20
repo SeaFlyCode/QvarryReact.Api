@@ -156,6 +156,17 @@ export const uploadPointPhoto = async (
       // Récupérer les infos de stockage mises à jour
       const storageInfo = await storageQuotaService.getUserStorageInfo(userId);
 
+      // Synchroniser memoryStorage : sans ça, GET /api/points/ renvoie
+      // hasImage:false tant que le memoryStorage n'a pas été rechargé.
+      const pointInMemory = memoryStorage.getPointById(userId, pointId);
+      if (pointInMemory) {
+        memoryStorage.storePoint(
+          userId,
+          { ...pointInMemory, photo: point.photo } as any,
+          true,
+        );
+      }
+
       res.status(201).json({
         message: "Photo uploaded successfully",
         photo: {
@@ -389,6 +400,13 @@ export const deletePointPhoto = async (
     // Mettre à jour le document Point
     point.photo = undefined;
     await point.save();
+
+    // Synchroniser memoryStorage (sinon hasImage reste à true en lecture).
+    const pointInMemory = memoryStorage.getPointById(userId as string, pointId);
+    if (pointInMemory) {
+      const { photo: _photo, ...withoutPhoto } = pointInMemory as any;
+      memoryStorage.storePoint(userId as string, withoutPhoto, true);
+    }
 
     // Récupérer les informations de stockage
     const storageInfo = await storageQuotaService.getUserStorageInfo(

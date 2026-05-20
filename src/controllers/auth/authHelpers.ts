@@ -919,58 +919,35 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
       // MongoDB n'accepte pas { coordinates: [] } ou des coordonnées invalides
       (pointFromDB as any).location = undefined;
 
-      // AJOUT IMPORTANT : Synchroniser le ficheId comme ObjectID ou le supprimer si nécessaire
-      if ((point as any).ficheId) {
+      // Synchroniser fiches_ids (N-N) : caster chaque ID en ObjectId valide
+      const rawFichesIds: any[] = Array.isArray((point as any).fiches_ids)
+        ? (point as any).fiches_ids
+        : [];
+      const validFichesIds: mongoose.Types.ObjectId[] = [];
+      for (const fid of rawFichesIds) {
         try {
-          // Si ficheId est déjà un ObjectID, l'utiliser directement
-          if ((point as any).ficheId instanceof mongoose.Types.ObjectId) {
-            pointFromDB.ficheId = (point as any).ficheId;
-          }
-          // Si c'est une chaîne valide, la convertir en ObjectID
-          else if (mongoose.Types.ObjectId.isValid((point as any).ficheId)) {
-            pointFromDB.ficheId = new mongoose.Types.ObjectId(
-              (point as any).ficheId,
-            );
-          }
-          // Sinon, laisser tel quel (mais c'est un cas d'erreur)
-          else {
-            authHelpersLogger.warn("ficheId invalide pour le point", {
+          if (fid instanceof mongoose.Types.ObjectId) {
+            validFichesIds.push(fid);
+          } else if (mongoose.Types.ObjectId.isValid(fid)) {
+            validFichesIds.push(new mongoose.Types.ObjectId(fid));
+          } else {
+            authHelpersLogger.warn("fiches_ids invalide pour le point", {
               userId,
               pointId: point._id,
-              ficheId: (point as any).ficheId,
+              ficheId: fid,
             });
-            pointFromDB.ficheId = (point as any).ficheId;
           }
-
-          authHelpersLogger.info("Point associé à la fiche", {
-            userId,
-            pointId: point._id,
-            ficheId: pointFromDB.ficheId,
-          });
         } catch (idError) {
-          authHelpersLogger.error("Erreur lors de la manipulation du ficheId", {
-            userId,
-            error: idError instanceof Error ? idError.message : String(idError),
-            // HIGH-001: stack trace supprimé pour sécurité,
-          });
-          // En cas d'erreur, garder la valeur originale
-          pointFromDB.ficheId = (point as any).ficheId;
-        }
-      } else {
-        // Si ficheId est undefined/null dans la version mémoire, s'assurer qu'il est aussi null dans la BDD
-        // C'est crucial pour les dissociations
-        if (pointFromDB.ficheId) {
-          authHelpersLogger.info(
-            "Suppression de l'association entre le point et la fiche",
+          authHelpersLogger.error(
+            "Erreur lors de la conversion d'un ID de fiche",
             {
               userId,
-              pointId: point._id,
-              ficheId: pointFromDB.ficheId,
+              error: idError instanceof Error ? idError.message : String(idError),
             },
           );
-          pointFromDB.ficheId = undefined;
         }
       }
+      pointFromDB.fiches_ids = validFichesIds;
 
       // Incrémenter la version pour le suivi de concurrence optimiste
       (pointFromDB as any).version = ((point as any).version || 0) + 1;

@@ -39,10 +39,11 @@ export async function handleCreatePoint(req: Request, res: Response) {
       description,
       longitude,
       latitude,
-      ficheId,
       listIds,
       accessType,
     } = req.body;
+    // Accepter fiches_ids (canonique) ou ficheId (legacy mobile/web pré-migration)
+    const ficheId = req.body.fiches_ids ?? req.body.ficheId;
     const userId = req.user.id;
 
     if (!name || longitude === undefined || latitude === undefined) {
@@ -173,6 +174,13 @@ export async function handleCreatePoint(req: Request, res: Response) {
       });
     }
 
+    // Le modèle Point.fiches_ids est un array (N-N) : stocker toutes les fiches.
+    const fichesIdsForPoint: mongoose.Types.ObjectId[] = parsedFiche
+      ? Array.isArray(parsedFiche)
+        ? parsedFiche
+        : [parsedFiche]
+      : [];
+
     // Ajout du champ accessType au point
     const pointMemory: any = {
       _id: newPointId,
@@ -182,7 +190,7 @@ export async function handleCreatePoint(req: Request, res: Response) {
       location,
       createdAt: new Date(),
       updatedAt: new Date(),
-      ficheId: parsedFiche,
+      fiches_ids: fichesIdsForPoint,
       accessType: accessType || "", // Ajout du type d'accès, valeur par défaut vide
     };
 
@@ -566,12 +574,12 @@ export async function handleDeletePoint(req: Request, res: Response) {
       return res.status(404).json({ message: "Point non trouvé" });
     }
 
-    // Si le point est associé à une fiche, le retirer de cette fiche
-    if ((point as any).ficheId) {
-      const ficheId = (point as any).ficheId.toString();
-
-      // Supprimer la référence dans la fiche
-      memoryStorage.removePointFromFiche(userId, ficheId, pointId);
+    // Retirer le point de toutes les fiches auxquelles il était associé
+    const linkedFicheIds: any[] = Array.isArray((point as any).fiches_ids)
+      ? (point as any).fiches_ids
+      : [];
+    for (const fid of linkedFicheIds) {
+      memoryStorage.removePointFromFiche(userId, fid.toString(), pointId);
     }
 
     // Sauvegarde du snapshot pour rollback éventuel (cf. fix.md backend #1).
@@ -588,15 +596,16 @@ export async function handleDeletePoint(req: Request, res: Response) {
     const syncResult = await syncService.syncNow(userId);
 
     if (!syncResult.success) {
-      // Rollback : restaurer le point en mémoire (et son lien fiche s'il existait)
+      // Rollback : restaurer le point en mémoire (et ses liens fiches s'ils existaient)
       // pour ne pas laisser un état "supprimé localement, présent en DB" zombie.
       memoryStorage.storePoint(userId, pointSnapshot as any);
-      if ((pointSnapshot as any).ficheId) {
-        memoryStorage.addPointToFiche(
-          userId,
-          (pointSnapshot as any).ficheId.toString(),
-          pointId,
-        );
+      const snapshotFicheIds: any[] = Array.isArray(
+        (pointSnapshot as any).fiches_ids,
+      )
+        ? (pointSnapshot as any).fiches_ids
+        : [];
+      for (const fid of snapshotFicheIds) {
+        memoryStorage.addPointToFiche(userId, fid.toString(), pointId);
       }
       pointsLogger.error("Sync Mongo échouée, rollback de la suppression du point", {
         userId,
@@ -616,12 +625,13 @@ export async function handleDeletePoint(req: Request, res: Response) {
     const stillInDb = await PointModel.findById(pointId).select("_id").lean();
     if (stillInDb) {
       memoryStorage.storePoint(userId, pointSnapshot as any);
-      if ((pointSnapshot as any).ficheId) {
-        memoryStorage.addPointToFiche(
-          userId,
-          (pointSnapshot as any).ficheId.toString(),
-          pointId,
-        );
+      const snapshotFicheIds: any[] = Array.isArray(
+        (pointSnapshot as any).fiches_ids,
+      )
+        ? (pointSnapshot as any).fiches_ids
+        : [];
+      for (const fid of snapshotFicheIds) {
+        memoryStorage.addPointToFiche(userId, fid.toString(), pointId);
       }
       pointsLogger.error(
         "Sync OK mais point toujours présent en Mongo, rollback",
@@ -639,7 +649,9 @@ export async function handleDeletePoint(req: Request, res: Response) {
       userId,
       pointId,
       action: "delete_point",
-      hasFiche: !!(point as any).ficheId,
+      hasFiche:
+        Array.isArray((point as any).fiches_ids) &&
+        (point as any).fiches_ids.length > 0,
     });
 
     // 2026-05-04 §4.2: sync_update multi-device
@@ -681,9 +693,10 @@ export async function handleUpdatePoint(req: Request, res: Response) {
       longitude,
       latitude,
       listIds,
-      ficheId,
       accessType,
     } = req.body;
+    // Accepter fiches_ids (canonique) ou ficheId (legacy)
+    const ficheId = req.body.fiches_ids ?? req.body.ficheId;
 
     if (!userId) {
       return res.status(401).json({ message: "Utilisateur non identifié" });
@@ -762,29 +775,45 @@ export async function handleUpdatePoint(req: Request, res: Response) {
       }
     }
 
-    // Mettre à jour ficheId si fourni
+    // Mettre à jour fiches_ids si fourni (N-N : array d'ObjectId)
     if (ficheId !== undefined) {
-      // Si ficheId est null ou array vide, supprimer l'association
-      if (
-        ficheId === null ||
-        (Array.isArray(ficheId) && ficheId.length === 0)
-      ) {
-        (point as any).ficheId = undefined;
-      } else {
-        // Stocker ficheId (peut être string ou array)
-        (point as any).ficheId = ficheId;
+      const oldFicheIds: any[] = Array.isArray((point as any).fiches_ids)
+        ? (point as any).fiches_ids
+        : [];
+      const oldSet = new Set(oldFicheIds.map((f) => f.toString()));
 
-        // Ajouter le point dans les fiches en mémoire
-        const ficheIds = Array.isArray(ficheId) ? ficheId : [ficheId];
-        for (const fid of ficheIds) {
-          const addResult = memoryStorage.addPointToFiche(userId, fid, id);
+      const newRawIds: string[] =
+        ficheId === null
+          ? []
+          : Array.isArray(ficheId)
+            ? ficheId.map((f: any) => f.toString())
+            : [String(ficheId)];
+      const newSet = new Set(newRawIds);
+
+      // 1. Retirer le point des fiches désélectionnées
+      for (const oldFid of oldSet) {
+        if (!newSet.has(oldFid)) {
+          memoryStorage.removePointFromFiche(userId, oldFid, id);
+        }
+      }
+
+      // 2. Ajouter le point dans les nouvelles fiches (addPointToFiche
+      //    s'occupe aussi de pousser dans point.fiches_ids).
+      for (const newFid of newSet) {
+        if (!oldSet.has(newFid)) {
+          const addResult = memoryStorage.addPointToFiche(userId, newFid, id);
           if (!addResult) {
             pointsLogger.warn("Impossible d'ajouter le point à la fiche", {
               pointId: id,
-              ficheId: fid,
+              ficheId: newFid,
             });
           }
         }
+      }
+
+      // Si on a tout retiré et qu'aucune nouvelle fiche, vider explicitement
+      if (newSet.size === 0) {
+        (point as any).fiches_ids = [];
       }
     }
 
@@ -833,6 +862,7 @@ export async function handleUpdatePoint(req: Request, res: Response) {
           "longitude",
           "latitude",
           "listIds",
+          "fiches_ids",
           "ficheId",
           "accessType",
         ].includes(k),

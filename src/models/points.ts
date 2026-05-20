@@ -6,7 +6,7 @@ export interface IPoint extends Document {
   name: string;
   description: string;
   location_encrypted: string;
-  ficheId?: mongoose.Types.ObjectId; // Référence optionnelle vers une fiche
+  fiches_ids: mongoose.Types.ObjectId[]; // Références N-N vers des fiches
   location?: {
     type: "Point";
     coordinates: [number, number]; // [lng, lat]
@@ -46,10 +46,10 @@ const pointSchema = new Schema(
       type: String,
       required: [true, "Les coordonnées sont obligatoires"],
     },
-    ficheId: {
-      type: Schema.Types.ObjectId,
+    fiches_ids: {
+      type: [Schema.Types.ObjectId],
       ref: "Fiche",
-      default: null,
+      default: [],
     },
     location: {
       type: {
@@ -99,6 +99,6 @@ pointSchema.index({ location: "2dsphere" });
 // Index pour accélérer les requêtes de soft-delete
 pointSchema.index({ deletedAt: 1 });
 pointSchema.index({ userId: 1, deletedAt: 1 }); // Compound pour user queries excluding deleted
-pointSchema.index({ userId: 1, ficheId: 1 }); // Pour fiche-point relationships
+pointSchema.index({ userId: 1, fiches_ids: 1 }); // Pour fiche-point relationships (multikey index sur array)
 
 export default mongoose.model<IPoint>("Point", pointSchema);

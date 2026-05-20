@@ -405,19 +405,12 @@ export class MemoryStorageService {
         });
       }
 
-      // Filtre par ficheId
+      // Filtre par ficheId : Point.fiches_ids est un array (N-N)
       if (filters.ficheId) {
         results = results.filter((point) => {
-          const pointFicheId = (point as any).ficheId;
-          if (!pointFicheId) return false;
-
-          // Gérer le cas où ficheId est un array ou un ObjectId unique
-          if (Array.isArray(pointFicheId)) {
-            return pointFicheId.some(
-              (fid) => fid.toString() === filters.ficheId,
-            );
-          }
-          return pointFicheId.toString() === filters.ficheId;
+          const ids = (point as any).fiches_ids;
+          if (!Array.isArray(ids) || ids.length === 0) return false;
+          return ids.some((fid) => fid?.toString() === filters.ficheId);
         });
       }
 
@@ -477,14 +470,15 @@ export class MemoryStorageService {
         return false;
       }
 
-      // Vérifier si le point est associé à une fiche et retirer cette association
-      if ((point as any).ficheId) {
+      // Retirer le point de toutes les fiches auxquelles il était associé
+      const linkedFicheIds: any[] = Array.isArray((point as any).fiches_ids)
+        ? (point as any).fiches_ids
+        : [];
+      for (const fidRef of linkedFicheIds) {
         try {
-          const ficheId = (point as any).ficheId.toString();
+          const ficheId = fidRef.toString();
           const fiche = session.fiches.get(ficheId);
-
           if (fiche && fiche.points_ids) {
-            // Supprimer le point de la liste des points de la fiche
             fiche.points_ids = fiche.points_ids.filter(
               (id) => id.toString() !== pointId,
             );
@@ -493,7 +487,7 @@ export class MemoryStorageService {
         } catch (refError) {
           memoryLogger.error("Failed to remove point reference from fiche", {
             pointId,
-            ficheId: (point as any).ficheId?.toString(),
+            ficheId: fidRef?.toString(),
             error:
               refError instanceof Error ? refError.message : String(refError),
           });
@@ -548,19 +542,21 @@ export class MemoryStorageService {
         return false;
       }
 
-      // Supprimer les références à cette fiche dans tous les points associés
+      // Retirer cette fiche du tableau fiches_ids de chaque point associé
       if (fiche.points_ids && fiche.points_ids.length > 0) {
         for (const pointIdObj of fiche.points_ids) {
           const pointId = pointIdObj.toString();
           try {
             const point = session.points.get(pointId);
-
-            if (
-              point &&
-              (point as any).ficheId &&
-              (point as any).ficheId.toString() === ficheId
-            ) {
-              (point as any).ficheId = undefined;
+            if (!point) continue;
+            const ids: any[] = Array.isArray((point as any).fiches_ids)
+              ? (point as any).fiches_ids
+              : [];
+            const filtered = ids.filter(
+              (fid) => fid?.toString() !== ficheId,
+            );
+            if (filtered.length !== ids.length) {
+              (point as any).fiches_ids = filtered;
               session.dirtyPointIds.add(pointId);
             }
           } catch (pointRefError) {
@@ -800,23 +796,30 @@ export class MemoryStorageService {
       }
 
       // Ajouter le point à la fiche s'il n'existe pas déjà
-      if (!fiche.points_ids.some((id) => id.toString() === pointId)) {
+      const alreadyInFiche = fiche.points_ids.some(
+        (id) => id.toString() === pointId,
+      );
+      if (!alreadyInFiche) {
         fiche.points_ids.push(pointId as any);
+      }
 
-        // Stockage de ficheId comme ObjectID explicite
-        try {
-          // Convertir en ObjectID si ce n'est pas déjà fait
-          const objectIdFicheId = mongoose.Types.ObjectId.isValid(ficheId)
-            ? new mongoose.Types.ObjectId(ficheId)
-            : ficheId;
+      // Ajouter la fiche au tableau fiches_ids du point (sans doublon)
+      const existingFicheIds: any[] = Array.isArray(
+        (point as any).fiches_ids,
+      )
+        ? (point as any).fiches_ids
+        : [];
+      const alreadyHasFiche = existingFicheIds.some(
+        (fid) => fid?.toString() === ficheId,
+      );
+      if (!alreadyHasFiche) {
+        const objectIdFicheId = mongoose.Types.ObjectId.isValid(ficheId)
+          ? new mongoose.Types.ObjectId(ficheId)
+          : (ficheId as any);
+        (point as any).fiches_ids = [...existingFicheIds, objectIdFicheId];
+      }
 
-          // Assigner la valeur ObjectID au point
-          (point as any).ficheId = objectIdFicheId;
-        } catch (_idError) {
-          // Fallback à une chaîne simple si la conversion échoue
-          (point as any).ficheId = ficheId;
-        }
-
+      if (!alreadyInFiche || !alreadyHasFiche) {
         session.isDirty = true;
         session.dirtyFicheIds.add(ficheId);
         session.dirtyPointIds.add(pointId);
@@ -863,15 +866,17 @@ export class MemoryStorageService {
         return false;
       }
 
-      // 2. Si le point existe, supprimer sa référence à cette fiche
+      // 2. Si le point existe, retirer ficheId de son tableau fiches_ids
       if (point) {
         try {
-          // Vérifier si le point est associé à la fiche qu'on modifie
-          if (
-            (point as any).ficheId &&
-            (point as any).ficheId.toString() === ficheId
-          ) {
-            (point as any).ficheId = undefined;
+          const ids: any[] = Array.isArray((point as any).fiches_ids)
+            ? (point as any).fiches_ids
+            : [];
+          const filtered = ids.filter(
+            (fid) => fid?.toString() !== ficheId,
+          );
+          if (filtered.length !== ids.length) {
+            (point as any).fiches_ids = filtered;
           }
         } catch (_pointError) {
           // On continue malgré l'erreur pour au moins mettre à jour la fiche
@@ -1242,19 +1247,21 @@ export class MemoryStorageService {
     });
   }
 
-  // Trouver une fiche par pointId
+  // Trouver une fiche par pointId (retourne la 1ʳᵉ fiche du point s'il en a plusieurs)
   getFicheByPointId(userId: string, pointId: string): IFiche | undefined {
     try {
       this.logAccess("getFicheByPointId", userId, { pointId });
       const session = this.getSession(userId);
       const point = session.points.get(pointId);
 
-      if (!point || !point.ficheId) {
+      const ids = Array.isArray((point as any)?.fiches_ids)
+        ? (point as any).fiches_ids
+        : [];
+      if (!point || ids.length === 0) {
         return undefined;
       }
 
-      // Récupérer la fiche associée au point
-      return session.fiches.get(point.ficheId.toString());
+      return session.fiches.get(ids[0].toString());
     } catch (error) {
       memoryLogger.error("Failed to get fiche by point", {
         userId,
