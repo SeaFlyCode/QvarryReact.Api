@@ -24,6 +24,7 @@ import {
   generateVerificationCode,
   sendPasswordResetEmail,
 } from "../services/emailService";
+import { resetPasswordByToken } from "../services/passwordResetTokenService";
 import { associateDeviceWithUser } from "../middlewares/mobileSecurityMiddleware";
 import { maskEmail } from "../utils/logUtils";
 import { logger } from "../services/loggerService";
@@ -563,10 +564,21 @@ export async function handleMobileForgotPassword(req: Request, res: Response) {
       reset_password_expires: resetExpires,
     });
 
-    // Envoyer l'email
-    const frontendUrl = process.env.FRONTEND_URL || "https://app.qvarry.fr";
-    const resetLink = `${frontendUrl}/?reset=${encodeURIComponent(email)}`;
-    const resetCode = crypto.randomBytes(3).toString("hex").toUpperCase(); // Code 6 caractères
+    // Construction du lien Universal Link (iOS) / App Link (Android).
+    // L'URL DOIT être HTTPS (Apple/Google refusent les schemes custom comme
+    // qvarry:// pour les Universal/App Links). Le domaine doit servir AASA et
+    // assetlinks.json sur /.well-known (cf. server.ts).
+    //
+    // Variable env :
+    //   MOBILE_DEEP_LINK_BASE_URL (prod : https://qvarry.fr)
+    //   En dev / fallback : on retombe sur http://localhost:3000.
+    const deepLinkBaseUrl =
+      process.env.MOBILE_DEEP_LINK_BASE_URL ||
+      (process.env.NODE_ENV === "production"
+        ? "https://qvarry.fr"
+        : "http://localhost:3000");
+    const resetLink = `${deepLinkBaseUrl}/reset-password/${resetToken}`;
+    const resetCode = crypto.randomBytes(3).toString("hex").toUpperCase(); // Code 6 caractères (fallback affiché dans l'email)
 
     await sendPasswordResetEmail(
       email,
@@ -775,4 +787,128 @@ export async function handleMobileRefreshToken(req: Request, res: Response) {
       code: "INTERNAL_ERROR",
     });
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HANDLERS: LOGIN NOTIFICATIONS (toggle email alerte connexion)
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function handleGetLoginNotifications(req: Request, res: Response) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        error: "Authentification requise.",
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    const user = await UserModel.findById(userId).select(
+      "login_notifications_enabled",
+    );
+    if (!user) {
+      return res.status(404).json({
+        error: "Utilisateur non trouvé.",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    return res
+      .status(200)
+      .json({ enabled: user.login_notifications_enabled !== false });
+  } catch (error) {
+    mobileAuthLogger.error("Erreur lecture login_notifications", {
+      userId: req.user?.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(500).json({
+      error: "Erreur lors de la lecture du paramètre.",
+      code: "INTERNAL_ERROR",
+    });
+  }
+}
+
+export async function handleUpdateLoginNotifications(
+  req: Request,
+  res: Response,
+) {
+  try {
+    const userId = req.user?.id;
+    if (!userId) {
+      return res.status(401).json({
+        error: "Authentification requise.",
+        code: "UNAUTHORIZED",
+      });
+    }
+
+    const { enabled } = req.body;
+    if (typeof enabled !== "boolean") {
+      return res.status(400).json({
+        error: "Le champ `enabled` doit être un booléen.",
+        code: "INVALID_PAYLOAD",
+      });
+    }
+
+    const user = await UserModel.findById(userId);
+    if (!user) {
+      return res.status(404).json({
+        error: "Utilisateur non trouvé.",
+        code: "USER_NOT_FOUND",
+      });
+    }
+
+    user.login_notifications_enabled = enabled;
+    await user.save();
+
+    mobileAuthLogger.info("login_notifications mis à jour", {
+      userId,
+      enabled,
+    });
+
+    return res.status(200).json({ enabled });
+  } catch (error) {
+    mobileAuthLogger.error("Erreur update login_notifications", {
+      userId: req.user?.id,
+      error: error instanceof Error ? error.message : String(error),
+    });
+    return res.status(500).json({
+      error: "Erreur lors de la mise à jour.",
+      code: "INTERNAL_ERROR",
+    });
+  }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// HANDLER: RESET PASSWORD MOBILE (Universal Link / App Link)
+// ═══════════════════════════════════════════════════════════════════════════
+// Pendant du flow handleMobileForgotPassword : valide le token reçu via le deep
+// link (https://qvarry.fr/reset-password/<token>) et applique le nouveau mot de
+// passe. PAS d'auth requise — l'utilisateur n'est pas connecté quand il arrive
+// sur cet endpoint.
+//
+// Schéma de token : crypto.randomBytes(32).toString("hex") généré dans
+// handleMobileForgotPassword, stocké en SHA-256 dans user.reset_password_token.
+// On hash le token reçu et on cherche un user dont reset_password_token == hash
+// et reset_password_expires > now.
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function handleMobileResetPassword(req: Request, res: Response) {
+  const mobileContext = (req as any).mobileContext;
+  const { token, newPassword } = req.body || {};
+
+  const result = await resetPasswordByToken(token, newPassword, {
+    ipAddress: req.ip || req.connection.remoteAddress,
+    userAgent: req.headers["user-agent"] || "App Mobile",
+    source: "mobile",
+    platform: mobileContext?.platform,
+    deviceId: mobileContext?.deviceId,
+  });
+
+  if (!result.success) {
+    return res
+      .status(result.status)
+      .json({ error: result.message, code: result.code });
+  }
+
+  return res.status(200).json({ success: true });
 }

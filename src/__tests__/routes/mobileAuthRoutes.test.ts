@@ -18,6 +18,16 @@ jest.mock("../../controllers/mobileAuthControllers", () => ({
     res.status(200).json({}),
   ),
   handleMobileGetMe: jest.fn((req: any, res: any) => res.status(200).json({})),
+  handleGetLoginNotifications: jest.fn((req: any, res: any) =>
+    res.status(200).json({}),
+  ),
+  handleUpdateLoginNotifications: jest.fn((req: any, res: any) =>
+    res.status(200).json({}),
+  ),
+  // Universal Link / App Link : reset password mobile
+  handleMobileResetPassword: jest.fn((req: any, res: any) =>
+    res.status(200).json({}),
+  ),
 }));
 
 jest.mock("../../controllers/auth/logoutController", () => ({
@@ -71,7 +81,10 @@ describe("mobileAuthRoutes", () => {
 
   it("should have the correct number of routes", () => {
     const routes = getRoutes();
-    expect(routes).toHaveLength(6);
+    // 6 historiques (login, register, forgot-password, refresh, logout, /me)
+    // + 2 toggles login_notifications (GET + PUT)
+    // + 1 nouveau reset-password (Universal Link / App Link)
+    expect(routes).toHaveLength(9);
   });
 
   it("should register POST /login for mobile login", () => {
@@ -97,5 +110,30 @@ describe("mobileAuthRoutes", () => {
   it("should register POST /logout for mobile logout", () => {
     const routes = getRoutes();
     expect(routes).toContainEqual({ method: "POST", path: "/logout" });
+  });
+
+  it("should register POST /reset-password for Universal Link / App Link", () => {
+    const routes = getRoutes();
+    expect(routes).toContainEqual({
+      method: "POST",
+      path: "/reset-password",
+    });
+  });
+
+  it("should register GET /me for fetching mobile profile", () => {
+    const routes = getRoutes();
+    expect(routes).toContainEqual({ method: "GET", path: "/me" });
+  });
+
+  it("should register GET + PUT /notifications/login", () => {
+    const routes = getRoutes();
+    expect(routes).toContainEqual({
+      method: "GET",
+      path: "/notifications/login",
+    });
+    expect(routes).toContainEqual({
+      method: "PUT",
+      path: "/notifications/login",
+    });
   });
 });

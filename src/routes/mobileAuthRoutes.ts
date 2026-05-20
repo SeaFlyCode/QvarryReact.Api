@@ -11,6 +11,9 @@ import {
   handleMobileForgotPassword,
   handleMobileRefreshToken,
   handleMobileGetMe,
+  handleGetLoginNotifications,
+  handleUpdateLoginNotifications,
+  handleMobileResetPassword,
 } from "../controllers/mobileAuthControllers";
 import { handleLogoutUser } from "../controllers/auth/logoutController";
 import { handleUnifiedLogin } from "../controllers/auth/unifiedAuthController";
@@ -229,6 +232,31 @@ router.post(
 );
 
 /**
+ * POST /api/v1/mobile/auth/reset-password
+ * Réinitialisation effective du mot de passe via le token Universal Link / App Link.
+ *
+ * Flow : forgot-password → email avec lien `https://qvarry.fr/reset-password/<token>` →
+ * l'utilisateur clique → l'app native ou la page web fallback POST ici avec
+ * { token, newPassword }.
+ *
+ * PAS de mobileAuthMiddleware : l'utilisateur n'est PAS connecté à ce stade.
+ * Protections en place :
+ *   - verifyMobilePlatform : impose X-Platform (ios|android)
+ *   - appCheckMiddleware : Firebase App Check (anti-bot)
+ *   - mobileAttestationLimiter : 3 tentatives/heure/IP (anti brute-force token)
+ *
+ * Body : { token: string (64 hex chars), newPassword: string }
+ * Codes erreur : INVALID_TOKEN | TOKEN_EXPIRED | WEAK_PASSWORD | USER_NOT_FOUND | INTERNAL_ERROR
+ */
+router.post(
+  "/reset-password",
+  verifyMobilePlatform,
+  appCheckMiddleware,
+  mobileAttestationLimiter,
+  handleMobileResetPassword,
+);
+
+/**
  * POST /api/mobile/auth/refresh
  * Rafraîchissement du token JWT
  * Rate limiting plus souple car déjà authentifié
@@ -280,6 +308,29 @@ router.get(
   mobileRateLimitMiddleware,
   mobileAuthMiddleware,
   handleMobileGetMe,
+);
+
+/**
+ * GET /api/v1/mobile/auth/notifications/login
+ * PUT /api/v1/mobile/auth/notifications/login
+ *
+ * Toggle de l'envoi d'email à chaque connexion (flag user.login_notifications_enabled).
+ * Auth-only (mobileAuthMiddleware) ; pas de currentPassword car action low-risk.
+ */
+router.get(
+  "/notifications/login",
+  verifyMobilePlatform,
+  mobileRateLimitMiddleware,
+  mobileAuthMiddleware,
+  handleGetLoginNotifications,
+);
+
+router.put(
+  "/notifications/login",
+  verifyMobilePlatform,
+  mobileRateLimitMiddleware,
+  mobileAuthMiddleware,
+  handleUpdateLoginNotifications,
 );
 
 export default router;
