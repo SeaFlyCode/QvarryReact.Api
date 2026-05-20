@@ -69,6 +69,7 @@ import { connectToDatabase } from "./config/database";
 import userRoutes from "./routes/userRoutes";
 import authRoutes from "./routes/authRoutes";
 import conversationsRoutes from "./routes/conversationsRoutes";
+import deepLinkRoutes from "./routes/deepLinkRoutes";
 // Rate limiters centralisés
 import {
   globalRateLimiter,
@@ -568,6 +569,19 @@ app.use("/api", (req, res, next) => {
 });
 
 app.use(cookieParser());
+
+// ═══════════════════════════════════════════════════════════════════════════
+// DEEP LINK ROUTES (Universal Links iOS + App Links Android + page fallback)
+// ═══════════════════════════════════════════════════════════════════════════
+// Routes publiques hors `/api` :
+//   - GET /.well-known/apple-app-site-association  (Content-Type: application/json)
+//   - GET /.well-known/assetlinks.json             (Content-Type: application/json)
+//   - GET /reset-password/:token                   (page HTML fallback web)
+//
+// Montées AVANT le rewrite `/api` → `/api/v1` et AVANT les rate limiters API
+// pour ne pas être impactées. Pas d'auth, pas de redirect (impératif Apple/Google).
+// ═══════════════════════════════════════════════════════════════════════════
+app.use(deepLinkRoutes);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITERS - Application des limiteurs (importés depuis rateLimitConfig.ts)

@@ -7,6 +7,7 @@ import {
   getWebSocketToken,
   handleForgotPassword,
   handleResetPassword,
+  handleResetPasswordByToken,
   completeLoginAfter2FA,
   handleAuthMe,
   // P1 — handlers unifiés (web + mobile, pas de cookies serveur)
@@ -265,6 +266,38 @@ router.post("/forgot-password", handleForgotPassword);
  *         description: Token invalide ou expiré
  */
 router.post("/reset-password", handleResetPassword);
+
+/**
+ * @swagger
+ * /auth/reset-password-token:
+ *   post:
+ *     summary: Réinitialiser le mot de passe via un token URL (page fallback web)
+ *     description: |
+ *       Endpoint miroir de POST /mobile/auth/reset-password pour la page web de
+ *       fallback `/reset-password/:token` (servie quand l'utilisateur n'a pas
+ *       l'app mobile installée et clique sur le lien Universal Link dans son
+ *       email forgot-password). Partage le même service métier
+ *       (passwordResetTokenService).
+ *     tags: [Auth]
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         application/json:
+ *           schema:
+ *             type: object
+ *             required: [token, newPassword]
+ *             properties:
+ *               token:
+ *                 type: string
+ *                 description: Token reçu par email (64 chars hex)
+ *               newPassword:
+ *                 type: string
+ *                 format: password
+ *     responses:
+ *       200: { description: Mot de passe réinitialisé }
+ *       400: { description: 'INVALID_TOKEN | TOKEN_EXPIRED | WEAK_PASSWORD | USER_NOT_FOUND' }
+ */
+router.post("/reset-password-token", handleResetPasswordByToken);
 
 /**
  * @swagger

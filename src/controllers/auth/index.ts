@@ -21,6 +21,7 @@ export {
 export {
   handleForgotPassword,
   handleResetPassword,
+  handleResetPasswordByToken,
 } from "./passwordController";
 
 // Logout

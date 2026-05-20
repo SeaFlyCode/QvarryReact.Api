@@ -15,6 +15,8 @@ jest.mock("../../controllers/auth", () => ({
   getWebSocketToken: jest.fn(),
   handleForgotPassword: jest.fn(),
   handleResetPassword: jest.fn(),
+  // Universal Link / App Link : handler web miroir du handler mobile
+  handleResetPasswordByToken: jest.fn(),
   completeLoginAfter2FA: jest.fn(),
   handleAuthMe: jest.fn(),
   // V7: handlers unifiés Vague 1 (auth/login + 2FA web+mobile)
@@ -55,7 +57,10 @@ describe("authRoutes", () => {
 
   it("should have the correct number of routes", () => {
     const routes = getRoutes();
-    expect(routes.length).toBe(10);
+    // Inclut : login, refresh, logout, sync, sync/refresh, check, me, ws-token,
+    // forgot-password, reset-password, reset-password-token, complete-2fa,
+    // complete-2fa-login, complete-2fa-legacy.
+    expect(routes.length).toBe(14);
   });
 
   it("should register POST /login", () => {
@@ -101,6 +106,14 @@ describe("authRoutes", () => {
   it("should register POST /reset-password", () => {
     const routes = getRoutes();
     expect(routes).toContainEqual({ method: "POST", path: "/reset-password" });
+  });
+
+  it("should register POST /reset-password-token (Universal Link fallback)", () => {
+    const routes = getRoutes();
+    expect(routes).toContainEqual({
+      method: "POST",
+      path: "/reset-password-token",
+    });
   });
 
   it("should register POST /complete-2fa-login", () => {

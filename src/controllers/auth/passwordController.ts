@@ -20,6 +20,7 @@ import {
   validatePasswordStrength,
 } from "../../utils/passwordUtils";
 import { logger } from "../../services/loggerService";
+import { resetPasswordByToken } from "../../services/passwordResetTokenService";
 
 const passwordLogger = logger.child({ service: "auth-password" });
 
@@ -258,4 +259,40 @@ export async function handleResetPassword(req: Request, res: Response) {
       error: "Une erreur interne est survenue",
     });
   }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════
+// RESET PASSWORD BY TOKEN — endpoint web miroir de la version mobile
+// ═══════════════════════════════════════════════════════════════════════════
+// Utilisé par la page de fallback `/reset-password/:token` (servie par cette
+// même API) quand l'utilisateur n'a PAS installé l'app mobile et tombe sur le
+// site web depuis l'email forgot-password.
+//
+// Partage la même logique métier que handleMobileResetPassword via
+// passwordResetTokenService.resetPasswordByToken. Pas de middlewares mobile
+// (verifyMobilePlatform / appCheckMiddleware) — protection via
+// passwordResetLimiter monté en amont (cf. server.ts).
+//
+// Body : { token: string (64 hex chars), newPassword: string }
+// ═══════════════════════════════════════════════════════════════════════════
+
+export async function handleResetPasswordByToken(
+  req: Request,
+  res: Response,
+) {
+  const { token, newPassword } = req.body || {};
+
+  const result = await resetPasswordByToken(token, newPassword, {
+    ipAddress: req.ip || req.connection.remoteAddress,
+    userAgent: req.headers["user-agent"] || "Navigateur",
+    source: "web-fallback",
+  });
+
+  if (!result.success) {
+    return res
+      .status(result.status)
+      .json({ error: result.message, code: result.code });
+  }
+
+  return res.status(200).json({ success: true });
 }
