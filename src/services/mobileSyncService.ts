@@ -979,10 +979,117 @@ class MobileSyncService {
 
         updateData.version = serverVersion + 1;
 
+        // ⚠️ Le champ `listIds` n'existe PAS dans le schema Point — l'association
+        // point↔liste est stockée côté List (List.points). On retire listIds
+        // d'updateData et on synchronise List.points en parallèle (ajout dans
+        // les nouvelles listes, retrait des anciennes). Sans ce switch, l'écriture
+        // `Point.listIds` serait silencieusement ignorée par Mongoose strict
+        // (cf. log "willWriteListIds" qui ne ressortait jamais en relecture DB).
+        const targetListIds = Array.isArray(updateData.listIds)
+          ? updateData.listIds.map((id: any) => id.toString())
+          : null;
+        delete updateData.listIds;
+
         await PointModel.updateOne(
           { _id: change.id, userId: new mongoose.Types.ObjectId(userId) },
           { $set: updateData },
         );
+
+        // Symétrie N-N côté Fiche.points_ids : Point.fiches_ids vient d'être
+        // mis à jour, mais Fiche.points_ids garde l'ancien état → quand on
+        // consulte une fiche pour voir ses points, on aurait des points
+        // fantômes (ancienne fiche) ou manquants (nouvelle fiche). On répercute
+        // l'ajout/retrait au même moment.
+        if (Array.isArray(updateData.fiches_ids)) {
+          const pointObjectId = new mongoose.Types.ObjectId(change.id);
+          const newFicheSet = new Set(
+            updateData.fiches_ids.map((id: any) => id.toString()),
+          );
+          const currentFiches = await FicheModel.find({
+            userId: new mongoose.Types.ObjectId(userId),
+            points_ids: pointObjectId,
+          })
+            .select("_id")
+            .lean();
+          const currentFicheSet = new Set(
+            currentFiches.map((f: any) => f._id.toString()),
+          );
+
+          const ficheToRemove = [...currentFicheSet].filter(
+            (id) => !newFicheSet.has(id),
+          );
+          const ficheToAdd = [...newFicheSet].filter(
+            (id) => !currentFicheSet.has(id),
+          );
+
+          if (ficheToRemove.length > 0) {
+            await FicheModel.updateMany(
+              {
+                _id: {
+                  $in: ficheToRemove.map(
+                    (id) => new mongoose.Types.ObjectId(String(id)),
+                  ),
+                },
+                userId: new mongoose.Types.ObjectId(userId),
+              },
+              { $pull: { points_ids: pointObjectId } },
+            );
+          }
+          if (ficheToAdd.length > 0) {
+            await FicheModel.updateMany(
+              {
+                _id: {
+                  $in: ficheToAdd.map(
+                    (id) => new mongoose.Types.ObjectId(String(id)),
+                  ),
+                },
+                userId: new mongoose.Types.ObjectId(userId),
+              },
+              { $addToSet: { points_ids: pointObjectId } },
+            );
+          }
+        }
+
+        if (targetListIds !== null) {
+          // Récupérer toutes les listes de l'utilisateur qui contiennent
+          // actuellement ce point — c'est la source de vérité (le Point ne
+          // porte pas l'inverse de la relation).
+          const pointObjectId = new mongoose.Types.ObjectId(change.id);
+          const currentLists = await ListModel.find({
+            userId: new mongoose.Types.ObjectId(userId),
+            points: pointObjectId,
+          })
+            .select("_id")
+            .lean();
+          const currentSet = new Set(
+            currentLists.map((l: any) => l._id.toString()),
+          );
+          const targetSet = new Set(targetListIds);
+
+          // Listes à retirer : présentes maintenant mais pas dans la cible
+          const toRemove = [...currentSet].filter((id) => !targetSet.has(id));
+          // Listes à ajouter : cible mais pas présentes
+          const toAdd = [...targetSet].filter((id) => !currentSet.has(id));
+
+          if (toRemove.length > 0) {
+            await ListModel.updateMany(
+              {
+                _id: { $in: toRemove.map((id) => new mongoose.Types.ObjectId(String(id))) },
+                userId: new mongoose.Types.ObjectId(userId),
+              },
+              { $pull: { points: pointObjectId } },
+            );
+          }
+          if (toAdd.length > 0) {
+            await ListModel.updateMany(
+              {
+                _id: { $in: toAdd.map((id) => new mongoose.Types.ObjectId(String(id))) },
+                userId: new mongoose.Types.ObjectId(userId),
+              },
+              { $addToSet: { points: pointObjectId } },
+            );
+          }
+        }
 
         synced.push(change);
         break;
