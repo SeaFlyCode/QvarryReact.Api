@@ -199,7 +199,19 @@ export async function handleSosActivate(req: Request, res: Response) {
       }
     }
 
-    mobileSosLogger.error("Erreur activation", { error: errorMsg });
+    // Logger le VRAI message d'erreur (pas le message masqué retourné au client
+    // par getErrorMessage en prod) — sinon Loki affiche juste "Une erreur
+    // interne est survenue" et le diag est impossible. Ces infos restent
+    // côté serveur, ne sont jamais envoyées au client.
+    mobileSosLogger.error("Erreur activation", {
+      error: error instanceof Error ? error.message : String(error),
+      name: error instanceof Error ? error.name : undefined,
+      stack:
+        error instanceof Error && error.stack
+          ? error.stack.split("\n").slice(0, 6).join(" | ")
+          : undefined,
+      maskedMessage: errorMsg,
+    });
     res.status(500).json({
       error: "Erreur lors de l'activation du SOS.",
       code: "INTERNAL_ERROR",
