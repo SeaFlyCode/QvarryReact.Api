@@ -731,7 +731,54 @@ class MobileSyncService {
     const conflicts: SyncConflict[] = [];
     const errors: any[] = [];
 
-    for (const change of changes) {
+    // §M (bug 15) — Mapping localId → serverId intra-batch.
+    // Cause racine du `Cast to ObjectId failed for value "local-..."` observé
+    // côté production : un client offline-first envoie souvent dans le même
+    // batch [CREATE list localId="local-A", UPDATE list id="local-A" pointIds=[...]].
+    // Sans résolution intra-batch, le UPDATE arrive avec change.id="local-A",
+    // Mongoose tente de cast en ObjectId et explose. Mêmes risques sur les
+    // références croisées (fiches_ids, listIds, pointIds, points, listId,
+    // ficheId) si un point/fiche/liste créé dans le batch est référencé par
+    // un autre change du même batch. On maintient un map alimenté à chaque
+    // CREATE réussi et on l'applique en pré-traitement de chaque change.
+    const localToServer = new Map<string, string>();
+
+    const resolveId = (id?: string): string | undefined => {
+      if (!id) return id;
+      if (id.startsWith("local-") && localToServer.has(id)) {
+        return localToServer.get(id);
+      }
+      return id;
+    };
+
+    const resolveIdArray = (arr: unknown): unknown => {
+      if (!Array.isArray(arr)) return arr;
+      return arr.map((v: unknown) =>
+        typeof v === "string" && v.startsWith("local-") && localToServer.has(v)
+          ? localToServer.get(v)!
+          : v,
+      );
+    };
+
+    const resolveChangeRefs = (change: LocalChange): LocalChange => {
+      const resolved: LocalChange = { ...change };
+      if (resolved.id) resolved.id = resolveId(resolved.id);
+      if (resolved.data && typeof resolved.data === "object") {
+        const d: any = { ...resolved.data };
+        if (d.fiches_ids !== undefined) d.fiches_ids = resolveIdArray(d.fiches_ids);
+        if (d.listIds !== undefined) d.listIds = resolveIdArray(d.listIds);
+        if (d.pointIds !== undefined) d.pointIds = resolveIdArray(d.pointIds);
+        if (d.points !== undefined) d.points = resolveIdArray(d.points);
+        if (typeof d.listId === "string") d.listId = resolveId(d.listId);
+        if (typeof d.ficheId === "string") d.ficheId = resolveId(d.ficheId);
+        resolved.data = d;
+      }
+      return resolved;
+    };
+
+    for (const originalChange of changes) {
+      const change = resolveChangeRefs(originalChange);
+      const syncedCountBefore = synced.length;
       try {
         switch (change.type) {
           case "point":
@@ -765,6 +812,15 @@ class MobileSyncService {
             await this.applySosContactChange(userId, change, synced, conflicts);
             break;
         }
+
+        // Si un CREATE a réussi et produit un mapping localId → serverId,
+        // l'enregistrer pour les changes suivants du même batch.
+        if (change.action === "create" && synced.length > syncedCountBefore) {
+          const last = synced[synced.length - 1];
+          if (last?.localId && last?.id) {
+            localToServer.set(last.localId, last.id);
+          }
+        }
       } catch (error) {
         mobileSyncLogger.error("Erreur application changement", {
           error: getErrorMessage(error),
@@ -781,6 +837,7 @@ class MobileSyncService {
       synced: synced.length,
       conflicts: conflicts.length,
       errors: errors.length,
+      intraBatchMappings: localToServer.size,
     });
     return { synced, conflicts, errors };
   }
@@ -879,6 +936,47 @@ class MobileSyncService {
           );
         if (data.accessType !== undefined)
           updateData.accessType = data.accessType;
+
+        // §M (bug 12) — fiches_ids et listIds étaient ignorés ici : un PATCH
+        // point via sync n'écrivait jamais les associations N-N → "lier un
+        // point à une fiche en modifiant ne s'enregistre pas". On normalise
+        // string → ObjectId (mêmes garde-fous que CREATE l.816-826) et on
+        // ignore silencieusement les IDs invalides (typiquement localId
+        // `local-…` d'une fiche/liste pas encore push).
+        if ((data as any).fiches_ids !== undefined) {
+          const raw = (data as any).fiches_ids;
+          if (raw === null || (Array.isArray(raw) && raw.length === 0)) {
+            updateData.fiches_ids = [];
+          } else if (Array.isArray(raw)) {
+            updateData.fiches_ids = raw
+              .filter((fid: any) =>
+                mongoose.Types.ObjectId.isValid(String(fid)),
+              )
+              .map((fid: any) => new mongoose.Types.ObjectId(String(fid)));
+          }
+        }
+        if ((data as any).listIds !== undefined) {
+          const raw = (data as any).listIds;
+          if (raw === null || (Array.isArray(raw) && raw.length === 0)) {
+            updateData.listIds = [];
+          } else if (Array.isArray(raw)) {
+            updateData.listIds = raw
+              .filter((lid: any) =>
+                mongoose.Types.ObjectId.isValid(String(lid)),
+              )
+              .map((lid: any) => new mongoose.Types.ObjectId(String(lid)));
+          }
+        }
+        // Rétro-compat : le client peut envoyer listId (singular) au lieu de listIds
+        if ((data as any).listId !== undefined && updateData.listIds === undefined) {
+          const lid = (data as any).listId;
+          if (lid === null) {
+            updateData.listIds = [];
+          } else if (mongoose.Types.ObjectId.isValid(String(lid))) {
+            updateData.listIds = [new mongoose.Types.ObjectId(String(lid))];
+          }
+        }
+
         updateData.version = serverVersion + 1;
 
         await PointModel.updateOne(

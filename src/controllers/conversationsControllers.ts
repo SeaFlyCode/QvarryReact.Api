@@ -90,6 +90,34 @@ export async function createPrivateConversation(req: Request, res: Response) {
       ],
     });
     if (!contact) {
+      // §M (bug 13) — Investigation : query SANS filtres pour comprendre pourquoi
+      // l'utilisateur voit "Vous devez être contacts" alors qu'il pense l'être.
+      // Causes possibles : status="pending" malgré affichage côté mobile,
+      // relation unidirectionnelle (A→B accepted mais pas B→A), isBlocked=true,
+      // ou aucune relation en DB. Le résultat de cette query est crucial pour
+      // diagnostiquer en prod sans accès direct à la base.
+      const debugMatches = await Contact.find({
+        $or: [
+          { userId: userObjectId, contactId: participantObjectId },
+          { userId: participantObjectId, contactId: userObjectId },
+        ],
+      })
+        .select("_id userId contactId status isBlocked createdAt")
+        .lean();
+
+      convoLogger.warn("createPrivateConversation: contact non accepté", {
+        requesterId: userId,
+        targetId: participantId,
+        matches: debugMatches.map((m: any) => ({
+          // direction: A2B = (requester→target), B2A = (target→requester)
+          direction: m.userId?.toString() === userId ? "A2B" : "B2A",
+          status: m.status,
+          isBlocked: m.isBlocked,
+          createdAt: m.createdAt,
+        })),
+        matchCount: debugMatches.length,
+      });
+
       return res.status(403).json({
         error:
           "Vous devez être contacts pour démarrer une conversation privée.",
