@@ -91,6 +91,9 @@ COPY --from=deps --chown=appuser:nodejs /app/node_modules ./node_modules
 # Templates d'email (nécessaires au runtime)
 COPY --from=builder --chown=appuser:nodejs /app/src/templates ./dist/templates
 
+# Assets publics (logo emails, etc.) — servis par publicAssetsRoutes
+COPY --from=builder --chown=appuser:nodejs /app/src/assets ./dist/assets
+
 # Package.json pour les infos de version (optionnel)
 COPY --from=builder --chown=appuser:nodejs /app/package.json ./
 

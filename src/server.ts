@@ -70,6 +70,7 @@ import userRoutes from "./routes/userRoutes";
 import authRoutes from "./routes/authRoutes";
 import conversationsRoutes from "./routes/conversationsRoutes";
 import deepLinkRoutes from "./routes/deepLinkRoutes";
+import publicAssetsRoutes from "./routes/publicAssetsRoutes";
 // Rate limiters centralisés
 import {
   globalRateLimiter,
@@ -308,10 +309,7 @@ app.use(
         return true;
       }
       // Skip tous les logs HTTP si LOG_LEVEL est error ou critical
-      if (LOG_LEVEL === "error" || LOG_LEVEL === "critical") {
-        return true;
-      }
-      return false;
+      return LOG_LEVEL === "error" || LOG_LEVEL === "critical";
     },
     stream: httpLogStream,
   }),
@@ -582,6 +580,14 @@ app.use(cookieParser());
 // pour ne pas être impactées. Pas d'auth, pas de redirect (impératif Apple/Google).
 // ═══════════════════════════════════════════════════════════════════════════
 app.use(deepLinkRoutes);
+
+// ═══════════════════════════════════════════════════════════════════════════
+// PUBLIC ASSETS (logo emails, etc.)
+// ═══════════════════════════════════════════════════════════════════════════
+// Routes publiques hors `/api`, sans auth ni CSRF, cacheables. Servent les
+// assets statiques whitelistés (voir src/routes/publicAssetsRoutes.ts).
+// ═══════════════════════════════════════════════════════════════════════════
+app.use(publicAssetsRoutes);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITERS - Application des limiteurs (importés depuis rateLimitConfig.ts)
