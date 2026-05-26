@@ -372,6 +372,12 @@ export const listContacts = async (
           _id: c._id,
           userId: senderUser?._id || c.userId,
           contactId: contactUser?._id || c.contactId,
+          // `otherUserId` = _id du correspondant (jamais l'utilisateur courant).
+          // Sans ce champ, les clients qui envoient `participantId: contact.contactId`
+          // à `POST /conversations/private` se voient en 403 "vous devez être contacts"
+          // dès qu'ils sont destinataires de la relation (`contactId === currentUser._id`),
+          // car le check $or (userId+contactId / contactId+userId) ne matche jamais.
+          otherUserId: otherUser?._id || (isRecipient ? senderUser?._id || c.userId : contactUser?._id || c.contactId),
           contactCode: c.contactCode,
           status: c.status,
           isBlocked: c.isBlocked,
