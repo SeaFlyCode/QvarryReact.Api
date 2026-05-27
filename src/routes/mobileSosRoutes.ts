@@ -9,10 +9,7 @@ import express from "express";
 import Redis, { Cluster } from "ioredis";
 import { authMiddleware } from "../middlewares/authMiddleware";
 import { validateObjectId } from "../middlewares/validateObjectIdMiddleware";
-import {
-  verifyMobilePlatform,
-  mobileRateLimitMiddleware,
-} from "../middlewares/mobileSecurityMiddleware";
+import { verifyMobilePlatform } from "../middlewares/mobileSecurityMiddleware";
 import { appCheckMiddleware } from "../middlewares/appCheckMiddleware";
 import { logger } from "../services/loggerService";
 import {
@@ -36,14 +33,16 @@ import {
 const router = express.Router();
 
 // ═══════════════════════════════════════════════════════════════════════════
-// MIDDLEWARE COMMUN : Vérification plateforme + Auth + Rate Limit
+// MIDDLEWARE COMMUN : Vérification plateforme + Auth
 // ═══════════════════════════════════════════════════════════════════════════
+// Pas de rate limiter générique ici : /activate a sosActivateRateLimiter,
+// heartbeat/extend/status/deactivate ont sosCriticalRateLimiter, et le reste
+// (contacts CRUD, history, participants) est protégé par auth + globalRateLimiter.
 
 const mobileSosMiddleware = [
   appCheckMiddleware,
   verifyMobilePlatform,
   authMiddleware,
-  mobileRateLimitMiddleware,
 ];
 
 // ═══════════════════════════════════════════════════════════════════════════

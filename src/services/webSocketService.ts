@@ -4047,6 +4047,127 @@ class WebSocketService {
       );
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // 2026-05-27 — MULTI-DEVICE PREFERENCES (mute / unmute / archive / unarchive)
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Préférences PRIVÉES à l'utilisateur : mute & archive. Quand l'utilisateur
+  // les modifie depuis un device, on broadcast à TOUS SES sockets (notifs +
+  // messages de la conv concernée) pour que les autres devices syncent leur
+  // UI sans round-trip REST. JAMAIS de broadcast aux autres participants.
+  //
+  // Best-effort : un crash WS ne fait jamais échouer la requête HTTP.
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Envoie un payload à TOUS les sockets (notifications + messages-de-cette-conv)
+   * d'un utilisateur unique. Best-effort, par-socket safeSend.
+   *
+   * NB: la déduplication côté device initiateur est laissée au client
+   * (l'event arrive ~en même temps que la réponse HTTP optimiste).
+   */
+  private notifyUserConversationEvent(
+    userId: string,
+    conversationId: string,
+    payload: Record<string, unknown>,
+  ): void {
+    if (!userId || !conversationId) return;
+    try {
+      this.dispatchToBothChannels(userId, conversationId, payload);
+    } catch (err) {
+      wsLogger.error("[WS] notifyUserConversationEvent failed (swallowed)", {
+        userId,
+        conversationId,
+        type: payload["type"],
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  /**
+   * Broadcast `conversation_muted` aux devices du user qui vient de mute.
+   */
+  broadcastConversationMuted(
+    userId: string,
+    conversationId: string,
+    mutedUntil: Date | null,
+    notifyOnMention: boolean,
+    updatedAt: Date,
+  ): void {
+    const payload = {
+      type: "conversation_muted",
+      conversationId,
+      mutedUntil: mutedUntil ? mutedUntil.toISOString() : null,
+      notifyOnMention,
+      updatedAt: updatedAt.toISOString(),
+    };
+    this.notifyUserConversationEvent(userId, conversationId, payload);
+    wsLogger.debug("[WS] conversation_muted broadcast", {
+      userId,
+      conversationId,
+      mutedUntil: payload.mutedUntil,
+    });
+  }
+
+  /**
+   * Broadcast `conversation_unmuted` aux devices du user qui vient de unmute.
+   */
+  broadcastConversationUnmuted(
+    userId: string,
+    conversationId: string,
+    updatedAt: Date,
+  ): void {
+    const payload = {
+      type: "conversation_unmuted",
+      conversationId,
+      updatedAt: updatedAt.toISOString(),
+    };
+    this.notifyUserConversationEvent(userId, conversationId, payload);
+    wsLogger.debug("[WS] conversation_unmuted broadcast", {
+      userId,
+      conversationId,
+    });
+  }
+
+  /**
+   * Broadcast `conversation_archived` aux devices du user qui vient d'archiver.
+   */
+  broadcastConversationArchived(
+    userId: string,
+    conversationId: string,
+    updatedAt: Date,
+  ): void {
+    const payload = {
+      type: "conversation_archived",
+      conversationId,
+      updatedAt: updatedAt.toISOString(),
+    };
+    this.notifyUserConversationEvent(userId, conversationId, payload);
+    wsLogger.debug("[WS] conversation_archived broadcast", {
+      userId,
+      conversationId,
+    });
+  }
+
+  /**
+   * Broadcast `conversation_unarchived` aux devices du user qui vient de désarchiver.
+   */
+  broadcastConversationUnarchived(
+    userId: string,
+    conversationId: string,
+    updatedAt: Date,
+  ): void {
+    const payload = {
+      type: "conversation_unarchived",
+      conversationId,
+      updatedAt: updatedAt.toISOString(),
+    };
+    this.notifyUserConversationEvent(userId, conversationId, payload);
+    wsLogger.debug("[WS] conversation_unarchived broadcast", {
+      userId,
+      conversationId,
+    });
+  }
 }
 
 // Export d'une instance singleton

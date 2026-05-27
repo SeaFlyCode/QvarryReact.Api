@@ -1694,6 +1694,23 @@ export async function muteConversation(req: Request, res: Response) {
 
     const userPreferences = calculateUserPreferences(conversation, userId);
 
+    // 2026-05-27: broadcast WS aux AUTRES devices du même user (préférence privée)
+    try {
+      webSocketService.broadcastConversationMuted(
+        userId,
+        id,
+        parsedMutedUntil,
+        notifyOnMention ?? true,
+        conversation.updatedAt,
+      );
+    } catch (wsErr) {
+      convoLogger.error("Broadcast conversation_muted échoué (swallowed)", {
+        conversationId: id,
+        userId,
+        error: wsErr instanceof Error ? wsErr.message : String(wsErr),
+      });
+    }
+
     convoLogger.info("Conversation mise en sourdine", {
       conversationId: id,
       userId,
@@ -1772,6 +1789,21 @@ export async function unmuteConversation(req: Request, res: Response) {
 
     const userPreferences = calculateUserPreferences(conversation, userId);
 
+    // 2026-05-27: broadcast WS aux AUTRES devices du même user (préférence privée)
+    try {
+      webSocketService.broadcastConversationUnmuted(
+        userId,
+        id,
+        conversation.updatedAt,
+      );
+    } catch (wsErr) {
+      convoLogger.error("Broadcast conversation_unmuted échoué (swallowed)", {
+        conversationId: id,
+        userId,
+        error: wsErr instanceof Error ? wsErr.message : String(wsErr),
+      });
+    }
+
     convoLogger.info("Conversation réactivée", { conversationId: id, userId });
 
     res.json({
@@ -1845,6 +1877,21 @@ export async function archiveConversation(req: Request, res: Response) {
 
     const userPreferences = calculateUserPreferences(conversation, userId);
 
+    // 2026-05-27: broadcast WS aux AUTRES devices du même user (préférence privée)
+    try {
+      webSocketService.broadcastConversationArchived(
+        userId,
+        id,
+        conversation.updatedAt,
+      );
+    } catch (wsErr) {
+      convoLogger.error("Broadcast conversation_archived échoué (swallowed)", {
+        conversationId: id,
+        userId,
+        error: wsErr instanceof Error ? wsErr.message : String(wsErr),
+      });
+    }
+
     convoLogger.info("Conversation archivée", { conversationId: id, userId });
 
     res.json({
@@ -1913,6 +1960,21 @@ export async function unarchiveConversation(req: Request, res: Response) {
     await conversation.save();
 
     const userPreferences = calculateUserPreferences(conversation, userId);
+
+    // 2026-05-27: broadcast WS aux AUTRES devices du même user (préférence privée)
+    try {
+      webSocketService.broadcastConversationUnarchived(
+        userId,
+        id,
+        conversation.updatedAt,
+      );
+    } catch (wsErr) {
+      convoLogger.error("Broadcast conversation_unarchived échoué (swallowed)", {
+        conversationId: id,
+        userId,
+        error: wsErr instanceof Error ? wsErr.message : String(wsErr),
+      });
+    }
 
     convoLogger.info("Conversation désarchivée", {
       conversationId: id,
