@@ -267,6 +267,40 @@ class StorageService {
   }
 
   /**
+   * Copie la photo d'un point d'un utilisateur source vers un point d'un
+   * utilisateur cible (utilisé lors de l'acceptation d'un partage).
+   *
+   * N'incrémente PAS le quota et ne met PAS à jour `Point.photo` : c'est au
+   * caller d'orchestrer (vérification quota atomique, mise à jour métadonnées,
+   * rollback éventuel via deletePointPhoto en cas d'échec post-copie).
+   *
+   * @returns `{ size }` si la copie a réussi, `null` si la source n'existe
+   *          plus côté sender (partage potentiellement corrompu — le caller
+   *          décide quoi faire).
+   */
+  async copyPointPhoto(
+    sourceUserId: string,
+    sourcePointId: string,
+    targetUserId: string,
+    targetPointId: string,
+  ): Promise<{ size: number } | null> {
+    const sourcePath = this.getPhotoPath(sourceUserId, sourcePointId);
+
+    if (!(await this.fileExists(sourcePath))) {
+      log.warn("Photo source absente lors d'une copie de partage", {
+        sourceUserId,
+        sourcePointId,
+      });
+      return null;
+    }
+
+    const buffer = await fs.promises.readFile(sourcePath);
+    await this.savePointPhoto(targetUserId, targetPointId, buffer);
+
+    return { size: buffer.length };
+  }
+
+  /**
    * Obtient la taille d'un fichier
    * @param userId - ID de l'utilisateur
    * @param pointId - ID du point

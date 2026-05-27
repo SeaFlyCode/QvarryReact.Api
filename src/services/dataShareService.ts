@@ -18,6 +18,8 @@ import { memoryStorage } from "./memoryStorageService";
 import { createNotification } from "./notificationService";
 import { logger } from "./loggerService";
 import { safeJsonParse } from "../utils/secureJsonParser";
+import storageService from "./storageService";
+import storageQuotaService, { QuotaExceededError } from "./storageQuotaService";
 
 const dataShareLogger = logger.child({ service: "data-share" });
 
@@ -1001,6 +1003,146 @@ export async function updateShareStatus(
 }
 
 /**
+ * Résultat d'une tentative de copie de photo pendant l'acceptation d'un partage.
+ *  - `copied`   : fichier physiquement copié, quota incrémenté, métadonnées
+ *                 prêtes à être assignées sur `newPoint.photo` par le caller
+ *  - `skipped`  : copie écartée car le quota du destinataire aurait été dépassé
+ *                 (best-effort : le point est créé sans photo, le caller doit
+ *                 notifier le destinataire)
+ *  - `none`     : pas de photo sur le point source, rien à faire
+ */
+type PhotoCopyOutcome =
+  | {
+      status: "copied";
+      photo: {
+        url: string;
+        size: number;
+        mimeType: string;
+        uploadedAt: Date;
+        originalName: string;
+        checksum: string;
+      };
+    }
+  | { status: "skipped" }
+  | { status: "none" };
+
+/**
+ * Tente de copier la photo d'un point partagé vers le compte du destinataire.
+ *
+ * Le caller doit ASSIGNER le résultat à `newPoint.photo` (status === "copied")
+ * avant de sauvegarder le point — cette fonction ne touche pas au document.
+ *
+ * @throws Error si la photo référencée dans le payload n'existe pas côté
+ *               sender (partage corrompu — propagé pour faire échouer
+ *               l'acceptation).
+ */
+async function copyPointPhotoForShare(
+  senderId: mongoose.Types.ObjectId,
+  sourcePointId: mongoose.Types.ObjectId,
+  receiverId: mongoose.Types.ObjectId,
+  newPointId: mongoose.Types.ObjectId,
+  payloadPhoto:
+    | { mimeType?: string; originalName?: string; checksum?: string }
+    | undefined,
+): Promise<PhotoCopyOutcome> {
+  if (!payloadPhoto) {
+    return { status: "none" };
+  }
+
+  const senderIdStr = senderId.toString();
+  const sourcePointIdStr = sourcePointId.toString();
+  const receiverIdStr = receiverId.toString();
+  const newPointIdStr = newPointId.toString();
+
+  const copyResult = await storageService.copyPointPhoto(
+    senderIdStr,
+    sourcePointIdStr,
+    receiverIdStr,
+    newPointIdStr,
+  );
+
+  if (copyResult === null) {
+    throw new Error(
+      "Photo source absente côté expéditeur — partage corrompu, acceptation annulée",
+    );
+  }
+
+  try {
+    await storageQuotaService.incrementStorageUsed(
+      receiverIdStr,
+      copyResult.size,
+    );
+  } catch (error) {
+    if (error instanceof QuotaExceededError) {
+      // Best-effort : on rollback le fichier qu'on vient d'écrire, le point
+      // sera créé sans photo et une notification sera envoyée par le caller.
+      await storageService
+        .deletePointPhoto(receiverIdStr, newPointIdStr)
+        .catch((rollbackErr) =>
+          dataShareLogger.warn(
+            "Rollback fichier après QuotaExceeded a échoué",
+            {
+              receiverId: receiverIdStr,
+              newPointId: newPointIdStr,
+              error:
+                rollbackErr instanceof Error
+                  ? rollbackErr.message
+                  : String(rollbackErr),
+            },
+          ),
+        );
+      return { status: "skipped" };
+    }
+    throw error;
+  }
+
+  return {
+    status: "copied",
+    photo: {
+      url: `/api/points/${newPointIdStr}/photo`,
+      size: copyResult.size,
+      mimeType: payloadPhoto.mimeType || "image/jpeg",
+      uploadedAt: new Date(),
+      originalName: payloadPhoto.originalName || "",
+      checksum: payloadPhoto.checksum || "",
+    },
+  };
+}
+
+/**
+ * Notifie le destinataire qu'une ou plusieurs photos n'ont pas pu être copiées
+ * faute de quota. La notification est best-effort : si elle échoue, on log mais
+ * on ne fait pas échouer le partage.
+ */
+async function notifyPhotoSkipped(
+  receiverId: mongoose.Types.ObjectId,
+  shareId: mongoose.Types.ObjectId,
+  count: number,
+  senderId: mongoose.Types.ObjectId,
+): Promise<void> {
+  try {
+    const message =
+      count === 1
+        ? "Quota de stockage plein : 1 photo n'a pas pu être copiée."
+        : `Quota de stockage plein : ${count} photos n'ont pas pu être copiées.`;
+    await createNotification(
+      receiverId,
+      "share_photo_skipped",
+      "Photo(s) non copiée(s)",
+      message,
+      { shareId, senderId },
+    );
+  } catch (error) {
+    dataShareLogger.warn("Échec notification photo skipped", {
+      receiverId: receiverId.toString(),
+      shareId: shareId.toString(),
+      count,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
+/**
  * Copie les données partagées dans le compte du destinataire
  * Crée de nouvelles entités (point, fiche, liste) avec les clés du destinataire
  * Et les ajoute au memoryStorage si une session existe
@@ -1052,6 +1194,17 @@ async function copySharedDataToReceiver(
     sharedData = await getSharedDataForCopy(receiverId, shareId);
   }
   const { data, dataType } = sharedData;
+
+  // Récupérer senderId + dataId original pour pouvoir localiser les photos
+  // sources sur le disque du sender (le payload chiffré ne les contient pas).
+  const shareDoc = await DataShareModel.findById(shareId).select(
+    "senderId dataId",
+  );
+  if (!shareDoc) {
+    throw new Error("Partage introuvable lors de la copie");
+  }
+  const senderId = shareDoc.senderId as mongoose.Types.ObjectId;
+  const originalDataId = shareDoc.dataId as mongoose.Types.ObjectId;
 
   const receiverIdStr = receiverId.toString();
   const hasSession = memoryStorage.hasSession(receiverIdStr);
@@ -1110,7 +1263,25 @@ async function copySharedDataToReceiver(
         location: geoJsonLocation,
       });
 
+      // Tentative de copie de la photo AVANT save : on assigne le résultat
+      // au document si la copie a réussi, sinon le point est sauvegardé sans
+      // photo. Une source absente fait throw (annule l'acceptation).
+      const photoOutcome = await copyPointPhotoForShare(
+        senderId,
+        originalDataId,
+        receiverId,
+        newPoint._id as mongoose.Types.ObjectId,
+        pointData.photo,
+      );
+      if (photoOutcome.status === "copied") {
+        newPoint.photo = photoOutcome.photo;
+      }
+
       await newPoint.save();
+
+      if (photoOutcome.status === "skipped") {
+        await notifyPhotoSkipped(receiverId, shareId, 1, senderId);
+      }
 
       // Ajouter au memoryStorage si session active (avec données déchiffrées)
       if (hasSession) {
@@ -1124,6 +1295,7 @@ async function copySharedDataToReceiver(
           accessType: pointData.accessType || "",
           createdAt: newPoint.createdAt,
           updatedAt: newPoint.updatedAt,
+          ...(newPoint.photo ? { photo: newPoint.photo } : {}),
         };
         memoryStorage.storePoint(receiverIdStr, pointForMemory as any);
         dataShareLogger.info("Point ajouté au memoryStorage");
@@ -1131,6 +1303,7 @@ async function copySharedDataToReceiver(
 
       dataShareLogger.info("Point copié et chiffré", {
         pointId: newPoint._id.toString(),
+        photo: photoOutcome.status,
       });
       return {
         type: "point",
@@ -1147,6 +1320,7 @@ async function copySharedDataToReceiver(
       // D'abord créer les points (avec chiffrement complet, en parallèle)
       const newPointIds: mongoose.Types.ObjectId[] = [];
       const newPointsForMemory: any[] = [];
+      let skippedPhotosCount = 0;
 
       const createdFichePoints = await Promise.all(
         pointsData.map(async (pointData: any) => {
@@ -1197,6 +1371,23 @@ async function copySharedDataToReceiver(
             location: geoJsonLocation,
           });
 
+          // Copier la photo si présente sur le point source (best-effort :
+          // une source absente fait throw, ce qui rejette ce Promise.all
+          // et annule l'acceptation).
+          let photoOutcome: PhotoCopyOutcome = { status: "none" };
+          if (pointData.photo && pointData._id) {
+            photoOutcome = await copyPointPhotoForShare(
+              senderId,
+              new mongoose.Types.ObjectId(pointData._id),
+              receiverId,
+              newPoint._id as mongoose.Types.ObjectId,
+              pointData.photo,
+            );
+            if (photoOutcome.status === "copied") {
+              newPoint.photo = photoOutcome.photo;
+            }
+          }
+
           await newPoint.save();
 
           // Préparer pour memoryStorage (données déchiffrées)
@@ -1210,18 +1401,30 @@ async function copySharedDataToReceiver(
             accessType: pointData.accessType || "",
             createdAt: newPoint.createdAt,
             updatedAt: newPoint.updatedAt,
+            ...(newPoint.photo ? { photo: newPoint.photo } : {}),
           };
 
           return {
             pointId: newPoint._id as mongoose.Types.ObjectId,
             pointForMemory,
+            photoSkipped: photoOutcome.status === "skipped",
           };
         }),
       );
 
-      for (const { pointId, pointForMemory } of createdFichePoints) {
+      for (const { pointId, pointForMemory, photoSkipped } of createdFichePoints) {
         newPointIds.push(pointId);
         newPointsForMemory.push(pointForMemory);
+        if (photoSkipped) skippedPhotosCount++;
+      }
+
+      if (skippedPhotosCount > 0) {
+        await notifyPhotoSkipped(
+          receiverId,
+          shareId,
+          skippedPhotosCount,
+          senderId,
+        );
       }
 
       // Helper pour convertir en string (gère les tableaux)
@@ -1405,6 +1608,7 @@ async function copySharedDataToReceiver(
       // D'abord créer les points (avec chiffrement complet, en parallèle)
       const newPointIds: mongoose.Types.ObjectId[] = [];
       const newPointsForMemory: any[] = [];
+      let skippedPhotosCount = 0;
 
       const createdListPoints = await Promise.all(
         pointsData.map(async (pointData: any) => {
@@ -1455,6 +1659,21 @@ async function copySharedDataToReceiver(
             location: geoJsonLocation,
           });
 
+          // Copier la photo si présente (best-effort, voir cas "fiche")
+          let photoOutcome: PhotoCopyOutcome = { status: "none" };
+          if (pointData.photo && pointData._id) {
+            photoOutcome = await copyPointPhotoForShare(
+              senderId,
+              new mongoose.Types.ObjectId(pointData._id),
+              receiverId,
+              newPoint._id as mongoose.Types.ObjectId,
+              pointData.photo,
+            );
+            if (photoOutcome.status === "copied") {
+              newPoint.photo = photoOutcome.photo;
+            }
+          }
+
           await newPoint.save();
 
           // Préparer pour memoryStorage (données déchiffrées)
@@ -1468,18 +1687,30 @@ async function copySharedDataToReceiver(
             accessType: pointData.accessType || "",
             createdAt: newPoint.createdAt,
             updatedAt: newPoint.updatedAt,
+            ...(newPoint.photo ? { photo: newPoint.photo } : {}),
           };
 
           return {
             pointId: newPoint._id as mongoose.Types.ObjectId,
             pointForMemory,
+            photoSkipped: photoOutcome.status === "skipped",
           };
         }),
       );
 
-      for (const { pointId, pointForMemory } of createdListPoints) {
+      for (const { pointId, pointForMemory, photoSkipped } of createdListPoints) {
         newPointIds.push(pointId);
         newPointsForMemory.push(pointForMemory);
+        if (photoSkipped) skippedPhotosCount++;
+      }
+
+      if (skippedPhotosCount > 0) {
+        await notifyPhotoSkipped(
+          receiverId,
+          shareId,
+          skippedPhotosCount,
+          senderId,
+        );
       }
 
       // Chiffrer les champs de la liste

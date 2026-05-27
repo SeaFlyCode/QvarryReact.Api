@@ -12,6 +12,7 @@ export type NotificationType =
   | "share_read" // Votre partage a été lu
   | "share_expiring_soon" // Un partage va expirer dans 2 jours
   | "share_expired" // Un partage a expiré
+  | "share_photo_skipped" // Photo(s) non copiée(s) lors d'une acceptation (quota plein)
   | "sos_alert" // Alerte SOS générique (stage 0)
   | "sos_stage1_alert" // Alerte SOS stage 1 (notification à tous les users)
   | "contact_refused" // Demande de contact refusée
@@ -91,6 +92,7 @@ const notificationSchema: Schema<INotification> = new Schema(
         "share_read",
         "share_expiring_soon",
         "share_expired",
+        "share_photo_skipped",
         "sos_alert",
         "sos_stage1_alert",
         "contact_refused",
