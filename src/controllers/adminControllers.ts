@@ -11,6 +11,7 @@ import AuditLogModel from "../models/auditLogs";
 import { auditService } from "../services/auditService";
 import { securityAlertService } from "../services/securityAlertService";
 import { refreshTokenService } from "../services/refreshTokenService";
+import { webSocketService } from "../services/webSocketService";
 import { decrypt, hashEmail } from "../utils/masterEncryptionUtils";
 import { maskEmail } from "../utils/logUtils";
 import mongoose from "mongoose";
@@ -621,6 +622,10 @@ export async function blockUser(req: Request, res: Response) {
 
     // Révoquer toutes ses sessions
     await refreshTokenService.revokeAllUserTokens(userId, "user_blocked");
+
+    // Force la fermeture immédiate des WS actives du user — sinon il reste
+    // "connecté" côté UI jusqu'à sa prochaine requête HTTP. Best-effort.
+    webSocketService.broadcastUserSessionRevoked(userId, "user_blocked");
 
     // Log d'audit
     await auditService.log({

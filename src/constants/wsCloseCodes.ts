@@ -23,6 +23,8 @@ export const WS_CLOSE_CODES = {
   FORBIDDEN: 4005,
   /** Trop de connexions WS pour cette IP/user. */
   RATE_LIMITED: 4006,
+  /** L'utilisateur a été bloqué ou supprimé par un admin pendant que sa WS était active. Le client purge tout, pas de retry. */
+  SESSION_REVOKED: 4007,
   /** Pas de pong reçu dans le délai (60 s par défaut). */
   HEARTBEAT_TIMEOUT: 4010,
   /** Le serveur redémarre — le client doit reconnecter avec backoff. */
@@ -48,6 +50,7 @@ export const WS_CLOSE_REASONS: Record<WsCloseCode, string> = {
   [WS_CLOSE_CODES.APP_CHECK_FAILED]: "app_check_failed",
   [WS_CLOSE_CODES.FORBIDDEN]: "forbidden",
   [WS_CLOSE_CODES.RATE_LIMITED]: "rate_limited",
+  [WS_CLOSE_CODES.SESSION_REVOKED]: "session_revoked",
   [WS_CLOSE_CODES.HEARTBEAT_TIMEOUT]: "heartbeat_timeout",
   [WS_CLOSE_CODES.SERVER_SHUTDOWN]: "server_shutdown",
   [WS_CLOSE_CODES.PROTOCOL_VIOLATION]: "protocol_violation",

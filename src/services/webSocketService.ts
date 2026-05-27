@@ -3940,6 +3940,113 @@ class WebSocketService {
       });
     }
   }
+
+  // ═══════════════════════════════════════════════════════════════════════════
+  // FORCE-LOGOUT WS — USER BLOQUÉ / SUPPRIMÉ PAR UN ADMIN
+  // ═══════════════════════════════════════════════════════════════════════════
+  // Quand un admin bloque ou supprime un user, ses refresh tokens sont
+  // révoqués mais sa/ses WS actives restent OPEN jusqu'à la prochaine
+  // requête HTTP. Cette méthode notifie + ferme TOUTES ses sockets
+  // (notifications + messages) avec le close code 4007.
+  //
+  // Contrat client (web/mobile) :
+  //   1) message texte : {type:"error", code:"SESSION_REVOKED", message:"..."}
+  //   2) close(4007, "session_revoked")
+  // → le client purge cookies/localStorage/sessionStorage et redirige login.
+  //
+  // Limitation V1 : pas de pub/sub Redis dédié — si le user a des WS sur
+  // d'autres workers d'un cluster, seules les sockets de l'instance qui
+  // exécute cette méthode seront fermées. Acceptable car l'event est
+  // best-effort (le client finira de toute façon coupé au prochain refresh
+  // token HTTP qui retournera 401 → reconnexion impossible).
+  // ═══════════════════════════════════════════════════════════════════════════
+
+  /**
+   * Force la fermeture de TOUTES les WS d'un utilisateur (notifications +
+   * messages) après blocage/suppression admin. Best-effort : un crash WS ne
+   * fait jamais échouer la requête HTTP appelante.
+   *
+   * @param userId ID Mongo de l'utilisateur ciblé
+   * @param reason raison machine-readable loguée (ex: "user_blocked", "user_deleted")
+   */
+  broadcastUserSessionRevoked(userId: string, reason: string): void {
+    if (!userId) return;
+
+    try {
+      const errorPayload = JSON.stringify({
+        type: "error",
+        code: "SESSION_REVOKED",
+        message:
+          "Votre session a été révoquée. Veuillez vous reconnecter.",
+      });
+
+      const closeCode = WS_CLOSE_CODES.SESSION_REVOKED;
+      const closeReason = WS_CLOSE_REASONS[closeCode];
+
+      let closedSockets = 0;
+
+      // 1) Sockets notifications
+      const notifClients = this.clients.get(userId);
+      if (notifClients) {
+        notifClients.forEach((client) => {
+          if (client.readyState === WebSocket.OPEN) {
+            this.safeSend(client, errorPayload);
+            try {
+              client.close(closeCode, closeReason);
+              closedSockets++;
+            } catch (err) {
+              wsLogger.error(
+                "[WS] session_revoked close failed on notif socket (swallowed)",
+                {
+                  userId,
+                  error: err instanceof Error ? err.message : String(err),
+                },
+              );
+            }
+          }
+        });
+      }
+
+      // 2) Sockets messages (Map<conversationId, Set<WS>>)
+      const userConversations = this.messageClients.get(userId);
+      if (userConversations) {
+        userConversations.forEach((conversationClients) => {
+          conversationClients.forEach((client) => {
+            if (client.readyState === WebSocket.OPEN) {
+              this.safeSend(client, errorPayload);
+              try {
+                client.close(closeCode, closeReason);
+                closedSockets++;
+              } catch (err) {
+                wsLogger.error(
+                  "[WS] session_revoked close failed on msg socket (swallowed)",
+                  {
+                    userId,
+                    error: err instanceof Error ? err.message : String(err),
+                  },
+                );
+              }
+            }
+          });
+        });
+      }
+
+      wsLogger.info("[WS] user_session_revoked broadcast", {
+        userId,
+        reason,
+        closedSockets,
+      });
+    } catch (err) {
+      wsLogger.error(
+        "[WS] user_session_revoked broadcast failed (swallowed)",
+        {
+          userId,
+          reason,
+          error: err instanceof Error ? err.message : String(err),
+        },
+      );
+    }
+  }
 }
 
 // Export d'une instance singleton
