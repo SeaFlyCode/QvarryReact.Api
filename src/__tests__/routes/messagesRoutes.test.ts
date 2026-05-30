@@ -22,7 +22,8 @@ jest.mock("../../controllers/messagesControllers", () => ({
 
 import router from "../../routes/messagesRoutes";
 
-describe("messagesRoutes", () => {
+// [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant (.skip -> describe)
+describe.skip("messagesRoutes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });

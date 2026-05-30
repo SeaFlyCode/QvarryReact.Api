@@ -2204,13 +2204,14 @@ class WebSocketService {
 
             // WS-006: Validation de schéma - types de message autorisés
             const ALLOWED_MESSAGE_TYPES = [
-              "message",
-              "getMessages",
-              "markMessageAsRead",
-              "replyToMessage",
-              "editMessage",
-              "deleteMessage",
-              "resume", // PHASE 4
+              // [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant
+              // "message",
+              // "getMessages",
+              // "markMessageAsRead",
+              // "replyToMessage",
+              // "editMessage",
+              // "deleteMessage",
+              // "resume", // PHASE 4
               "ack", // PHASE 4
               "ping", // 2026-05-04 heartbeat applicatif
               "pong", // 2026-05-04 heartbeat applicatif
@@ -2301,6 +2302,11 @@ class WebSocketService {
               return;
             }
 
+            // [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant
+            // Handlers de CHAT neutralisés (message / getMessages / markMessageAsRead /
+            // replyToMessage / editMessage / deleteMessage / resume). Le reste du canal WS
+            // (ping/pong, typing, ack, notifications, SOS, présence) reste actif.
+            /* [MSG-OFF 2026-05-30] DÉBUT bloc messagerie désactivé
             // ═══════════════════════════════════════════════════════════════════════════
             // VÉRIFICATION BLOCAGE : Empêcher l'envoi/réception si conversation bloquée
             // PERF: Utilise cache Redis (TTL 5min) pour réduire requêtes MongoDB de 90%
@@ -2521,7 +2527,9 @@ class WebSocketService {
                   }),
                 );
               }
-            } else if (data.type === "ack") {
+            }
+            [MSG-OFF 2026-05-30] FIN bloc messagerie désactivé */
+            if (data.type === "ack") {
               // PHASE 4: Acknowledge message delivery
               if (!client.userId || !client.deviceId) {
                 return;

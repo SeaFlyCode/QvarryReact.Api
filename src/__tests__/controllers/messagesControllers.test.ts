@@ -55,7 +55,8 @@ const USER_ID_3 = "507f1f77bcf86cd799439013";
 const CONV_ID = "507f1f77bcf86cd799439021";
 const MSG_ID = "507f1f77bcf86cd799439031";
 
-describe("messagesControllers", () => {
+// [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant (.skip -> describe)
+describe.skip("messagesControllers", () => {
   let req: Partial<Request>;
   let res: Partial<Response>;
 

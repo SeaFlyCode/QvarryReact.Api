@@ -68,7 +68,8 @@ import express from "express";
 import { connectToDatabase } from "./config/database";
 import userRoutes from "./routes/userRoutes";
 import authRoutes from "./routes/authRoutes";
-import conversationsRoutes from "./routes/conversationsRoutes";
+// [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant
+// import conversationsRoutes from "./routes/conversationsRoutes";
 import deepLinkRoutes from "./routes/deepLinkRoutes";
 import publicAssetsRoutes from "./routes/publicAssetsRoutes";
 // Rate limiters centralisés
@@ -101,7 +102,8 @@ import compression from "compression";
 import pointsRoutes from "./routes/pointsRoutes";
 import fichesRoutes from "./routes/fichesRoutes";
 import listsRoutes from "./routes/listsRoutes";
-import messagesRoutes from "./routes/messagesRoutes";
+// [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant
+// import messagesRoutes from "./routes/messagesRoutes";
 import contactRoutes from "./routes/contactRoutes";
 import dataShareRoutes from "./routes/dataShareRoutes";
 import notificationsRoutes from "./routes/notificationsRoutes";
@@ -1090,8 +1092,9 @@ app.use("/api", generalLimiter);
     app.use("/api/v1/users", userRoutes);
     app.use("/api/v1/points", pointsRoutes);
     app.use("/api/v1/lists", listsRoutes);
-    app.use("/api/v1/conversations/", conversationsRoutes);
-    app.use("/api/v1/messages/", messagesRoutes);
+    // [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant
+    // app.use("/api/v1/conversations/", conversationsRoutes);
+    // app.use("/api/v1/messages/", messagesRoutes);
     app.use("/api/v1/contacts", contactRoutes);
     app.use("/api/v1/share", dataShareRoutes);
     app.use("/api/v1/notifications", notificationsRoutes);
@@ -1466,11 +1469,13 @@ app.use("/api", generalLimiter);
       "Service de retry des notifications démarré (vérifie les notifications en attente au startup)",
     );
 
+    // [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant
+    // Cron de nettoyage des mutes (lié aux conversations) désactivé avec la messagerie.
     // Démarrer le cron job de nettoyage des mutes expirés
-    const { startCleanExpiredMutesJob } =
-      await import("./jobs/cleanExpiredMutes");
-    startCleanExpiredMutesJob();
-    serverLogger.info("Cron job de nettoyage des mutes expirés démarré");
+    // const { startCleanExpiredMutesJob } =
+    //   await import("./jobs/cleanExpiredMutes");
+    // startCleanExpiredMutesJob();
+    // serverLogger.info("Cron job de nettoyage des mutes expirés démarré");
   } catch (err) {
     serverLogger.critical("Impossible de se connecter à la base de données", {
       error: getErrorMessage(err),
