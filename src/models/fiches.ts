@@ -22,6 +22,8 @@ export interface IFiche extends Document {
   surface?: string[];
   type_galeries?: string[];
   interets?: string;
+  zone_protegee?: string;
+  zone_protegee_autre?: string;
   center_cavite?: {
     type: string;
     coordinates: number[];
@@ -113,6 +115,14 @@ const ficheSchema = new Schema<IFiche>(
       default: [],
     },
     interets: {
+      type: String,
+      default: "",
+    },
+    zone_protegee: {
+      type: String,
+      default: "",
+    },
+    zone_protegee_autre: {
       type: String,
       default: "",
     },

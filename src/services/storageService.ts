@@ -8,7 +8,6 @@ import { STORAGE_CONFIG } from "../config/storageConfig";
 import {
   sanitizePathId,
   validatePathWithinBase,
-  PathSanitizationError,
 } from "../utils/pathSanitizer";
 import { createServiceLogger } from "../utils/contextLogger";
 import { logPerformance } from "../utils/performanceLogger";

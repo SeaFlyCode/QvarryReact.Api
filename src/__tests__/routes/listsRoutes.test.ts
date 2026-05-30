@@ -42,7 +42,8 @@ jest.mock("../../controllers/listsControllers", () => ({
 
 import router from "../../routes/listsRoutes";
 
-describe("listsRoutes", () => {
+// [LIST-OFF 2026-05-30] désactivation temporaire du système de listes — réactiver en décommentant (describe.skip → describe)
+describe.skip("listsRoutes", () => {
   beforeEach(() => {
     jest.clearAllMocks();
   });

@@ -654,6 +654,12 @@ export async function decryptFicheOptimized(fiche: any, userKey: string) {
     const interets = fiche.interets
       ? decryptWithKey(fiche.interets, userKey)
       : "";
+    const zone_protegee = fiche.zone_protegee
+      ? decryptWithKey(fiche.zone_protegee, userKey)
+      : "";
+    const zone_protegee_autre = fiche.zone_protegee_autre
+      ? decryptWithKey(fiche.zone_protegee_autre, userKey)
+      : "";
 
     // Déchiffrer les champs tableaux (chaque élément est chiffré individuellement)
     // Robustesse: try/catch par élément pour qu'un élément invalide ne bloque pas toute la fiche
@@ -709,6 +715,8 @@ export async function decryptFicheOptimized(fiche: any, userKey: string) {
       surface,
       type_galeries,
       interets,
+      zone_protegee,
+      zone_protegee_autre,
       center_cavite: fiche.center_cavite,
       points_ids: fiche.points_ids,
       userId: fiche.userId,
@@ -1095,6 +1103,26 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
         );
       } else {
         (ficheFromDB as any).interets = "";
+      }
+
+      // Chiffrer le champ zone_protegee (renseigné manuellement par l'utilisateur)
+      if ((fiche as any).zone_protegee) {
+        (ficheFromDB as any).zone_protegee = await encryptUserData(
+          userKey,
+          (fiche as any).zone_protegee,
+        );
+      } else {
+        (ficheFromDB as any).zone_protegee = "";
+      }
+
+      // Chiffrer le champ zone_protegee_autre (précision libre, si zone_protegee === "Autre")
+      if ((fiche as any).zone_protegee_autre) {
+        (ficheFromDB as any).zone_protegee_autre = await encryptUserData(
+          userKey,
+          (fiche as any).zone_protegee_autre,
+        );
+      } else {
+        (ficheFromDB as any).zone_protegee_autre = "";
       }
 
       // Chiffrer le tableau equipement_conseille (chaque élément)

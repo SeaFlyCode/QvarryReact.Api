@@ -29,7 +29,8 @@ import { memoryStorage } from "../../services/memoryStorageService";
 import { syncService } from "../../services/syncService";
 import { mockRequest, mockResponse } from "../mocks";
 
-describe("listsControllers", () => {
+// [LIST-OFF 2026-05-30] désactivation temporaire du système de listes — réactiver en décommentant (describe.skip → describe)
+describe.skip("listsControllers", () => {
   let req: Partial<Request>;
   let res: Partial<Response>;
 

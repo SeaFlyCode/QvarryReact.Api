@@ -696,6 +696,10 @@ export async function getConversationDetails(req: Request, res: Response) {
         userId: p.userId,
         role: p.role,
       })),
+      // Préférences propres à l'utilisateur courant (sourdine, archive, pin…).
+      // Indispensable : le client (bannière in-app foreground) lit ce champ
+      // comme source de vérité pour décider d'afficher ou non une notification.
+      userPreferences: calculateUserPreferences(conversation, userId),
       createdAt: conversation.createdAt,
     });
   } catch (err) {
@@ -1365,6 +1369,23 @@ export async function markConversationAsRead(req: Request, res: Response) {
       },
     );
 
+    // Lire une conversation lève aussi le marquage manuel "non lu" : sinon le
+    // flag isMarkedUnread reste à true et la liste continue d'afficher la conv
+    // comme non lue (pastille) alors qu'elle vient d'être lue. On nettoie le
+    // flag + on synchronise le cache mémoire pour que listConversations reflète
+    // l'état à jour sans attendre un refetch DB.
+    const initialMarkedLength = conversation.markedUnreadBy.length;
+    conversation.markedUnreadBy = conversation.markedUnreadBy.filter(
+      (markedId: any) => markedId.toString() !== userId,
+    );
+    if (conversation.markedUnreadBy.length !== initialMarkedLength) {
+      await conversation.save();
+      memoryStorage.storeConversation(
+        userId,
+        conversation as unknown as IConversation,
+      );
+    }
+
     // Marquer aussi les notifications de message de cette conversation comme lues
     const NotificationModel = (await import("../models/notifications")).default;
     const notifResult = await NotificationModel.updateMany(
@@ -1692,6 +1713,15 @@ export async function muteConversation(req: Request, res: Response) {
     conversation.updatedAt = new Date();
     await conversation.save();
 
+    // Synchroniser le cache mémoire de CET utilisateur avec la DB à jour
+    // (mutedBy contient désormais l'utilisateur) sinon listConversations relit
+    // le cache pré-mute et recalcule isMuted=false → la sourdine ne persiste pas
+    // au refresh. Préférence par-utilisateur.
+    memoryStorage.storeConversation(
+      userId,
+      conversation as unknown as IConversation,
+    );
+
     const userPreferences = calculateUserPreferences(conversation, userId);
 
     // 2026-05-27: broadcast WS aux AUTRES devices du même user (préférence privée)
@@ -1787,6 +1817,15 @@ export async function unmuteConversation(req: Request, res: Response) {
     conversation.updatedAt = new Date();
     await conversation.save();
 
+    // Synchroniser le cache mémoire de CET utilisateur avec la DB à jour
+    // (mutedBy ne contient plus l'utilisateur) sinon listConversations relit le
+    // cache pré-unmute et recalcule isMuted=true → la cloche réapparaît au
+    // refresh. Préférence par-utilisateur.
+    memoryStorage.storeConversation(
+      userId,
+      conversation as unknown as IConversation,
+    );
+
     const userPreferences = calculateUserPreferences(conversation, userId);
 
     // 2026-05-27: broadcast WS aux AUTRES devices du même user (préférence privée)
@@ -1875,6 +1914,14 @@ export async function archiveConversation(req: Request, res: Response) {
     conversation.updatedAt = new Date();
     await conversation.save();
 
+    // Synchroniser le cache mémoire de CET utilisateur avec la DB à jour
+    // (archivedBy contient désormais l'utilisateur) pour que listConversations
+    // exclue bien la conversation de la liste active. Préférence par-utilisateur.
+    memoryStorage.storeConversation(
+      userId,
+      conversation as unknown as IConversation,
+    );
+
     const userPreferences = calculateUserPreferences(conversation, userId);
 
     // 2026-05-27: broadcast WS aux AUTRES devices du même user (préférence privée)
@@ -1959,6 +2006,14 @@ export async function unarchiveConversation(req: Request, res: Response) {
     conversation.updatedAt = new Date();
     await conversation.save();
 
+    // Synchroniser le cache mémoire de CET utilisateur avec la DB à jour
+    // (archivedBy ne contient plus l'utilisateur) pour que listConversations
+    // réaffiche la conversation dans la liste active. Préférence par-utilisateur.
+    memoryStorage.storeConversation(
+      userId,
+      conversation as unknown as IConversation,
+    );
+
     const userPreferences = calculateUserPreferences(conversation, userId);
 
     // 2026-05-27: broadcast WS aux AUTRES devices du même user (préférence privée)
@@ -2032,6 +2087,34 @@ export async function listArchivedConversations(req: Request, res: Response) {
       }),
     ]);
 
+    // ═══════════════════════════════════════════════════════════════════════════
+    // AGRÉGATION UNIQUE : Récupérer le dernier message et le nombre de non-lus
+    // pour TOUTES les conversations en une seule requête (fix N+1)
+    // ═══════════════════════════════════════════════════════════════════════════
+    const conversationIds = conversations.map(
+      (c: any) => new mongoose.Types.ObjectId(c._id.toString()),
+    );
+
+    const lastMessagesAgg = await Message.aggregate([
+      { $match: { conversationId: { $in: conversationIds } } },
+      { $sort: { createdAt: -1 as const } },
+      {
+        $group: {
+          _id: "$conversationId",
+          lastMessage: { $first: "$$ROOT" },
+          unreadCount: {
+            $sum: {
+              $cond: [{ $not: { $in: [userObjectId, "$readBy"] } }, 1, 0],
+            },
+          },
+        },
+      },
+    ]).option({ maxTimeMS: 5000 });
+
+    const messageMap = new Map(
+      lastMessagesAgg.map((m: any) => [m._id.toString(), m]),
+    );
+
     // Formater les conversations avec userPreferences
     const result = await Promise.all(
       conversations.map(async (conv: any) => {
@@ -2041,6 +2124,30 @@ export async function listArchivedConversations(req: Request, res: Response) {
             decryptedName = await decryptCommunication(conv.name);
           } catch (_e) {
             decryptedName = null;
+          }
+        }
+
+        // Récupérer le dernier message et unreadCount depuis l'agrégation
+        const aggData = messageMap.get(conv._id.toString());
+        const lastMsg = aggData?.lastMessage || null;
+        const unreadCount = aggData?.unreadCount || 0;
+
+        let lastMessageContent = null;
+        if (lastMsg && lastMsg.content) {
+          try {
+            const decryptedContent = await decryptCommunication(
+              lastMsg.content as string,
+            );
+            const senderId = lastMsg.senderId?.toString();
+            lastMessageContent =
+              senderId === userId
+                ? `Vous : ${decryptedContent}`
+                : decryptedContent;
+          } catch (e) {
+            convoLogger.error("Erreur dechiffrement dernier message", {
+              error: e,
+            });
+            lastMessageContent = null;
           }
         }
 
@@ -2055,6 +2162,8 @@ export async function listArchivedConversations(req: Request, res: Response) {
           isGroup: conv.isGroup,
           participants: conv.participants,
           creatorId: conv.creatorId,
+          lastMessage: lastMessageContent,
+          unreadCount,
           userPreferences,
           createdAt: conv.createdAt,
           updatedAt: conv.updatedAt,
@@ -2162,6 +2271,14 @@ export async function pinConversation(req: Request, res: Response) {
     conversation.updatedAt = new Date();
     await conversation.save();
 
+    // Synchroniser le cache mémoire de CET utilisateur avec la DB à jour
+    // (pinnedBy contient désormais l'utilisateur) sinon listConversations relit
+    // le cache pré-épinglage → l'épinglage ne persiste pas au refresh.
+    memoryStorage.storeConversation(
+      userId,
+      conversation as unknown as IConversation,
+    );
+
     const userPreferences = calculateUserPreferences(conversation, userId);
 
     convoLogger.info("Conversation épinglée", {
@@ -2236,6 +2353,14 @@ export async function unpinConversation(req: Request, res: Response) {
     conversation.updatedAt = new Date();
     await conversation.save();
 
+    // Synchroniser le cache mémoire de CET utilisateur avec la DB à jour
+    // (pinnedBy ne contient plus l'utilisateur) sinon listConversations relit le
+    // cache pré-désépinglage → le désépinglage ne persiste pas au refresh.
+    memoryStorage.storeConversation(
+      userId,
+      conversation as unknown as IConversation,
+    );
+
     const userPreferences = calculateUserPreferences(conversation, userId);
 
     convoLogger.info("Conversation désépinglée", {
@@ -2308,6 +2433,14 @@ export async function markConversationAsUnread(req: Request, res: Response) {
     conversation.updatedAt = new Date();
     await conversation.save();
 
+    // Synchroniser le cache mémoire de CET utilisateur avec la DB à jour
+    // (markedUnreadBy contient désormais l'utilisateur) sinon listConversations
+    // relit le cache pré-marquage → le marquage non lu ne persiste pas au refresh.
+    memoryStorage.storeConversation(
+      userId,
+      conversation as unknown as IConversation,
+    );
+
     const userPreferences = calculateUserPreferences(conversation, userId);
 
     convoLogger.info("Conversation marquée comme non lue", {
@@ -2379,6 +2512,14 @@ export async function unmarkConversationAsUnread(req: Request, res: Response) {
 
     conversation.updatedAt = new Date();
     await conversation.save();
+
+    // Synchroniser le cache mémoire de CET utilisateur avec la DB à jour
+    // (markedUnreadBy ne contient plus l'utilisateur) sinon listConversations
+    // relit le cache pré-retrait → le marquage lu ne persiste pas au refresh.
+    memoryStorage.storeConversation(
+      userId,
+      conversation as unknown as IConversation,
+    );
 
     const userPreferences = calculateUserPreferences(conversation, userId);
 

@@ -95,6 +95,20 @@ export const FICHE_TYPE_GALERIES = [
   "Inconnue",
 ] as const;
 
+// Zone protégée renseignée MANUELLEMENT par l'utilisateur (pas de détection auto).
+export const FICHE_ZONES_PROTEGEES = [
+  "Non concernée",
+  "Natura 2000",
+  "Réserve naturelle",
+  "Arrêté de protection de biotope",
+  "Parc national",
+  "Parc naturel régional",
+  "Site classé/inscrit",
+  "ZNIEFF",
+  "Autre",
+  "Inconnu",
+] as const;
+
 export type FicheType = (typeof FICHE_TYPES)[number];
 export type FicheEtat = (typeof FICHE_ETATS)[number];
 export type FicheAccessibilite = (typeof FICHE_ACCESSIBILITES)[number];
@@ -108,3 +122,4 @@ export type FicheEquipementConseille =
   (typeof FICHE_EQUIPEMENT_CONSEILLE)[number];
 export type FicheSurface = (typeof FICHE_SURFACE)[number];
 export type FicheTypeGaleries = (typeof FICHE_TYPE_GALERIES)[number];
+export type FicheZoneProtegee = (typeof FICHE_ZONES_PROTEGEES)[number];

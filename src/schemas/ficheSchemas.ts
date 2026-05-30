@@ -11,6 +11,7 @@ import {
   FICHE_EQUIPEMENT_CONSEILLE,
   FICHE_SURFACE,
   FICHE_TYPE_GALERIES,
+  FICHE_ZONES_PROTEGEES,
 } from "../constants/fichesEnums";
 
 const ficheTypeSchema = z.enum(FICHE_TYPES);
@@ -24,6 +25,7 @@ const fichePraticiteSchema = z.enum(FICHE_PRATICITE_SOUTERRAIN);
 const ficheEquipementSchema = z.enum(FICHE_EQUIPEMENT_CONSEILLE);
 const ficheSurfaceSchema = z.enum(FICHE_SURFACE);
 const ficheTypeGaleriesSchema = z.enum(FICHE_TYPE_GALERIES);
+const ficheZoneProtegeeSchema = z.enum(FICHE_ZONES_PROTEGEES);
 
 const objectIdString = z
   .string()
@@ -55,6 +57,10 @@ export const ficheCreateSchema = z
     type_galeries: z.array(ficheTypeGaleriesSchema).optional(),
     interets: z.string().max(5000).optional(),
     commentaire: z.string().max(5000).optional(),
+    // Zone protégée renseignée manuellement (enum, ou chaîne vide si non renseignée)
+    zone_protegee: ficheZoneProtegeeSchema.or(z.literal("")).optional(),
+    // Précision libre, utilisée quand zone_protegee === "Autre"
+    zone_protegee_autre: z.string().max(200).optional(),
     points_ids: z.array(objectIdString).optional(),
     center_cavite: centerCaviteSchema.optional(),
   })

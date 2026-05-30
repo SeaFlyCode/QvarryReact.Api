@@ -86,6 +86,8 @@ export interface DecryptedFiche {
   surface?: string[];
   type_galeries?: string[];
   interets?: string;
+  zone_protegee?: string;
+  zone_protegee_autre?: string;
   center_cavite?: {
     type: string;
     coordinates: number[];
@@ -255,6 +257,12 @@ class MobileSyncService {
       const interets = fiche.interets
         ? decryptWithKey(fiche.interets, userKey)
         : "";
+      const zone_protegee = fiche.zone_protegee
+        ? decryptWithKey(fiche.zone_protegee, userKey)
+        : "";
+      const zone_protegee_autre = fiche.zone_protegee_autre
+        ? decryptWithKey(fiche.zone_protegee_autre, userKey)
+        : "";
 
       return {
         _id: fiche._id.toString(),
@@ -302,6 +310,8 @@ class MobileSyncService {
             })
           : [],
         interets,
+        zone_protegee,
+        zone_protegee_autre,
         center_cavite: fiche.center_cavite || undefined,
         version: fiche.version || 1,
       };
@@ -1220,6 +1230,12 @@ class MobileSyncService {
             ? encryptWithKey(data.commentaire, userKey)
             : "",
           interets: data.interets ? encryptWithKey(data.interets, userKey) : "",
+          zone_protegee: data.zone_protegee
+            ? encryptWithKey(data.zone_protegee, userKey)
+            : "",
+          zone_protegee_autre: data.zone_protegee_autre
+            ? encryptWithKey(data.zone_protegee_autre, userKey)
+            : "",
           points_ids:
             data.points_ids?.map(
               (id: string) => new mongoose.Types.ObjectId(id),
@@ -1330,6 +1346,14 @@ class MobileSyncService {
           updateData.commentaire = encryptWithKey(data.commentaire, userKey);
         if (data.interets !== undefined)
           updateData.interets = encryptWithKey(data.interets, userKey);
+        if (data.zone_protegee !== undefined)
+          updateData.zone_protegee = data.zone_protegee
+            ? encryptWithKey(data.zone_protegee, userKey)
+            : "";
+        if (data.zone_protegee_autre !== undefined)
+          updateData.zone_protegee_autre = data.zone_protegee_autre
+            ? encryptWithKey(data.zone_protegee_autre, userKey)
+            : "";
         if (data.points_ids)
           updateData.points_ids = data.points_ids.map(
             (id: string) => new mongoose.Types.ObjectId(id),

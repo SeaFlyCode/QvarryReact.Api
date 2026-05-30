@@ -145,6 +145,50 @@ describe("ficheSchemas", () => {
       });
       expect(result.success).toBe(false);
     });
+
+    it("accepte une zone_protegee canonique ('Natura 2000')", () => {
+      const result = ficheCreateSchema.safeParse({
+        name: "Test",
+        zone_protegee: "Natura 2000",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("accepte zone_protegee='' (rétrocompat default backend)", () => {
+      const result = ficheCreateSchema.safeParse({
+        name: "Test",
+        zone_protegee: "",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejette une zone_protegee non canonique ('PNR')", () => {
+      const result = ficheCreateSchema.safeParse({
+        name: "Test",
+        zone_protegee: "PNR",
+      });
+      expect(result.success).toBe(false);
+      if (!result.success) {
+        expect(result.error.issues[0]?.path).toContain("zone_protegee");
+      }
+    });
+
+    it("accepte zone_protegee='Autre' + zone_protegee_autre", () => {
+      const result = ficheCreateSchema.safeParse({
+        name: "Test",
+        zone_protegee: "Autre",
+        zone_protegee_autre: "Zone humide locale",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejette zone_protegee_autre dépassant 200 caractères", () => {
+      const result = ficheCreateSchema.safeParse({
+        name: "Test",
+        zone_protegee_autre: "x".repeat(201),
+      });
+      expect(result.success).toBe(false);
+    });
   });
 
   describe("ficheUpdateSchema", () => {
@@ -166,6 +210,20 @@ describe("ficheSchemas", () => {
     it("accepte une mise à jour avec etat canonique", () => {
       const result = ficheUpdateSchema.safeParse({ etat: "Ouvert" });
       expect(result.success).toBe(true);
+    });
+
+    it("accepte une mise à jour de zone_protegee canonique", () => {
+      const result = ficheUpdateSchema.safeParse({
+        zone_protegee: "Réserve naturelle",
+      });
+      expect(result.success).toBe(true);
+    });
+
+    it("rejette une mise à jour de zone_protegee non canonique", () => {
+      const result = ficheUpdateSchema.safeParse({
+        zone_protegee: "réserve naturelle",
+      });
+      expect(result.success).toBe(false);
     });
   });
 });

@@ -64,6 +64,8 @@ export async function handleCreateFiche(req: Request, res: Response) {
       type_galeries,
       interets,
       commentaire,
+      zone_protegee,
+      zone_protegee_autre,
       center_cavite,
     } = req.body;
 
@@ -139,6 +141,8 @@ export async function handleCreateFiche(req: Request, res: Response) {
       surface: Array.isArray(surface) ? surface : [],
       type_galeries: Array.isArray(type_galeries) ? type_galeries : [],
       interets: interets || "",
+      zone_protegee: zone_protegee || "",
+      zone_protegee_autre: zone_protegee_autre || "",
       center_cavite: center_cavite || undefined,
     };
 
@@ -295,6 +299,8 @@ export async function handleUpdateFiche(req: Request, res: Response) {
       "surface",
       "type_galeries",
       "interets",
+      "zone_protegee",
+      "zone_protegee_autre",
       "center_cavite",
     ];
     Object.keys(updateData).forEach((key) => {
