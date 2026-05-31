@@ -118,7 +118,6 @@ Le backend rejette le boot prod si l'un de ces secrets correspond à une valeur 
 | `JWT_EXPIRES_IN` | `15m` | Sessions plus longues |
 | `REFRESH_TOKEN_EXPIRES_IN` | `48` (heures) | Sessions plus longues |
 | `JSON_BODY_LIMIT` | `10mb` | Upload plus gros (attention multipart à part) |
-| `SOS_BROADCAST_RADIUS_KM` | `50` | Couverture broadcast |
 | `MAX_SESSIONS_PER_USER` | `5` | Multi-device support |
 | `WS_TOKEN_DEDUP_WINDOW_MS` | `3000` | Tolérance retry réseau WS auth (Vague 4) |
 | `WS_APP_HEARTBEAT_INTERVAL_MS` | `30000` | Heartbeat applicatif Vague 3 |

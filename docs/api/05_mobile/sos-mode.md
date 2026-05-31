@@ -43,8 +43,8 @@ Content-Type: application/json
 | Constante                           | Valeur  | Description                                |
 | ----------------------------------- | ------- | ------------------------------------------ |
 | `HEARTBEAT_EXTENSION_MINUTES`       | 15      | Prolongation du timer par chaque heartbeat |
-| `STAGE_1_DELAY_MINUTES`             | 15      | Délai avant Stage 1 après expiration       |
-| `STAGE_2_DELAY_MINUTES`             | 30      | Délai avant Stage 2 après expiration       |
+| `STAGE_1_DELAY_MINUTES`             | 60      | Délai avant Stage 1 après expiration (1h)  |
+| `STAGE_2_DELAY_MINUTES`             | 120     | Délai avant Stage 2 après expiration (2h)  |
 | `MIN_DURATION_MINUTES`              | 15      | Durée minimale d'une session SOS           |
 | `MAX_DURATION_MINUTES`              | 480     | Durée maximale (8 heures)                  |
 | `SURFACE_DISTANCE_THRESHOLD_METERS` | 200     | Seuil de détection de retour en surface    |
@@ -553,21 +553,21 @@ Session activée (expectedDuration = 90 min)
 │  Status: EXPIRED│
 └────────┬────────┘
          │
-         │  +15 min (STAGE_1_DELAY_MINUTES)
+         │  +1h (STAGE_1_DELAY_MINUTES)
          ▼
 ┌─────────────────────────────────┐
 │  STAGE 0 → Alarme locale        │  Notification push à l'utilisateur
 │  (immédiat après expiration)    │  "Votre session SOS a expiré"
 └────────┬────────────────────────┘
          │
-         │  +15 min après expiration (STAGE_1_DELAY_MINUTES)
+         │  +1h après expiration (STAGE_1_DELAY_MINUTES)
          ▼
 ┌─────────────────────────────────┐
 │  STAGE 1 → Alerte contacts      │  Push + WebSocket aux contacts
 │  Status: ESCALATING             │  "Alerte : X n'a pas donné signe de vie"
 └────────┬────────────────────────┘
          │
-         │  +30 min après expiration (STAGE_2_DELAY_MINUTES)
+         │  +2h après expiration (STAGE_2_DELAY_MINUTES)
          ▼
 ┌─────────────────────────────────┐
 │  STAGE 2 → SMS Vonage contacts  │  SMS aux contacts via Vonage

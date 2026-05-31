@@ -48,8 +48,8 @@ FCM Push  WebSocket           Vonage SMS
 ```typescript
 // Timers
 const HEARTBEAT_EXTENSION_MINUTES = 15; // Prolongation par heartbeat
-const STAGE_1_DELAY_MINUTES = 15; // Délai Stage 1 après expiration
-const STAGE_2_DELAY_MINUTES = 30; // Délai Stage 2 après expiration
+const STAGE_1_DELAY_MINUTES = 60; // Délai Stage 1 après expiration (1h)
+const STAGE_2_DELAY_MINUTES = 120; // Délai Stage 2 après expiration (2h)
 
 // Durées session
 const MIN_DURATION_MINUTES = 15; // Durée minimale
@@ -234,7 +234,7 @@ Session expire (expiresAt < now)
 │  Son : alarme (priorité haute)            │
 └────────────────┬─────────────────────────┘
                  │
-                 │  +15 min (STAGE_1_DELAY_MINUTES)
+                 │  +1h (STAGE_1_DELAY_MINUTES)
                  ▼ Status → ESCALATING (stage1Done = true)
 ┌──────────────────────────────────────────┐
 │  Stage 1 : Alerte contacts               │
@@ -251,7 +251,7 @@ Session expire (expiresAt < now)
 │       userName: 'Jean Dupont' }          │
 └────────────────┬─────────────────────────┘
                  │
-                 │  +30 min total (STAGE_2_DELAY_MINUTES)
+                 │  +2h total (STAGE_2_DELAY_MINUTES)
                  ▼ escalationStage = 2
 ┌──────────────────────────────────────────┐
 │  Stage 2 : SMS Vonage contacts           │
@@ -263,7 +263,7 @@ Session expire (expiresAt < now)
 │  "ALERTE URGENCE - Jean Dupont           │
 │   n'a pas donne signe de vie.            │
 │   Derniere position : 43.29N 5.36E.      │
-│   Session SOS expirée depuis 30min.      │
+│   Session SOS expirée depuis 2h.         │
 │   Contactez le 15."                      │
 └──────────────────────────────────────────┘
 ```

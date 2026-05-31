@@ -48,9 +48,9 @@ function copySessionIdFromParamsToBody(
  *   post:
  *     summary: Active une session SOS (broadcast Stage 1 multi-device)
  *     description: |
- *       §V0 — Déclenche le broadcast SOS Stage 1 vers les contacts de
- *       l'utilisateur dans un rayon (SOS_BROADCAST_RADIUS_KM, default 50km).
- *       Le serveur applique : filtre géo, opt-out user, throttle anti-spam.
+ *       §V0 — Déclenche le broadcast SOS Stage 1 vers tous les utilisateurs
+ *       Qvarry vérifiés (plus de limite géographique).
+ *       Le serveur applique : opt-out user (community_sos), throttle anti-spam.
  *       Émet push P0 (channel qvarry_sos_critical, son alarme, bypass DND).
  *     tags: [SOS]
  *     security: [{ bearerAuth: [] }]
