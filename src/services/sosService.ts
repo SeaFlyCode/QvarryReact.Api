@@ -4808,6 +4808,10 @@ class SosService {
           webSocketService.sendNotificationToUser(otherId, {
             type: "sos_participant_left",
             sessionId: (session._id as mongoose.Types.ObjectId).toString(),
+            // `userId` = champ canonique attendu par le client (WsSosParticipantLeft) :
+            // c'est lui qui permet aux autres membres de retirer le participant de
+            // leur liste. `removedUserId` conservé pour le contexte (qui/par qui).
+            userId: targetUserId,
             removedUserId: targetUserId,
             removedBy: requesterId,
             requesterName,
