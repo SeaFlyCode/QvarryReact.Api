@@ -1037,7 +1037,7 @@ describe("SosService", () => {
     });
 
     it("should trigger stage 1 after stage 0 delay", async () => {
-      const stage0Time = new Date(Date.now() - 20 * 60 * 1000); // 20 min ago
+      const stage0Time = new Date(Date.now() - 65 * 60 * 1000); // 65 min ago (> STAGE_1_DELAY 60min)
       const mockSession = {
         _id: new mongoose.Types.ObjectId(mockSessionId),
         status: "ACTIVE",
@@ -1077,7 +1077,7 @@ describe("SosService", () => {
     });
 
     it("should trigger stage 2 after stage 2 delay", async () => {
-      const stage0Time = new Date(Date.now() - 35 * 60 * 1000); // 35 min ago
+      const stage0Time = new Date(Date.now() - 125 * 60 * 1000); // 125 min ago (> STAGE_2_DELAY 120min)
       const mockSession = {
         _id: new mongoose.Types.ObjectId(mockSessionId),
         status: "ESCALATING",
@@ -1137,7 +1137,7 @@ describe("SosService", () => {
       // - ne PAS appeler sendSosAlertToMultiple
       // - logger un événement SMS_FAILED
       // - envoyer une alarme WebSocket d'erreur au user pour qu'il le sache
-      const stage0Time = new Date(Date.now() - 35 * 60 * 1000);
+      const stage0Time = new Date(Date.now() - 125 * 60 * 1000); // 125 min ago (> STAGE_2_DELAY 120min)
       const mockSession = {
         _id: new mongoose.Types.ObjectId(mockSessionId),
         status: "ESCALATING",

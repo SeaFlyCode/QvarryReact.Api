@@ -118,8 +118,8 @@ function getStage1ThrottleStore(): Stage1ThrottleStore {
 // ═══════════════════════════════════════════════════════════════════════════
 
 const HEARTBEAT_EXTENSION_MINUTES = 15; // Prolongation par heartbeat
-const STAGE_1_DELAY_MINUTES = 15; // Délai avant stage 1 (après expiration)
-const STAGE_2_DELAY_MINUTES = 30; // Délai avant stage 2 (après expiration)
+const STAGE_1_DELAY_MINUTES = 60; // Délai avant stage 1 (après expiration) — 1h
+const STAGE_2_DELAY_MINUTES = 120; // Délai avant stage 2 (après expiration) — 2h
 const MIN_DURATION_MINUTES = 1; // Durée minimale
 const MAX_DURATION_MINUTES = 480; // Durée maximale (8h)
 
@@ -1756,16 +1756,14 @@ class SosService {
   }
 
   /**
-   * Stage 1: Notifier les utilisateurs Qvarry dans un rayon configurable
-   * autour de la dernière position connue de la session.
+   * Stage 1: Notifier TOUS les utilisateurs Qvarry vérifiés, sans limite
+   * géographique (le broadcast n'est plus restreint à un rayon autour de la
+   * dernière position connue).
    *
    * Protections appliquées :
-   *  1. Filtre géographique 2dsphere ($geoWithin / $centerSphere) — rayon
-   *     configurable via SOS_BROADCAST_RADIUS_KM (default 50). Si la session
-   *     n'a pas de coords → fallback broadcast à tous + warn.
-   *  2. Filtre `notificationPreferences.community_sos !== false` au niveau
+   *  1. Filtre `notificationPreferences.community_sos !== false` au niveau
    *     Mongo (perf : évite N appels au notificationService pour rien).
-   *  3. Throttle par session (Redis/in-memory) — pas de re-broadcast si
+   *  2. Throttle par session (Redis/in-memory) — pas de re-broadcast si
    *     déjà émis dans les 30 dernières minutes.
    */
   private async triggerStage1(
@@ -1834,27 +1832,10 @@ class SosService {
       return;
     }
 
-    // ─── Protection 1 + 2 : filtre géographique + opt-out community_sos ──
-    const radiusKm = Math.max(
-      1,
-      parseInt(process.env.SOS_BROADCAST_RADIUS_KM || "50", 10) || 50,
-    );
-
-    // Position de référence : participant.lastKnown* prioritaire, fallback
-    // sur session.lastKnown* (cf. logique existante du même service).
-    const refLat =
-      typeof participant.lastKnownLat === "number"
-        ? participant.lastKnownLat
-        : typeof session.lastKnownLat === "number"
-          ? session.lastKnownLat
-          : null;
-    const refLng =
-      typeof participant.lastKnownLng === "number"
-        ? participant.lastKnownLng
-        : typeof session.lastKnownLng === "number"
-          ? session.lastKnownLng
-          : null;
-
+    // ─── Protection : opt-out community_sos (plus de filtre géographique) ──
+    // Le broadcast Stage 1 notifie désormais TOUS les utilisateurs Qvarry
+    // vérifiés (hors participants de la session), sans limite de rayon. Seul
+    // l'opt-out `community_sos` est respecté.
     const baseFilter: Record<string, any> = {
       _id: {
         $nin: session.participants.map((p) => p.userId),
@@ -1866,46 +1847,16 @@ class SosService {
       "notificationPreferences.community_sos": { $ne: false },
     };
 
-    let allVerifiedUsers: Array<{ _id: mongoose.Types.ObjectId; name: string }>;
-    let geoFilterApplied = false;
+    const allVerifiedUsers = (await UserModel.find(baseFilter)
+      .select("_id name")
+      .lean()) as Array<{ _id: mongoose.Types.ObjectId; name: string }>;
 
-    if (refLat !== null && refLng !== null) {
-      // $centerSphere attend un rayon en radians (km / rayon Terre en km)
-      const radiusRadians = radiusKm / 6371;
-      allVerifiedUsers = (await UserModel.find({
-        ...baseFilter,
-        lastKnownLocation: {
-          $geoWithin: {
-            $centerSphere: [[refLng, refLat], radiusRadians],
-          },
-        },
-      })
-        .select("_id name")
-        .lean()) as Array<{ _id: mongoose.Types.ObjectId; name: string }>;
-      geoFilterApplied = true;
-    } else {
-      sosLogger.warn(
-        "[stage1-broadcast] Pas de coords pour la session — fallback broadcast à tous",
-        {
-          sessionId: sessionId.toString(),
-          participantId: participantUserId,
-        },
-      );
-      allVerifiedUsers = (await UserModel.find(baseFilter)
-        .select("_id name")
-        .lean()) as Array<{ _id: mongoose.Types.ObjectId; name: string }>;
-    }
-
-    sosLogger.info("Stage 1 triggered - notifying users in scope", {
+    sosLogger.info("Stage 1 triggered - notifying all Qvarry users", {
       sessionId: sessionId.toString(),
       participantId: participantUserId,
       notifiedCount: allVerifiedUsers.length,
-      geoFilterApplied,
-      radiusKm: geoFilterApplied ? radiusKm : null,
-      refLat: geoFilterApplied ? refLat : null,
-      refLng: geoFilterApplied ? refLng : null,
       protections: {
-        geoFilter: geoFilterApplied,
+        geoFilter: false,
         communitySosOptOutFiltered: true,
         sessionThrottleAcquired: throttleAcquired,
       },
