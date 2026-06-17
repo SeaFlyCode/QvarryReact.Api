@@ -90,6 +90,26 @@ const getLimit = (key: keyof typeof config.limits): number => {
   return limit(config.limits[key]);
 };
 
+/**
+ * Calcule le nombre de secondes RÉEL restant avant la fin du blocage.
+ *
+ * express-rate-limit expose `req.rateLimit.resetTime` (quand `standardHeaders`
+ * est actif) : c'est l'instant exact où la fenêtre se réinitialise. On s'en
+ * sert pour renvoyer un `retryAfter` qui DÉCROÎT à chaque requête (3600 → 3456
+ * → …) au lieu de renvoyer la fenêtre complète figée à chaque 429.
+ *
+ * Fallback sur la fenêtre complète si `resetTime` est indisponible.
+ */
+const retryAfterSeconds = (req: Request, fallbackWindowMs: number): number => {
+  const resetTime = (req as Request & { rateLimit?: { resetTime?: Date } })
+    .rateLimit?.resetTime;
+  if (resetTime instanceof Date) {
+    const seconds = Math.ceil((resetTime.getTime() - Date.now()) / 1000);
+    if (seconds > 0) return seconds;
+  }
+  return Math.ceil(fallbackWindowMs / 1000);
+};
+
 // ═══════════════════════════════════════════════════════════════════════════
 // RATE LIMITERS - EXPRESS-RATE-LIMIT
 // ═══════════════════════════════════════════════════════════════════════════
@@ -111,17 +131,18 @@ export const globalRateLimiter = rateLimit({
   legacyHeaders: false,
   skip: (req) => req.path === "/health",
   handler: (req, res) => {
+    const retryAfter = retryAfterSeconds(req, 60 * 1000);
     rateLimitLogger.warn("Global rate limit dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
     });
     // P1 UX : header Retry-After explicite pour les clients qui le lisent
     // (le body conserve aussi `retryAfter` pour les clients qui parsent JSON).
-    res.setHeader("Retry-After", String(60));
+    res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
       error: "RATE_LIMITED",
       code: "GLOBAL_RATE_LIMIT_EXCEEDED",
-      retryAfter: 60,
+      retryAfter,
       message: "Trop de requêtes, veuillez réessayer plus tard.",
     });
   },
@@ -268,7 +289,7 @@ export const refreshTokenLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
-    const retryAfter = 15 * 60;
+    const retryAfter = retryAfterSeconds(req, 15 * 60 * 1000);
     rateLimitLogger.warn("🔴 REFRESH: Rate limit dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
@@ -403,7 +424,7 @@ export const strictAuthLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
-    const retryAfter = 15 * 60;
+    const retryAfter = retryAfterSeconds(req, 15 * 60 * 1000);
     rateLimitLogger.warn("🔴 STRICT: Rate limit auth dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
@@ -441,7 +462,7 @@ export const moderateApiLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
-    const retryAfter = 15 * 60;
+    const retryAfter = retryAfterSeconds(req, 15 * 60 * 1000);
     rateLimitLogger.warn("🟡 MODERATE: Rate limit API dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
@@ -483,7 +504,7 @@ export const permissiveMobileLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   handler: (req, res) => {
-    const retryAfter = 15 * 60;
+    const retryAfter = retryAfterSeconds(req, 15 * 60 * 1000);
     rateLimitLogger.warn("🟢 PERMISSIVE: Rate limit mobile dépassé", {
       ip: anonymizeIp(req.ip || ""),
       path: req.path,
@@ -544,7 +565,7 @@ export const mobileAttestationLimiter = rateLimit({
       userAgent: req.headers["user-agent"],
     });
 
-    const retryAfter = Math.ceil(options.windowMs! / 1000);
+    const retryAfter = retryAfterSeconds(req, options.windowMs!);
     res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
       error: "RATE_LIMITED",
@@ -611,7 +632,7 @@ export const mobileAttestationByDeviceLimiter = rateLimit({
       userAgent: req.headers["user-agent"],
     });
 
-    const retryAfter = Math.ceil(options.windowMs! / 1000);
+    const retryAfter = retryAfterSeconds(req, options.windowMs!);
     res.setHeader("Retry-After", String(retryAfter));
     res.status(429).json({
       error: "RATE_LIMITED",
