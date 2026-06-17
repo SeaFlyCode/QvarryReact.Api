@@ -68,12 +68,37 @@ const RAIN_WINDOW_DAYS = 15;
 /** Timeout court par appel externe (ms). */
 const FETCH_TIMEOUT_MS = 4000;
 
+/**
+ * Timeout plus long pour le SEUL fetch du geojson national Vigicrues
+ * (FeatureCollection volumineuse → le timeout court provoquait des aborts).
+ * Tous les autres appels (open-meteo, hub'eau par point) restent courts.
+ */
+const FETCH_TIMEOUT_VIGICRUES_MS = 9000;
+
+/**
+ * User-Agent réaliste et identifiant l'app : les WAF gouvernementaux
+ * (hubeau.eaufrance.fr, vigicrues.gouv.fr) renvoient 403 sans UA crédible
+ * (undici n'envoie pas d'UA par défaut). On s'identifie proprement avec un
+ * point de contact, conformément aux bonnes pratiques d'usage open data.
+ */
+const HYDRO_USER_AGENT =
+  "Qvarry/1.0 (+https://qvarry.fr; contact: support@qvarry.fr)";
+
 /** TTL de cache par type de signal. Cours d'eau évolue vite → TTL court. */
 const TTL_RAIN_MS = 24 * 60 * 60 * 1000; // 24 h
 const TTL_GROUNDWATER_MS = 24 * 60 * 60 * 1000; // 24 h
 const TTL_RIVER_MS = 3 * 60 * 60 * 1000; // 3 h
 /** Vigilance crue : ça bouge vite en épisode, TTL court. */
 const TTL_VIGICRUES_MS = 60 * 60 * 1000; // 1 h
+/**
+ * TTL négatif court sur ÉCHEC de fetch du geojson national (403/429/timeout) :
+ * on retente plus vite qu'1 h mais on évite de re-spammer la source dans la
+ * même rafale (protection anti-429).
+ */
+const TTL_VIGICRUES_FAIL_MS = 5 * 60 * 1000; // 5 min
+
+/** Clé de cache GLOBALE du geojson national brut (identique pour toute la France). */
+const VIGICRUES_RAW_CACHE_KEY = "vigicrues:raw-national";
 
 /** Rayon de recherche d'une station Hub'Eau autour du point arrondi (mètres). */
 const STATION_SEARCH_RADIUS_M = 30000; // 30 km
@@ -146,6 +171,34 @@ function cacheSet<T>(key: string, value: T, ttlMs: number): void {
 /** Réinitialise le cache (utile pour les tests). */
 export function _clearHydroCache(): void {
   cache.clear();
+  inFlight.clear();
+}
+
+// ───────────────────────────────────────────────────────────────────────────
+// DÉDUP DES REQUÊTES CONCURRENTES (promesse "en vol" partagée)
+// ───────────────────────────────────────────────────────────────────────────
+// Cas réel : un fan-out de N points distincts d'une même requête appelle en
+// parallèle le fetch d'une ressource GLOBALE identique (geojson national
+// Vigicrues). Sans coordination, N téléchargements identiques partent en même
+// temps → burst → 429. On partage UNE seule promesse par clé : les appels
+// concurrents attendent la même résolution au lieu d'en lancer N.
+
+const inFlight = new Map<string, Promise<unknown>>();
+
+/**
+ * Exécute `factory()` au plus une fois en parallèle pour une `key` donnée.
+ * Les appels concurrents avec la même clé reçoivent la même promesse.
+ * L'entrée est nettoyée une fois résolue/rejetée (la persistance du résultat
+ * relève du cache TTL appelant, pas de cette map).
+ */
+function dedupe<T>(key: string, factory: () => Promise<T>): Promise<T> {
+  const existing = inFlight.get(key);
+  if (existing) return existing as Promise<T>;
+  const promise = factory().finally(() => {
+    inFlight.delete(key);
+  });
+  inFlight.set(key, promise);
+  return promise;
 }
 
 // ───────────────────────────────────────────────────────────────────────────
@@ -182,11 +235,18 @@ function gridKey(coord: LatLng): string {
 // FETCH ROBUSTE (timeout court, JSON sûr, jamais de throw vers l'appelant)
 // ───────────────────────────────────────────────────────────────────────────
 
-async function fetchJson<T>(url: string): Promise<T | null> {
+async function fetchJson<T>(
+  url: string,
+  timeoutMs: number = FETCH_TIMEOUT_MS,
+): Promise<T | null> {
   try {
     const res = await fetch(url, {
-      signal: AbortSignal.timeout(FETCH_TIMEOUT_MS),
-      headers: { Accept: "application/json" },
+      signal: AbortSignal.timeout(timeoutMs),
+      headers: {
+        Accept: "application/json",
+        // UA identifiant l'app : sans lui les WAF gouvernementaux renvoient 403.
+        "User-Agent": HYDRO_USER_AGENT,
+      },
     });
     if (!res.ok) {
       hydroLogger.warn("Réponse API externe non OK", {
@@ -639,11 +699,60 @@ function minDistanceToGeometryKm(
 }
 
 /**
+ * Récupère le geojson national brut Vigicrues, MUTUALISÉ pour toute la France.
+ * - Cache GLOBAL (VIGICRUES_RAW_CACHE_KEY, TTL 1 h) : le fichier national étant
+ *   identique pour toutes les coordonnées, on ne le télécharge qu'une fois par
+ *   fenêtre, au lieu d'une fois par cellule de grille (cause des bursts → 429).
+ * - Dédup in-flight : un fan-out de N points en parallèle partage UNE seule
+ *   promesse de fetch tant que le cache n'est pas encore peuplé.
+ * - Timeout allongé (fichier volumineux) et TTL négatif court sur échec.
+ * Le résultat caché distingue "features valides" de "échec" (null) pour ne pas
+ * confondre absence de donnée et erreur réseau.
+ */
+async function fetchVigicruesNationalGeoJson(): Promise<VigicruesFeature[] | null> {
+  const cached = cacheGet<VigicruesFeature[] | null>(VIGICRUES_RAW_CACHE_KEY);
+  if (cached !== undefined) return cached;
+
+  return dedupe(VIGICRUES_RAW_CACHE_KEY, async () => {
+    // Re-vérifie le cache : une promesse antérieure a pu le peupler entre-temps.
+    const fresh = cacheGet<VigicruesFeature[] | null>(VIGICRUES_RAW_CACHE_KEY);
+    if (fresh !== undefined) return fresh;
+
+    // FeatureCollection nationale : URL sans aucune coordonnée (confidentialité).
+    const data = await fetchJson<VigicruesGeoJson>(
+      VIGICRUES_INFO_GEOJSON,
+      FETCH_TIMEOUT_VIGICRUES_MS,
+    );
+    const features = data?.features;
+
+    if (!Array.isArray(features) || features.length === 0) {
+      // Échec/abort (403/429/timeout) ou collection vide → cache négatif court.
+      cacheSet<VigicruesFeature[] | null>(
+        VIGICRUES_RAW_CACHE_KEY,
+        null,
+        TTL_VIGICRUES_FAIL_MS,
+      );
+      return null;
+    }
+
+    cacheSet<VigicruesFeature[] | null>(
+      VIGICRUES_RAW_CACHE_KEY,
+      features,
+      TTL_VIGICRUES_MS,
+    );
+    return features;
+  });
+}
+
+/**
  * Récupère la vigilance crue officielle pour la coordonnée ARRONDIE.
  * Retourne :
  *   - VigicruesComponent du tronçon le plus proche (≤ VIGICRUES_MATCH_RADIUS_KM),
  *   - null hors France, sans donnée, ou si aucun tronçon assez proche.
  * Ne throw jamais. Cache TTL court keyé sur la grille.
+ * Le geojson national est mutualisé (cache global + dédup) — voir
+ * fetchVigicruesNationalGeoJson ; ici seul l'appariement local par cellule
+ * (distance aux tronçons) et son résultat sont cachés par grille.
  */
 export async function getVigicruesComponent(
   coord: LatLng,
@@ -654,9 +763,8 @@ export async function getVigicruesComponent(
   const cached = cacheGet<VigicruesComponent | null>(key);
   if (cached !== undefined) return cached;
 
-  // FeatureCollection nationale : URL sans aucune coordonnée (confidentialité).
-  const data = await fetchJson<VigicruesGeoJson>(VIGICRUES_INFO_GEOJSON);
-  const features = data?.features;
+  // Geojson national mutualisé (téléchargé une seule fois pour toute la France).
+  const features = await fetchVigicruesNationalGeoJson();
 
   if (!Array.isArray(features) || features.length === 0) {
     // Pas de donnée exploitable : cache court pour retenter vite.

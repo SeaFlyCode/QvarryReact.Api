@@ -318,6 +318,33 @@ describe("hydroRiskService", () => {
       await getVigicruesComponent({ lat: 44, lng: 3 });
       expect(spy).toHaveBeenCalledTimes(1);
     });
+
+    it("mutualise le geojson national entre grilles distinctes (1 seul fetch)", async () => {
+      // Le fichier national est identique pour toute la France : N cellules
+      // distinctes ne doivent PAS déclencher N téléchargements (anti-429).
+      const spy = jest
+        .spyOn(global, "fetch")
+        .mockResolvedValue(jsonResponse({ features: [] }));
+      await getVigicruesComponent({ lat: 44, lng: 3 });
+      await getVigicruesComponent({ lat: 45, lng: 4 });
+      await getVigicruesComponent({ lat: 43.5, lng: 6 });
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
+
+    it("dédup les appels concurrents (fan-out) en une seule promesse de fetch", async () => {
+      // Appels parallèles avant peuplement du cache → une seule promesse partagée.
+      let resolveFetch!: (r: Response) => void;
+      const spy = jest.spyOn(global, "fetch").mockReturnValue(
+        new Promise<Response>((resolve) => {
+          resolveFetch = resolve;
+        }),
+      );
+      const p1 = getVigicruesComponent({ lat: 44, lng: 3 });
+      const p2 = getVigicruesComponent({ lat: 45, lng: 4 });
+      resolveFetch(jsonResponse({ features: [] }));
+      await Promise.all([p1, p2]);
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
   });
 
   // ─────────────────────────────────────────────────────────────────────────
