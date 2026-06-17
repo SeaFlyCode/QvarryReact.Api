@@ -33,10 +33,15 @@ export async function registerToken(
   deviceId: string,
 ): Promise<IPushToken> {
   try {
-    // Upsert : créer si n'existe pas, mettre à jour sinon
+    // Upsert clé sur deviceId seul : un appareil physique = un token, rattaché à
+    // l'utilisateur actuellement connecté. Si l'appareil a déjà été enregistré
+    // sous un autre compte (changement d'utilisateur, re-login après révocation),
+    // on transfère la propriété au lieu de tenter un INSERT qui violerait l'index
+    // unique sur `deviceId` (erreur E11000 → 500).
     const pushToken = await PushTokenModel.findOneAndUpdate(
-      { userId: new mongoose.Types.ObjectId(userId), deviceId },
+      { deviceId },
       {
+        userId: new mongoose.Types.ObjectId(userId),
         token,
         platform,
         updatedAt: new Date(),

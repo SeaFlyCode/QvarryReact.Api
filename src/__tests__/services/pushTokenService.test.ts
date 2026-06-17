@@ -60,10 +60,10 @@ describe("PushTokenService", () => {
       expect(result.deviceId).toBe(mockDeviceId);
       expect(PushTokenModel.findOneAndUpdate).toHaveBeenCalledWith(
         {
-          userId: expect.any(mongoose.Types.ObjectId),
           deviceId: mockDeviceId,
         },
         {
+          userId: expect.any(mongoose.Types.ObjectId),
           token: mockToken,
           platform: "ios",
           updatedAt: expect.any(Date),
@@ -102,6 +102,37 @@ describe("PushTokenService", () => {
           deviceId: mockDeviceId,
         }),
         expect.objectContaining({
+          token: mockToken,
+          platform: "android",
+        }),
+        { upsert: true, new: true },
+      );
+    });
+
+    it("should transfer device ownership to a new user (re-login on same device)", async () => {
+      // Régression : le device existe déjà sous mockUserId, un autre utilisateur
+      // se connecte sur le même appareil. L'upsert doit être clé sur deviceId seul
+      // et réassigner userId, sans tenter un INSERT (qui violerait l'index unique
+      // deviceId → E11000 → 500).
+      (PushTokenModel.findOneAndUpdate as jest.Mock).mockResolvedValue({
+        _id: new mongoose.Types.ObjectId(),
+        userId: new mongoose.Types.ObjectId(mockUserId2),
+        deviceId: mockDeviceId,
+        token: mockToken,
+        platform: "android",
+      });
+
+      await pushTokenService.registerToken(
+        mockUserId2,
+        mockToken,
+        "android",
+        mockDeviceId,
+      );
+
+      expect(PushTokenModel.findOneAndUpdate).toHaveBeenCalledWith(
+        { deviceId: mockDeviceId },
+        expect.objectContaining({
+          userId: expect.any(mongoose.Types.ObjectId),
           token: mockToken,
           platform: "android",
         }),
