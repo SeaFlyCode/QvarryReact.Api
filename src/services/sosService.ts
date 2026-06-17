@@ -23,6 +23,7 @@ import UserModel from "../models/users";
 import { logger } from "./loggerService";
 import { sendEmail } from "./emailService";
 import RedisConnectionPool from "../config/redisPool";
+import { withOptionalTransaction } from "../utils/dbTransaction";
 import type Redis from "ioredis";
 import type { Cluster } from "ioredis";
 
@@ -390,14 +391,28 @@ class SosService {
       }
     }
 
-    // Transaction : vérification session existante + création session + contacts temporaires
-    const mongoSession = await mongoose.startSession();
-    mongoSession.startTransaction();
-    let session: InstanceType<typeof SosSessionModel>;
-    let expiresAt: Date;
-    let participants: ISosParticipant[];
-    try {
-      // Vérifier qu'aucun participant n'a déjà une session active (dans la transaction)
+    // Transaction OPTIONNELLE : vérification session existante + création session
+    // + contacts temporaires. `withOptionalTransaction` utilise une vraie
+    // transaction MongoDB si la topologie le supporte (replica set / mongos),
+    // sinon rejoue la même séquence SANS session (fallback standalone).
+    //
+    // Limite du fallback : sans transaction, le check "aucun participant n'a
+    // déjà une session active" + la création ne sont plus atomiques. On garde
+    // le check juste avant la création (best effort) — il reste une fenêtre de
+    // course possible entre le check et le save sur Mongo standalone.
+    //
+    // `txSession` vaut `null` en fallback : Mongoose ignore une session nulle
+    // passée à `.session(null)` / `.save({ session: null })`, les requêtes
+    // tournent donc hors transaction.
+    let session!: InstanceType<typeof SosSessionModel>;
+    let expiresAt!: Date;
+    let participants!: ISosParticipant[];
+
+    await withOptionalTransaction(async (txSession) => {
+      // Réinitialiser les IDs de contacts collectés (le fn peut être rejoué en fallback)
+      sessionContactIds.length = 0;
+
+      // Vérifier qu'aucun participant n'a déjà une session active
       const existingSessions = await SosSessionModel.find({
         status: { $in: ["ACTIVE", "EXPIRED", "ESCALATING"] },
         participants: {
@@ -408,7 +423,7 @@ class SosService {
         },
       })
         .lean()
-        .session(mongoSession);
+        .session(txSession);
 
       if (existingSessions.length > 0) {
         throw new Error("SESSION_ALREADY_ACTIVE");
@@ -423,7 +438,7 @@ class SosService {
         })
           .select("_id")
           .lean()
-          .session(mongoSession);
+          .session(txSession);
 
         if (participantUsers.length !== participantIds.length) {
           throw new Error("INVALID_PARTICIPANT_IDS");
@@ -450,7 +465,7 @@ class SosService {
           })
             .select("_id")
             .lean()
-            .session(mongoSession);
+            .session(txSession);
 
           if (
             permanentContacts.length !==
@@ -472,7 +487,7 @@ class SosService {
             userId: new mongoose.Types.ObjectId(participantId),
             sessionId: { $exists: false },
             deletedAt: null, // Exclure les contacts soft-deleted
-          }).session(mongoSession);
+          }).session(txSession);
           if (contactCount > 0) {
             hasEmergencyContacts = true;
             break;
@@ -535,7 +550,7 @@ class SosService {
           sessionContactIds.length > 0 ? sessionContactIds : undefined,
         participants,
       });
-      await session.save({ session: mongoSession });
+      await session.save({ session: txSession });
 
       // Créer les contacts supplémentaires temporaires maintenant qu'on a un sessionId
       if (
@@ -552,22 +567,15 @@ class SosService {
             isDefault: false,
           });
 
-          await tempContact.save({ session: mongoSession });
+          await tempContact.save({ session: txSession });
           sessionContactIds.push(tempContact._id as mongoose.Types.ObjectId);
         }
 
         // Mettre à jour la session avec tous les IDs de contacts
         session.sessionContactIds = sessionContactIds;
-        await session.save({ session: mongoSession });
+        await session.save({ session: txSession });
       }
-
-      await mongoSession.commitTransaction();
-    } catch (err) {
-      await mongoSession.abortTransaction();
-      throw err;
-    } finally {
-      mongoSession.endSession();
-    }
+    });
 
     // Récupérer le nom du créateur pour les notifications
     const creator = await UserModel.findById(userObjectId).lean();
