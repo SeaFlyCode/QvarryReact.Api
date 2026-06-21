@@ -60,6 +60,12 @@ import {
   getAppVersionConfig,
   updateAppVersionConfig,
 } from "../controllers/adminAppVersionController";
+import {
+  getRateLimitEntries,
+  deleteRateLimitEntry,
+  patchRateLimitEntry,
+  patchBlockedIpDuration,
+} from "../controllers/adminRateLimitControllers";
 
 const router = Router();
 
@@ -526,6 +532,14 @@ router.post("/security/unblock-ip/:ipAddress", unblockIp);
 router.delete("/security/unblock-ip/:ipAddress", unblockIp);
 router.get("/security/threat-score/:ipAddress", getIpThreatScore);
 router.post("/security/test-alert", sendTestAlert);
+
+// ── Panel rate limiter / punitions ──────────────────────────────────────────
+// Rate limits Redis (compteurs `rl:*`)
+router.get("/rate-limit/entries", getRateLimitEntries);
+router.delete("/rate-limit/entries", deleteRateLimitEntry);
+router.patch("/rate-limit/entries", patchRateLimitEntry);
+// Durée d'un blocage IP (list/block/unblock déjà déclarés ci-dessus)
+router.patch("/security/blocked-ips/:ipAddress", patchBlockedIpDuration);
 
 // ═══════════════════════════════════════════════════════════════════════════
 // SOS MODE - ADMINISTRATION

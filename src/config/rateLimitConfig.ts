@@ -647,6 +647,55 @@ export const mobileAttestationByDeviceLimiter = rateLimit({
 // LOG DE CONFIGURATION AU DÉMARRAGE
 // ═══════════════════════════════════════════════════════════════════════════
 
+// ═══════════════════════════════════════════════════════════════════════════
+// REGISTRE DES LIMITERS (panel admin rate-limit)
+// ═══════════════════════════════════════════════════════════════════════════
+// Métadonnées de chaque limiter, dérivées de la MÊME config que les limiters
+// ci-dessus (mêmes helpers `limit`/`getLimit`, donc multiplicateur dev inclus).
+// Permet au panel admin d'enrichir une clé Redis `rl:*` (préfixe → type humain,
+// fenêtre, limite max) sans dupliquer les valeurs.
+// ⚠️ Garder ce tableau synchronisé si un limiter est ajouté/retiré ci-dessus.
+
+export interface RateLimiterMeta {
+  /** Préfixe Redis complet, ex "rl:auth:" */
+  prefix: string;
+  /** Identifiant court, ex "auth" */
+  key: string;
+  /** Libellé humain (FR) */
+  label: string;
+  /** Fenêtre en millisecondes */
+  windowMs: number;
+  /** Limite max effective (multiplicateur dev appliqué) */
+  max: number;
+}
+
+export const RATE_LIMITER_REGISTRY: RateLimiterMeta[] = [
+  { prefix: "rl:global:", key: "global", label: "Global (catch-all)", windowMs: 60_000, max: getLimit("global") },
+  { prefix: "rl:health:", key: "health", label: "Health checks", windowMs: 60_000, max: getLimit("health") },
+  { prefix: "rl:auth:", key: "auth", label: "Authentification (login)", windowMs: config.auth.windowMinutes * 60_000, max: limit(config.auth.maxRequests) },
+  { prefix: "rl:register:", key: "register", label: "Création de compte", windowMs: 60 * 60_000, max: getLimit("register") },
+  { prefix: "rl:verifyEmail:", key: "verifyEmail", label: "Vérification email", windowMs: 15 * 60_000, max: limit(5) },
+  { prefix: "rl:resendEmail:", key: "resendEmail", label: "Renvoi d'email", windowMs: 60 * 60_000, max: getLimit("resendEmail") },
+  { prefix: "rl:passwordReset:", key: "passwordReset", label: "Réinitialisation mot de passe", windowMs: config.auth.windowMinutes * 60_000, max: getLimit("passwordReset") },
+  { prefix: "rl:twoFactor:", key: "twoFactor", label: "2FA (TOTP)", windowMs: 5 * 60_000, max: getLimit("twoFactor") },
+  { prefix: "rl:general:", key: "general", label: "Général", windowMs: 60_000, max: getLimit("general") },
+  { prefix: "rl:highTraffic:", key: "highTraffic", label: "Fort trafic (fiches/points)", windowMs: 60_000, max: getLimit("highTraffic") },
+  { prefix: "rl:social:", key: "social", label: "Social (contacts/messages)", windowMs: 60_000, max: getLimit("social") },
+  { prefix: "rl:refreshToken:", key: "refreshToken", label: "Refresh token", windowMs: 15 * 60_000, max: getLimit("refreshToken") },
+  { prefix: "rl:admin:", key: "admin", label: "Routes admin", windowMs: 60_000, max: getLimit("admin") },
+  { prefix: "rl:mobileAuth:", key: "mobileAuth", label: "Auth mobile", windowMs: config.mobile.windowMinutes * 60_000, max: config.mobile.maxRequests },
+  { prefix: "rl:security:", key: "security", label: "Sécurité (sessions/events)", windowMs: 60_000, max: getLimit("security") },
+  { prefix: "rl:authCheck:", key: "authCheck", label: "Vérification auth", windowMs: 60_000, max: getLimit("authCheck") },
+  { prefix: "rl:maintenance:", key: "maintenance", label: "Maintenance", windowMs: 60_000, max: getLimit("maintenance") },
+  { prefix: "rl:users:", key: "users", label: "Utilisateurs", windowMs: 60_000, max: getLimit("users") },
+  { prefix: "rl:notifications:", key: "notifications", label: "Notifications", windowMs: 60_000, max: getLimit("notifications") },
+  { prefix: "rl:strictAuth:", key: "strictAuth", label: "🔴 Auth stricte", windowMs: 15 * 60_000, max: getLimit("strictAuth") },
+  { prefix: "rl:moderateApi:", key: "moderateApi", label: "🟡 API modérée", windowMs: 15 * 60_000, max: getLimit("moderateApi") },
+  { prefix: "rl:permissiveMobile:", key: "permissiveMobile", label: "🟢 Mobile permissif", windowMs: 15 * 60_000, max: getLimit("permissiveMobile") },
+  { prefix: "rl:mobileAttestation:", key: "mobileAttestation", label: "Attestation mobile (par IP)", windowMs: 60 * 60_000, max: limit(3) },
+  { prefix: "rl:mobileAttestationDevice:", key: "mobileAttestationDevice", label: "Attestation mobile (par device)", windowMs: 24 * 60 * 60_000, max: limit(5) },
+];
+
 const envLabel = isProduction ? "PRODUCTION" : "DEVELOPMENT";
 const multiplier = isProduction ? 1 : DEV_MULTIPLIER;
 rateLimitLogger.info("Rate limiting configuré", {

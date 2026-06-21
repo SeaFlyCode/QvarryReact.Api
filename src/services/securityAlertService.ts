@@ -1,7 +1,7 @@
 // server/src/services/securityAlertService.ts
 import mongoose from "mongoose";
 import UserModel from "../models/users";
-import BlockedIpModel from "../models/blockedIps";
+import BlockedIpModel, { type IBlockedIp } from "../models/blockedIps";
 import AuditLogModel from "../models/auditLogs";
 import { sendEmail, EmailTemplate } from "./emailService";
 import { decrypt } from "../utils/masterEncryptionUtils";
@@ -399,6 +399,36 @@ class SecurityAlertService {
       ip: anonymizeIp(ipAddress),
     });
     return (result.modifiedCount || 0) > 0;
+  }
+
+  /**
+   * Réduit/augmente la durée d'un blocage IP actif.
+   * `durationHours` calcule la nouvelle expiration à partir de maintenant ;
+   * `null` rend le blocage permanent. Retourne le document mis à jour, ou null
+   * si aucun blocage actif n'existe pour cette IP.
+   */
+  async updateBlockedIpDuration(
+    ipAddress: string,
+    durationHours: number | null,
+  ): Promise<IBlockedIp | null> {
+    const blockedUntil =
+      durationHours && durationHours > 0
+        ? new Date(Date.now() + durationHours * 60 * 60 * 1000)
+        : null;
+
+    const updated = await BlockedIpModel.findOneAndUpdate(
+      { ipAddress, isActive: true },
+      { blockedUntil },
+      { new: true, sort: { blockedAt: -1 } },
+    ).lean();
+
+    if (updated) {
+      securityLogger.info("IP block duration updated by admin", {
+        ip: anonymizeIp(ipAddress),
+        blockedUntil,
+      });
+    }
+    return updated as IBlockedIp | null;
   }
 
   async listBlockedIps(page: number = 1, limit: number = 50) {
