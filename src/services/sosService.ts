@@ -341,11 +341,13 @@ class SosService {
     } = params;
     const userObjectId = new mongoose.Types.ObjectId(userId);
 
-    // Collecter tous les IDs de participants (créateur + participants ajoutés)
-    const allParticipantIds = [userId];
-    if (participantIds && participantIds.length > 0) {
-      allParticipantIds.push(...participantIds);
-    }
+    // Collecter tous les IDs de participants (créateur + participants ajoutés).
+    // Dédupliquer : le créateur est toujours inclus, et un client qui renverrait
+    // par erreur le créateur (ou un doublon) dans `participantIds` ne doit jamais
+    // produire un participant en double.
+    const allParticipantIds = Array.from(
+      new Set([userId, ...(participantIds || [])]),
+    );
 
     // Vérifier qu'aucun des participants n'a déjà une session active
     const participantObjectIds = allParticipantIds.map(
