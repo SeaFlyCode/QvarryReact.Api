@@ -18,6 +18,8 @@ import {
   encryptUserKeys,
   decryptUserKeys,
   clearUserKeyCache,
+  encryptBufferWithKey,
+  decryptBufferWithKey,
 } from "../../utils/userEncryptionUtils";
 import KeysModel from "../../models/keys";
 import * as masterEncryptionUtils from "../../utils/masterEncryptionUtils";
@@ -215,6 +217,47 @@ describe("userEncryptionUtils", () => {
       // Second call - should use cache (no additional DB query)
       await encryptUserKeys(userId as any, text2);
       expect(KeysModel.findOne).toHaveBeenCalledTimes(1); // Still 1, not 2
+    });
+  });
+
+  describe("encryptBufferWithKey / decryptBufferWithKey", () => {
+    it("round-trip sur un buffer binaire", () => {
+      const data = crypto.randomBytes(5000);
+      const enc = encryptBufferWithKey(data, testKey);
+      expect(enc.equals(data)).toBe(false);
+      expect(decryptBufferWithKey(enc, testKey).equals(data)).toBe(true);
+    });
+
+    it("format iv(12)|authTag(16)|ciphertext", () => {
+      const data = Buffer.from("hello");
+      const enc = encryptBufferWithKey(data, testKey);
+      expect(enc.length).toBe(12 + 16 + data.length);
+    });
+
+    it("gère un buffer vide", () => {
+      const enc = encryptBufferWithKey(Buffer.alloc(0), testKey);
+      expect(decryptBufferWithKey(enc, testKey).length).toBe(0);
+    });
+
+    it("produit des sorties différentes (IV aléatoire)", () => {
+      const data = Buffer.from("same");
+      expect(encryptBufferWithKey(data, testKey).equals(encryptBufferWithKey(data, testKey))).toBe(false);
+    });
+
+    it("échoue avec une mauvaise clé", () => {
+      const enc = encryptBufferWithKey(Buffer.from("secret"), testKey);
+      const other = crypto.randomBytes(32).toString("hex");
+      expect(() => decryptBufferWithKey(enc, other)).toThrow(/Déchiffrement échoué/);
+    });
+
+    it("détecte une altération du ciphertext", () => {
+      const enc = Buffer.from(encryptBufferWithKey(Buffer.from("secret data"), testKey));
+      enc[enc.length - 1] ^= 0xff;
+      expect(() => decryptBufferWithKey(enc, testKey)).toThrow(/Déchiffrement échoué/);
+    });
+
+    it("rejette un buffer trop court", () => {
+      expect(() => decryptBufferWithKey(Buffer.alloc(10), testKey)).toThrow(/trop courtes/);
     });
   });
 });

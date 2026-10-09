@@ -24,6 +24,8 @@ import ContactModel from "../models/contacts";
 import NotificationModel from "../models/notifications";
 import RefreshTokenModel from "../models/refreshTokens";
 import AuditLogModel from "../models/auditLogs";
+import PlanModel from "../models/plan";
+import planStorageService from "./planStorageService";
 
 // Création d'un utilisateur
 export async function createUser(
@@ -380,6 +382,26 @@ export async function deleteUserById(userId: string): Promise<{
 
   if (!userResult) {
     throw new Error("Utilisateur non trouvé.");
+  }
+
+  // Plans privés : documents + fichiers chiffrés (le quota disparaît avec le compte).
+  // Deux étapes indépendantes : l'échec de l'une ne doit pas empêcher l'autre,
+  // ni bloquer la suppression du compte (blobs orphelins -> cleanup admin).
+  try {
+    await PlanModel.deleteMany({ userId: userObjectId });
+  } catch (error) {
+    userServiceLogger.error("Suppression des documents de plans échouée", {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
+  }
+  try {
+    await planStorageService.deleteAllUserPlans(userId);
+  } catch (error) {
+    userServiceLogger.error("Suppression des fichiers de plans échouée", {
+      userId,
+      error: error instanceof Error ? error.message : String(error),
+    });
   }
 
   const deletedData = {

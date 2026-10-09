@@ -85,3 +85,49 @@ export const STORAGE_ERROR_MESSAGES = {
   POINT_NOT_FOUND: "Point non trouvé",
   UNAUTHORIZED: "Non autorisé à accéder à cette ressource",
 } as const;
+
+/**
+ * Configuration des plans (calques image privés posés sur la carte).
+ * Fichiers chiffrés AES-256-GCM (clé utilisateur) dans
+ * <PLANS_STORAGE_PATH>/<userId>/<planId>.bin
+ * Pas de PDF, pas de recompression agressive.
+ */
+export const PLANS_CONFIG = {
+  STORAGE_PATH: process.env.PLANS_STORAGE_PATH || "./uploads/plans",
+  MAX_FILE_SIZE_BYTES: 10 * 1024 * 1024, // 10 Mo
+  MAX_FILES_PER_USER: 50,
+  MAX_DIMENSION_PX: 4096, // côté long (redimensionnement si dépassé)
+  MAX_INPUT_PIXELS: 64_000_000, // garde-fou decompression bomb (~8000x8000)
+  MAX_CONCURRENT_IMAGE_JOBS: 2, // décodages sharp simultanés (borne la mémoire)
+  /** Surcoût du chiffrement de buffer : iv (12 o) + authTag (16 o). Taille disque = taille claire + 28. */
+  ENCRYPTION_OVERHEAD_BYTES: 28,
+  /** Un blob plus récent que ça n'est jamais considéré orphelin (création en cours). */
+  ORPHAN_MIN_AGE_MS: 10 * 60 * 1000,
+  MAX_NAME_LENGTH: 100,
+  MAX_PLACEMENT_JSON_LENGTH: 2048,
+  ALLOWED_MIME_TYPES: ["image/png", "image/jpeg", "image/webp"],
+} as const;
+
+/**
+ * Détecte le vrai type d'une image via ses magic bytes (PNG, JPEG, WebP).
+ * @returns le MIME détecté ou null
+ */
+export function detectPlanMimeType(buffer: Buffer): string | null {
+  if (buffer.length >= 3 && buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) {
+    return "image/jpeg";
+  }
+  if (
+    buffer.length >= 8 &&
+    buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))
+  ) {
+    return "image/png";
+  }
+  if (
+    buffer.length >= 12 &&
+    buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+    buffer.subarray(8, 12).toString("ascii") === "WEBP"
+  ) {
+    return "image/webp";
+  }
+  return null;
+}

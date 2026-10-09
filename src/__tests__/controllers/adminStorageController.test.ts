@@ -23,14 +23,23 @@ jest.mock("../../services/storageService", () => ({
   },
 }));
 jest.mock("../../models/points");
+jest.mock("../../models/plan");
+jest.mock("../../services/planStorageService", () => ({
+  __esModule: true,
+  default: { listAllBlobs: jest.fn(), deletePlanBlob: jest.fn() },
+}));
 
 import { Request, Response } from "express";
 import {
   setUserQuotaBytes,
   updateUserQuota,
+  cleanupOrphanFiles,
 } from "../../controllers/adminStorageController";
 import storageQuotaService from "../../services/storageQuotaService";
 import { mockRequest, mockResponse } from "../mocks";
+import storageService from "../../services/storageService";
+import planStorageService from "../../services/planStorageService";
+import PlanModel from "../../models/plan";
 
 const VALID_OBJECT_ID = "507f1f77bcf86cd799439011";
 
@@ -137,5 +146,51 @@ describe("adminStorageController — setUserQuotaBytes (P1)", () => {
       VALID_OBJECT_ID,
       5 * 1024 * 1024 * 1024,
     );
+  });
+});
+
+describe("adminStorageController — cleanupOrphanFiles (plans)", () => {
+  const uid = "507f1f77bcf86cd799439011";
+  const oldPlan = "507f1f77bcf86cd799439021";
+  const recentPlan = "507f1f77bcf86cd799439022";
+  const livePlan = "507f1f77bcf86cd799439023";
+  const old = Date.now() - 60 * 60 * 1000;
+
+  beforeEach(() => {
+    jest.clearAllMocks();
+    (storageService.findOrphanFiles as jest.Mock).mockResolvedValue(new Map());
+    (planStorageService.listAllBlobs as jest.Mock).mockResolvedValue([
+      { userId: uid, planId: oldPlan, clearSize: 10, mtimeMs: old },
+      { userId: uid, planId: recentPlan, clearSize: 10, mtimeMs: Date.now() },
+      { userId: uid, planId: livePlan, clearSize: 10, mtimeMs: old },
+    ]);
+    (PlanModel.exists as jest.Mock) = jest
+      .fn()
+      .mockImplementation(async (q: any) => (String(q._id) === livePlan ? { _id: q._id } : null));
+    (storageService.calculateUserStorage as jest.Mock).mockResolvedValue(20);
+    (storageQuotaService.getUserStorageInfo as jest.Mock).mockResolvedValue({ used: 30 });
+    (storageQuotaService as any).recalculateUserStorage = jest.fn().mockResolvedValue(undefined);
+  });
+
+  it("dry run : liste uniquement le blob orphelin ancien, ne supprime rien", async () => {
+    const res = mockResponse();
+    await cleanupOrphanFiles(
+      mockRequest({ user: { id: "admin" }, body: { dryRun: true } }) as any,
+      res as any,
+    );
+    const body = (res.json as jest.Mock).mock.calls[0][0];
+    expect(body.planOrphans).toEqual([{ userId: uid, planId: oldPlan, deleted: false }]);
+    expect(planStorageService.deletePlanBlob).not.toHaveBeenCalled();
+  });
+
+  it("suppression réelle : supprime le blob orphelin et recalcule (plans inclus via calculateUserStorage)", async () => {
+    const res = mockResponse();
+    await cleanupOrphanFiles(
+      mockRequest({ user: { id: "admin" }, body: { dryRun: false } }) as any,
+      res as any,
+    );
+    expect(planStorageService.deletePlanBlob).toHaveBeenCalledTimes(1);
+    expect(planStorageService.deletePlanBlob).toHaveBeenCalledWith(uid, oldPlan);
+    expect((storageQuotaService as any).recalculateUserStorage).toHaveBeenCalledWith(uid, 20);
   });
 });

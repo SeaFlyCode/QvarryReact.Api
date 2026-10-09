@@ -25,6 +25,8 @@ jest.mock("../../models/contacts");
 jest.mock("../../models/notifications");
 jest.mock("../../models/refreshTokens");
 jest.mock("../../models/auditLogs");
+jest.mock("../../models/plan");
+jest.mock("../../services/planStorageService");
 jest.mock("../../services/dataArchiveService");
 jest.mock("../../utils/masterEncryptionUtils");
 jest.mock("../../utils/rsaEncryptionUtils");
@@ -45,6 +47,8 @@ import {
   updateUserById,
 } from "../../services/userService";
 import UserModel from "../../models/users";
+import PlanModel from "../../models/plan";
+import planStorageService from "../../services/planStorageService";
 import KeyModel from "../../models/keys";
 import PointModel from "../../models/points";
 import FicheModel from "../../models/fiches";
@@ -209,6 +213,87 @@ describe("userService", () => {
       await expect(deleteUserById("invalid-id")).rejects.toThrow(
         "L'ID utilisateur fourni n'est pas valide.",
       );
+    });
+
+    it("supprime documents + fichiers de plans, et ne bloque pas si le nettoyage échoue", async () => {
+      const userId = mockUserId.toString();
+      const mockUser = { _id: mockUserId, ...mockUserData };
+
+      (UserModel.findById as jest.Mock).mockReturnValue({
+        lean: jest.fn().mockResolvedValue(mockUser),
+      });
+      (
+        dataArchiveService.archiveAndRecordDeletion as jest.Mock
+      ).mockResolvedValue({});
+      (PointModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (FicheModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (ListModel.find as jest.Mock).mockReturnValue({
+        setOptions: jest.fn().mockReturnThis(),
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (MessageModel.find as jest.Mock).mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (DataShareModel.find as jest.Mock).mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (ContactModel.find as jest.Mock).mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+      (NotificationModel.find as jest.Mock).mockReturnValue({
+        lean: jest.fn().mockResolvedValue([]),
+      });
+
+      (PointModel.deleteMany as jest.Mock).mockResolvedValue({
+        deletedCount: 5,
+      });
+      (FicheModel.deleteMany as jest.Mock).mockResolvedValue({
+        deletedCount: 3,
+      });
+      (ListModel.deleteMany as jest.Mock).mockResolvedValue({
+        deletedCount: 2,
+      });
+      (MessageModel.deleteMany as jest.Mock).mockResolvedValue({
+        deletedCount: 10,
+      });
+      (ConversationModel.updateMany as jest.Mock).mockResolvedValue({
+        modifiedCount: 2,
+      });
+      (DataShareModel.deleteMany as jest.Mock).mockResolvedValue({
+        deletedCount: 1,
+      });
+      (ContactModel.deleteMany as jest.Mock).mockResolvedValue({
+        deletedCount: 4,
+      });
+      (NotificationModel.deleteMany as jest.Mock).mockResolvedValue({
+        deletedCount: 7,
+      });
+      (RefreshTokenModel.deleteMany as jest.Mock).mockResolvedValue({
+        deletedCount: 2,
+      });
+      (KeyModel.deleteMany as jest.Mock).mockResolvedValue({ deletedCount: 3 });
+      (AuditLogModel.updateMany as jest.Mock).mockResolvedValue({
+        modifiedCount: 15,
+      });
+      (UserModel.findByIdAndDelete as jest.Mock).mockResolvedValue(mockUser);
+
+      (PlanModel.deleteMany as jest.Mock).mockRejectedValue(new Error("db"));
+      (planStorageService.deleteAllUserPlans as jest.Mock).mockRejectedValue(
+        new Error("EACCES"),
+      );
+
+      const result = await deleteUserById(userId);
+
+      expect(result.success).toBe(true);
+      // les deux étapes sont tentées indépendamment
+      expect(PlanModel.deleteMany).toHaveBeenCalledWith({ userId: mockUserId });
+      expect(planStorageService.deleteAllUserPlans).toHaveBeenCalledWith(userId);
     });
 
     it("deletes user and all related data (RGPD cascade)", async () => {

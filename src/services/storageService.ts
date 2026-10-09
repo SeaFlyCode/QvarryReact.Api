@@ -5,6 +5,7 @@ import * as fs from "fs";
 import * as path from "path";
 import { logger } from "./loggerService";
 import { STORAGE_CONFIG } from "../config/storageConfig";
+import planStorageService from "./planStorageService";
 import {
   sanitizePathId,
   validatePathWithinBase,
@@ -349,8 +350,22 @@ class StorageService {
     }
   }
 
+  /** Octets des photos de points d'un utilisateur (sans les plans). Lève si l'id est invalide. */
+  private async calculateUserPointsStorage(userId: string): Promise<number> {
+    const safeUserId = sanitizePathId(userId);
+    const userDir = path.join(this.storagePath, safeUserId);
+    validatePathWithinBase(path.resolve(userDir), this.storagePath);
+    if (!fs.existsSync(userDir)) return 0;
+    let size = 0;
+    for (const file of await fs.promises.readdir(userDir)) {
+      size += (await fs.promises.stat(path.join(userDir, file))).size;
+    }
+    return size;
+  }
+
   /**
-   * Calcule l'espace utilisé par un utilisateur
+   * Calcule l'espace utilisé par un utilisateur (photos de points + plans,
+   * ces derniers en taille claire pour rester comparables à storage_used)
    * 🛡️ PROTÉGÉ CONTRE PATH TRAVERSAL
    * @param userId - ID de l'utilisateur
    * @returns Espace utilisé en octets
@@ -367,22 +382,15 @@ class StorageService {
       const resolvedPath = path.resolve(userDir);
       validatePathWithinBase(resolvedPath, this.storagePath);
 
-      // Vérifier que le dossier existe
-      if (!fs.existsSync(userDir)) {
-        return 0;
-      }
-
       const { result: totalSize, duration } = await logPerformance(
         "Storage.calculateUserStorage",
         async () => {
-          const files = await fs.promises.readdir(userDir);
-          let size = 0;
+          // Photos de points (uploads/points)
+          let size = await this.calculateUserPointsStorage(safeUserId);
 
-          for (const file of files) {
-            const filePath = path.join(userDir, file);
-            const stats = await fs.promises.stat(filePath);
-            size += stats.size;
-          }
+          // Plans chiffrés (uploads/plans), en taille claire : c'est ce que
+          // compte storage_used, sinon un recalcul effacerait les plans du quota.
+          size += await planStorageService.calculateUserPlansSize(safeUserId);
 
           return size;
         },
@@ -460,9 +468,20 @@ class StorageService {
           continue;
         }
 
-        const userSize = await this.calculateUserStorage(userId);
-        totalSize += userSize;
+        // Photos seulement : les plans sont ajoutés globalement ci-dessous
+        // (évite un double comptage via calculateUserStorage).
+        try {
+          totalSize += await this.calculateUserPointsStorage(userId);
+        } catch (error) {
+          log.error("Erreur lors du calcul du stockage utilisateur", {
+            userId,
+            error: error instanceof Error ? error.message : String(error),
+          });
+        }
       }
+
+      // Plans de tous les utilisateurs (dossier distinct de uploads/points)
+      totalSize += await planStorageService.calculateTotalPlansSize();
 
       return totalSize;
     } catch (error) {

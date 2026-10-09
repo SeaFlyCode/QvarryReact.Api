@@ -103,6 +103,7 @@ import pointsRoutes from "./routes/pointsRoutes";
 import hydroRiskRoutes from "./routes/hydroRiskRoutes";
 import fichesRoutes from "./routes/fichesRoutes";
 import categoryStyleRoutes from "./routes/categoryStyleRoutes";
+import plansRoutes from "./routes/plansRoutes";
 // [LIST-OFF 2026-05-30] désactivation temporaire du système de listes — réactiver en décommentant
 // import listsRoutes from "./routes/listsRoutes";
 // [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant
@@ -653,6 +654,7 @@ app.use("/api/v1/points", highTrafficLimiter);
 app.use("/api/fiches", highTrafficLimiter);
 app.use("/api/v1/fiches", highTrafficLimiter);
 app.use("/api/v1/category-styles", highTrafficLimiter);
+app.use("/api/v1/plans", highTrafficLimiter);
 // Indicateur de risque hydro (lecture, appels open data mis en cache)
 app.use("/api/v1/hydro-risk", highTrafficLimiter);
 // [LIST-OFF 2026-05-30] désactivation temporaire du système de listes — réactiver en décommentant
@@ -1090,6 +1092,7 @@ app.use("/api", generalLimiter);
     // app.use("/api/v1/lists", csrfProtectionWeb);
     app.use("/api/v1/points", csrfProtectionWeb);
     app.use("/api/v1/category-styles", csrfProtectionWeb);
+    app.use("/api/v1/plans", csrfProtectionWeb);
     app.use("/api/v1/conversations", csrfProtectionWeb);
     app.use("/api/v1/messages", csrfProtectionWeb);
     app.use("/api/v1/contacts", csrfProtectionWeb);
@@ -1104,6 +1107,7 @@ app.use("/api", generalLimiter);
     // /api/v1/points/:id/hydro-risk ET /api/v1/hydro-risk/batch.
     app.use("/api/v1", hydroRiskRoutes);
     app.use("/api/v1/category-styles", categoryStyleRoutes);
+    app.use("/api/v1/plans", plansRoutes);
     // [LIST-OFF 2026-05-30] désactivation temporaire du système de listes — réactiver en décommentant
     // app.use("/api/v1/lists", listsRoutes);
     // [MSG-OFF 2026-05-30] désactivation temporaire messagerie — réactiver en décommentant

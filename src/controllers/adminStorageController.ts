@@ -6,6 +6,9 @@ import { logger } from "../services/loggerService";
 import storageQuotaService from "../services/storageQuotaService";
 import storageService from "../services/storageService";
 import PointModel from "../models/points";
+import PlanModel from "../models/plan";
+import planStorageService from "../services/planStorageService";
+import { PLANS_CONFIG } from "../config/storageConfig";
 import mongoose from "mongoose";
 
 /**
@@ -311,8 +314,49 @@ export const cleanupOrphanFiles = async (
       }
     }
 
+    // Blobs de plans orphelins (sans document Plan). Les blobs récents sont
+    // ignorés : un upload en cours écrit le blob avant le document.
+    const planOrphans: Array<{
+      userId: string;
+      planId: string;
+      deleted: boolean;
+    }> = [];
+    try {
+      const now = Date.now();
+      for (const blob of await planStorageService.listAllBlobs()) {
+        if (now - blob.mtimeMs < PLANS_CONFIG.ORPHAN_MIN_AGE_MS) continue;
+        const exists = await PlanModel.exists({
+          _id: new mongoose.Types.ObjectId(blob.planId),
+          userId: new mongoose.Types.ObjectId(blob.userId),
+        });
+        if (exists) continue;
+        const entry = { userId: blob.userId, planId: blob.planId, deleted: false };
+        planOrphans.push(entry);
+        if (!dryRun) {
+          try {
+            await planStorageService.deletePlanBlob(blob.userId, blob.planId);
+            entry.deleted = true;
+          } catch (error) {
+            logger.error("Erreur lors de la suppression d'un plan orphelin", {
+              userId: blob.userId,
+              planId: blob.planId,
+              error: error instanceof Error ? error.message : String(error),
+            });
+          }
+        }
+      }
+    } catch (error) {
+      logger.error("Erreur lors de la recherche des plans orphelins", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+
     // Recalculer le stockage utilisé pour chaque utilisateur concerné
-    const usersToRecalculate = new Set(orphans.map((o) => o.userId));
+    // (calculateUserStorage inclut les plans : ils restent comptés dans le quota)
+    const usersToRecalculate = new Set([
+      ...orphans.map((o) => o.userId),
+      ...planOrphans.filter((o) => o.deleted).map((o) => o.userId),
+    ]);
     const recalculated: Array<{
       userId: string;
       oldUsed: number;
@@ -352,6 +396,8 @@ export const cleanupOrphanFiles = async (
         : "Cleanup completed",
       orphans,
       totalOrphans: orphans.length,
+      planOrphans,
+      totalPlanOrphans: planOrphans.length,
       deleted: dryRun ? 0 : orphans.filter((o) => o.deleted).length,
       recalculated: recalculated.length,
       usersAffected: usersToRecalculate.size,

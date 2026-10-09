@@ -78,7 +78,7 @@ RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 --ingroup nodejs appuser
 
 # Dossiers runtime avec permissions pour appuser
-RUN mkdir -p /app/logs /app/uploads/points && \
+RUN mkdir -p /app/logs /app/uploads/points /app/uploads/plans && \
     chown -R appuser:nodejs /app/logs /app/uploads && \
     chmod -R 770 /app/logs /app/uploads
 

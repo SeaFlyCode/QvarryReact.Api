@@ -157,6 +157,62 @@ export function decryptWithKey(text: string, userKey: string): string {
   }
 }
 
+// ═══════════════════════════════════════════════════════════════════════════
+// CHIFFREMENT DE BUFFERS (fichiers binaires) — AES-256-GCM
+// Format binaire : iv (12 o) | authTag (16 o) | ciphertext
+// ═══════════════════════════════════════════════════════════════════════════
+
+export function encryptBufferWithKey(data: Buffer, userKey: string): Buffer {
+  const iv = crypto.randomBytes(IV_LENGTH);
+  const cipher = crypto.createCipheriv(
+    ALGORITHM,
+    Buffer.from(userKey, "hex"),
+    iv,
+    { authTagLength: AUTH_TAG_LENGTH },
+  );
+
+  const encrypted = Buffer.concat([cipher.update(data), cipher.final()]);
+  const authTag = cipher.getAuthTag();
+
+  return Buffer.concat([iv, authTag, encrypted]);
+}
+
+export function decryptBufferWithKey(data: Buffer, userKey: string): Buffer {
+  if (data.length < IV_LENGTH + AUTH_TAG_LENGTH) {
+    throw new Error("❌ Format de buffer chiffré invalide : données trop courtes");
+  }
+
+  const iv = data.subarray(0, IV_LENGTH);
+  const authTag = data.subarray(IV_LENGTH, IV_LENGTH + AUTH_TAG_LENGTH);
+  const encrypted = data.subarray(IV_LENGTH + AUTH_TAG_LENGTH);
+
+  try {
+    const decipher = crypto.createDecipheriv(
+      ALGORITHM,
+      Buffer.from(userKey, "hex"),
+      iv,
+      { authTagLength: AUTH_TAG_LENGTH },
+    );
+    decipher.setAuthTag(authTag);
+    return Buffer.concat([decipher.update(encrypted), decipher.final()]);
+  } catch (_error) {
+    throw new Error(
+      "❌ Déchiffrement échoué : vérification d'intégrité des données échouée (données modifiées ou corrompues)",
+    );
+  }
+}
+
+/**
+ * Renvoie la clé AES (hex) de l'utilisateur (avec cache TTL).
+ * À utiliser avec encryptBufferWithKey / decryptBufferWithKey pour éviter
+ * de relire la clé à chaque appel.
+ */
+export async function getUserEncryptionKey(
+  userId: IUser["_id"] | string,
+): Promise<string> {
+  return getUserKey(userId as IUser["_id"]);
+}
+
 // Fonctions originales maintenues pour compatibilité (mais optimisées avec cache)
 export async function encryptUserKeys(
   userId: IUser["_id"],
