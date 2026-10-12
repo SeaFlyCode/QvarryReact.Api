@@ -67,6 +67,9 @@ listSchema.plugin(softDeletePlugin);
 
 // Index pour accélérer les requêtes de soft-delete
 listSchema.index({ deletedAt: 1 });
+// Listes d'un utilisateur hors supprimées (login, synchro) et synchro delta.
+listSchema.index({ userId: 1, deletedAt: 1 });
+listSchema.index({ userId: 1, updatedAt: 1 });
 
 const ListModel =
   mongoose.models.List || mongoose.model<IList>("List", listSchema);

@@ -766,7 +766,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     // 1. Synchronisation des points
 
     // 1.1 Récupérer tous les points existants dans la base de données
-    const allPointsInDB = await PointModel.find({ userId, deletedAt: null });
+    // Seuls les _id servent à détecter les suppressions : pas de documents complets.
+    const allPointsInDB = await PointModel.find({ userId, deletedAt: null })
+      .select("_id")
+      .lean();
 
     // 1.2 Identifier les points à supprimer (présents dans DB mais plus en mémoire)
     const pointIdsInMemory = new Set(
@@ -778,13 +781,14 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
 
     // 1.3 Soft-delete les points qui n'existent plus en mémoire
     // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
-    for (const pointToDelete of pointsToDelete) {
-      authHelpersLogger.info("Soft-delete du point de la base de données", {
+    if (pointsToDelete.length > 0) {
+      authHelpersLogger.info("Soft-delete de points de la base de données", {
         userId,
-        pointId: pointToDelete._id,
+        count: pointsToDelete.length,
+        ids: pointsToDelete.map((x) => x._id),
       });
-      await PointModel.updateOne(
-        { _id: pointToDelete._id },
+      await PointModel.updateMany(
+        { _id: { $in: pointsToDelete.map((x) => x._id) } },
         { $set: { deletedAt: new Date() } },
       );
     }
@@ -972,7 +976,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     // 2. Synchronisation des fiches
 
     // 2.1 Récupérer toutes les fiches existantes dans la base de données
-    const allFichesInDB = await FicheModel.find({ userId, deletedAt: null });
+    // Seuls les _id servent à détecter les suppressions : pas de documents complets.
+    const allFichesInDB = await FicheModel.find({ userId, deletedAt: null })
+      .select("_id")
+      .lean();
 
     // 2.2 Identifier les fiches à supprimer
     const ficheIdsInMemory = new Set(
@@ -985,13 +992,14 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
 
     // 2.3 Soft-delete les fiches qui n'existent plus en mémoire
     // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
-    for (const ficheToDelete of fichesToDelete) {
-      authHelpersLogger.info("Soft-delete de la fiche de la base de données", {
+    if (fichesToDelete.length > 0) {
+      authHelpersLogger.info("Soft-delete de fiches de la base de données", {
         userId,
-        ficheId: ficheToDelete._id,
+        count: fichesToDelete.length,
+        ids: fichesToDelete.map((x) => x._id),
       });
-      await FicheModel.updateOne(
-        { _id: ficheToDelete._id },
+      await FicheModel.updateMany(
+        { _id: { $in: fichesToDelete.map((x) => x._id) } },
         { $set: { deletedAt: new Date() } },
       );
     }
@@ -1199,7 +1207,10 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
     }
 
     // 3.1 Récupérer toutes les listes existantes dans la base de données
-    const allListsInDB = await ListModel.find({ userId, deletedAt: null });
+    // Seuls les _id servent à détecter les suppressions : pas de documents complets.
+    const allListsInDB = await ListModel.find({ userId, deletedAt: null })
+      .select("_id")
+      .lean();
 
     // 3.2 Identifier les listes à supprimer (présentes dans DB mais plus en mémoire)
     const listIdsInMemory = new Set(
@@ -1212,13 +1223,14 @@ export async function syncUserDataToDB(userId: string): Promise<void> {
 
     // 3.3 Soft-delete les listes qui n'existent plus en mémoire
     // (au lieu de hard-delete, pour que le mobile détecte la suppression via deletedAt)
-    for (const listToDelete of listsToDelete) {
-      authHelpersLogger.info("Soft-delete de la liste de la base de données", {
+    if (listsToDelete.length > 0) {
+      authHelpersLogger.info("Soft-delete de listes de la base de données", {
         userId,
-        listId: listToDelete._id,
+        count: listsToDelete.length,
+        ids: listsToDelete.map((x) => x._id),
       });
-      await ListModel.updateOne(
-        { _id: listToDelete._id },
+      await ListModel.updateMany(
+        { _id: { $in: listsToDelete.map((x) => x._id) } },
         { $set: { deletedAt: new Date() } },
       );
     }

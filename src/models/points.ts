@@ -99,6 +99,7 @@ pointSchema.index({ location: "2dsphere" });
 // Index pour accélérer les requêtes de soft-delete
 pointSchema.index({ deletedAt: 1 });
 pointSchema.index({ userId: 1, deletedAt: 1 }); // Compound pour user queries excluding deleted
+pointSchema.index({ userId: 1, updatedAt: 1 }); // Synchro delta mobile (updatedAt > since)
 pointSchema.index({ userId: 1, fiches_ids: 1 }); // Pour fiche-point relationships (multikey index sur array)
 
 export default mongoose.model<IPoint>("Point", pointSchema);
