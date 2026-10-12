@@ -412,6 +412,16 @@ export const getPlanFile = async (req: Request, res: Response): Promise<void> =>
     if (!owned) return;
     const { plan, userId } = owned;
 
+    // Le fichier d'un plan est immuable (supprimer puis recréer pour le changer) :
+    // l'ETag suffit à répondre 304 sans lire le disque ni déchiffrer.
+    const etag = `"plan-${String(plan._id)}-${plan.size}"`;
+    res.setHeader("ETag", etag);
+    if (req.headers["if-none-match"] === etag) {
+      res.setHeader("Cache-Control", "private, max-age=86400");
+      res.status(304).end();
+      return;
+    }
+
     const blob = await planStorageService.readPlanBlob(userId, String(plan._id));
     if (!blob) {
       logger.error("Plan: fichier manquant", { userId, planId: String(plan._id) });
