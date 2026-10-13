@@ -744,6 +744,7 @@ export class RedisSessionService {
   // AUTH-007: STOCKAGE DU JTI EN SESSION
   // ═══════════════════════════════════════════════════════════════════════
   private readonly JTI_PREFIX = "qvarry:jti:";
+  private readonly JTI_GRACE_SECONDS = 60;
 
   async storeSessionJti(
     userId: string,
@@ -754,6 +755,19 @@ export class RedisSessionService {
     if (redis) {
       try {
         const key = `${this.JTI_PREFIX}${userId}:${clientType}`;
+        // Mobile : après rotation, l'ancien JTI reste valide quelques secondes.
+        // Les requêtes déjà parties avec l'ancien access token (ou un second
+        // refresh concurrent) ne doivent pas être rejetées en rafale.
+        if (clientType === "mobile") {
+          const previous = await redis.get(key);
+          if (previous && previous !== jti) {
+            await redis.setex(
+              `${this.JTI_PREFIX}${userId}:${clientType}:prev`,
+              this.JTI_GRACE_SECONDS,
+              previous,
+            );
+          }
+        }
         await redis.setex(key, expiresInSeconds, jti);
       } catch (error: unknown) {
         redisLogger.error("Failed to store JTI in Redis, using memory", {
@@ -809,7 +823,18 @@ export class RedisSessionService {
       return !stored || stored === jti;
     }
     const storedJti = await this.getSessionJti(userId, clientType);
-    return storedJti === jti;
+    if (storedJti === jti) return true;
+    if (clientType === "mobile" && storedJti) {
+      try {
+        const prev = await redis.get(
+          `${this.JTI_PREFIX}${userId}:${clientType}:prev`,
+        );
+        return prev === jti;
+      } catch {
+        return false;
+      }
+    }
+    return false;
   }
 
   async deleteSessionJti(
@@ -819,7 +844,7 @@ export class RedisSessionService {
     if (redis) {
       try {
         const key = `${this.JTI_PREFIX}${userId}:${clientType}`;
-        await redis.del(key);
+        await redis.del(key, `${key}:prev`);
         redisLogger.info("JTI deleted", {
           userId,
           clientType,

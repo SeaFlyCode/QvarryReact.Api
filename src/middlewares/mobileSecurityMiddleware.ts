@@ -65,9 +65,9 @@ const MIN_APP_VERSION: Record<string, string> = {
 };
 
 // Rate limiting pour mobile (hardcodé, avec multiplicateur dev)
-const MOBILE_MAX_REQUESTS_BASE = 5; // 5 en prod, 50 en dev
+const MOBILE_MAX_REQUESTS_BASE = 30; // 30 en prod, 300 en dev (/refresh, /me, /logout… appelés automatiquement)
 const MOBILE_WINDOW_MINUTES = 15;
-const MOBILE_BLOCK_MINUTES = 30;
+const MOBILE_BLOCK_MINUTES = 10;
 
 // MINOR #11: Limite de taille pour prévenir DoS par mémoire
 const MAX_KNOWN_DEVICES = 10000;

@@ -79,7 +79,7 @@ const config = {
     // Configuration différenciée par niveau de sécurité (3 niveaux)
     strictAuth: 10, // 🔴 STRICT - Auth sensible (login, register)
     moderateApi: 100, // 🟡 MODERATE - API standard (events, users)
-    permissiveMobile: 50, // 🟢 PERMISSIVE - Fonctionnel mobile - MED-002: Réduit de 150 à 50
+    permissiveMobile: 300, // 🟢 PERMISSIVE - Fonctionnel mobile (sync, push, session) : l'app synchronise souvent, 50/15 min la bloquait
   },
 };
 
@@ -324,6 +324,13 @@ export const adminLimiter = rateLimit({
  */
 export const mobileAuthLimiter = rateLimit({
   windowMs: config.mobile.windowMinutes * 60 * 1000,
+  // Volontairement SANS multiplicateur dev : ce budget doit rester bas même
+  // en local pour pouvoir tester le blocage anti-bruteforce. La vraie cause
+  // du bug "un register + un login = déjà bloqué" n'était pas ce seuil mais
+  // le fait que /mobile/sos (appelé automatiquement après chaque login —
+  // /sos/status, /sos/contacts) partageait CE MÊME compteur (cf. server.ts,
+  // maintenant sur permissiveMobileLimiter séparément) : un login normal
+  // consommait déjà 3-4/5 du budget avant la moindre tentative ratée.
   max: config.mobile.maxRequests,
   store: makeStore("rl:mobileAuth:"),
   message: `Trop de tentatives depuis l'application mobile. Réessayez dans ${config.mobile.windowMinutes} minutes.`,
@@ -534,12 +541,14 @@ export const permissiveMobileLimiter = rateLimit({
  */
 export const mobileAttestationLimiter = rateLimit({
   windowMs: 60 * 60 * 1000, // ✅ 1 heure (au lieu de 15min)
-  max: limit(3), // ✅ 3 tentatives/heure/IP (au lieu de 5/15min)
+  max: limit(10), // 10 échecs/heure/IP (seuls les échecs comptent, cf. skipSuccessfulRequests)
   store: makeStore("rl:mobileAttestation:"),
   message: "Trop de tentatives d'attestation. Veuillez réessayer plus tard.",
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: false, // ✅ Compter aussi les succès
+  // Seuls les ÉCHECS comptent : se connecter normalement ne consomme plus le budget
+  // (3 connexions réussies/heure bloquaient auparavant l'utilisateur).
+  skipSuccessfulRequests: true,
 
   // ✅ Handler personnalisé pour logger les abus
   handler: (req, res, _next, options) => {
@@ -583,7 +592,7 @@ export const mobileAttestationLimiter = rateLimit({
  */
 export const mobileAttestationByDeviceLimiter = rateLimit({
   windowMs: 24 * 60 * 60 * 1000, // 24 heures
-  max: limit(5), // 5 tentatives par device par jour
+  max: limit(15), // 15 échecs par device par jour
   store: makeStore("rl:mobileAttestationDevice:"),
 
   // ✅ Clé basée sur deviceId (avec hash pour privacy)
@@ -609,7 +618,7 @@ export const mobileAttestationByDeviceLimiter = rateLimit({
   message: "Quota d'attestation dépassé pour cet appareil",
   standardHeaders: true,
   legacyHeaders: false,
-  skipSuccessfulRequests: false,
+  skipSuccessfulRequests: true, // seuls les échecs comptent
 
   handler: (req, res, _next, options) => {
     import("../services/auditService").then(({ auditService }) => {

@@ -1089,6 +1089,7 @@ describe("RedisSessionService - Redis Mode", () => {
       // Assert
       expect(mockRedisInstance.del).toHaveBeenCalledWith(
         "qvarry:jti:user909:mobile",
+        "qvarry:jti:user909:mobile:prev",
       );
     });
   });

@@ -673,10 +673,24 @@ app.use("/api/v1/conversations", socialLimiter);
 
 // 🟢 PERMISSIVE - Routes mobiles (fonctionnalités fréquentes)
 // Préfixe /api/v1/mobile/ uniquement (pas de rétrocompat pour les routes mobiles)
-app.use("/api/v1/mobile/auth", mobileAuthLimiter);
+// Budget serré (5 / 15 min / IP) réservé aux routes d'identifiants (brute-force). Il
+// couvrait auparavant TOUT /mobile/auth : /me, /refresh et /logout, appelés
+// automatiquement par l'app (ouverture, renouvellement de session), l'épuisaient et
+// bloquaient l'utilisateur 15 min.
+for (const credentialPath of ["login", "register", "forgot-password", "reset-password"]) {
+  app.use(`/api/v1/mobile/auth/${credentialPath}`, mobileAuthLimiter);
+}
+// Le reste (/me, /refresh, /logout, /notifications) : budget fonctionnel.
+app.use("/api/v1/mobile/auth", permissiveMobileLimiter);
 app.use("/api/v1/mobile/2fa", twoFactorLimiter);
 app.use("/api/v1/mobile/sync", permissiveMobileLimiter);
-app.use("/api/v1/mobile/sos", mobileAuthLimiter);
+// /mobile/sos était sur mobileAuthLimiter — la MÊME instance (donc le même
+// compteur par IP) que /mobile/auth. Les appels automatiques post-login
+// (/sos/status, /sos/contacts, cf. LeafletMapScreen/SosContext au boot)
+// consommaient le budget anti-bruteforce du login/register avant même une
+// tentative ratée. SOS n'a rien d'un endpoint sensible au bruteforce
+// (lecture de statut, authentifié) : même limiter permissif que sync/push-tokens.
+app.use("/api/v1/mobile/sos", permissiveMobileLimiter);
 app.use("/api/v1/mobile/push-tokens", permissiveMobileLimiter);
 
 // Routes SOS pour le web (alias vers les controllers mobile, sans App Check)
